@@ -4,6 +4,7 @@ import type { Campaign, Lead } from '@/shared/types'
 import type { CampaignWithSteps } from '@/lib/outreachApi'
 import type { QueueStatus } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
+import { FieldLabel } from '@/components/ui/FieldLabel'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 
 export function SendStep({
@@ -102,65 +103,65 @@ export function SendStep({
   const selectedCount = selectedIds.size
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 md:items-stretch">
-        <Panel title="Campaign to send" className="flex h-full min-h-0 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col justify-center">
-            <select
-              value={campaignId ?? ''}
-              onChange={(e) => setCampaignId(+e.target.value || null)}
-              className="min-h-[2.5rem] w-full text-sm"
-            >
-              <option value="">Select…</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
+    <div className="space-y-4">
+      <p className="text-sm leading-snug text-ink-muted">
+        Choose a campaign, start or pause the queue, or open Preview below to test merges (OpenAI from Connect if you
+        use AI on a step).
+      </p>
+      <div className="grid gap-3 md:grid-cols-2 md:items-stretch">
+        <Panel title="Campaign to send">
+          <select
+            value={campaignId ?? ''}
+            onChange={(e) => setCampaignId(+e.target.value || null)}
+            className="text-sm"
+          >
+            <option value="">Select…</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </Panel>
-        <Panel title="Queue status" className="flex h-full min-h-0 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Due now</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{due}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                  Recipients selected
-                </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{selectedCount}</p>
-              </div>
+        <Panel title="Queue status">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Due now</p>
+              <p className="mt-0.5 text-2xl font-semibold tabular-nums text-ink">{due}</p>
             </div>
-            {status && (
-              <div className="mt-4 flex-1 border-t border-edge pt-4 text-xs text-ink-muted">
-                <p>
-                  {status.running ? (
-                    <span className="font-medium text-accent">Running</span>
-                  ) : (
-                    <span className="text-ink-faint">Idle</span>
-                  )}
-                  <span className="text-ink-faint"> · </span>
-                  Paused: <span className="font-medium text-ink">{status.paused ? 'yes' : 'no'}</span>
-                  <span className="text-ink-faint"> · </span>
-                  Sent today: <span className="text-ink">{status.sendsToday}</span>
-                  <span className="text-ink-faint"> · </span>
-                  Session: <span className="text-ink">{status.processedInSession}</span>
-                </p>
-                {status.lastError && (
-                  <p className="mt-2 font-medium text-danger">Error: {status.lastError}</p>
-                )}
-              </div>
-            )}
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                Recipients selected
+              </p>
+              <p className="mt-0.5 text-2xl font-semibold tabular-nums text-ink">{selectedCount}</p>
+            </div>
           </div>
+          {status && (
+            <div className="mt-3 border-t border-edge pt-3 text-xs text-ink-muted">
+              <p>
+                {status.running ? (
+                  <span className="font-medium text-accent">Running</span>
+                ) : (
+                  <span className="text-ink-faint">Idle</span>
+                )}
+                <span className="text-ink-faint"> · </span>
+                Paused: <span className="font-medium text-ink">{status.paused ? 'yes' : 'no'}</span>
+                <span className="text-ink-faint"> · </span>
+                Sent today: <span className="text-ink">{status.sendsToday}</span>
+                <span className="text-ink-faint"> · </span>
+                Session: <span className="text-ink">{status.processedInSession}</span>
+              </p>
+              {status.lastError && (
+                <p className="mt-2 font-medium text-danger">Error: {status.lastError}</p>
+              )}
+            </div>
+          )}
         </Panel>
       </div>
 
       <Panel title="Run queue">
-        <p className="mb-4 text-sm leading-relaxed text-ink-muted">
-          Sends for leads selected in the previous step. Honors daily cap and delay from Connect.
+        <p className="mb-3 text-sm leading-snug text-ink-muted">
+          Sends selected leads. Uses daily cap and delay from Connect.
         </p>
         <div className="flex flex-wrap gap-2">
           <PrimaryButton
@@ -185,20 +186,21 @@ export function SendStep({
         <button
           type="button"
           onClick={() => setPreviewOpen((o) => !o)}
-          className="flex w-full items-center justify-between rounded-t-card px-5 py-4 text-left text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-raised"
+          className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-raised md:px-5"
         >
-          Preview & AI tools
+          Preview merge and AI (optional)
           <span className="text-ink-faint">{previewOpen ? '▼' : '▶'}</span>
         </button>
         {previewOpen && (
-          <div className="space-y-4 border-t border-edge px-5 pb-6 pt-5 md:px-6">
-            <div className="flex flex-wrap gap-3">
-              <label className="text-sm text-ink-muted">
-                Lead
+          <div className="space-y-3 border-t border-edge px-4 pb-4 pt-3 md:px-5 md:pb-5 md:pt-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_5.5rem_auto] sm:items-end">
+              <div className="min-w-0">
+                <FieldLabel htmlFor="preview-lead">Lead</FieldLabel>
                 <select
+                  id="preview-lead"
                   value={previewLead ?? ''}
                   onChange={(e) => setPreviewLead(+e.target.value || null)}
-                  className="ml-2 max-w-xs text-sm"
+                  className="text-sm"
                 >
                   <option value="">—</option>
                   {leads.map((l) => (
@@ -207,10 +209,11 @@ export function SendStep({
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="text-sm text-ink-muted">
-                Step
+              </div>
+              <div>
+                <FieldLabel htmlFor="preview-step">Step</FieldLabel>
                 <input
+                  id="preview-step"
                   type="number"
                   min={1}
                   max={maxStep}
@@ -218,20 +221,28 @@ export function SendStep({
                   onChange={(e) =>
                     setPreviewStep(Math.min(maxStep, Math.max(1, +e.target.value)))
                   }
-                  className="ml-2 w-16 text-sm"
+                  className="w-full text-sm sm:max-w-[5.5rem]"
                 />
-              </label>
-              <SecondaryButton onClick={() => void runPreview()}>Preview merged</SecondaryButton>
+              </div>
+              <div className="sm:justify-self-start sm:pb-0.5">
+                <SecondaryButton onClick={() => void runPreview()}>Preview merged</SecondaryButton>
+              </div>
             </div>
-            <input
-              placeholder="Extra instructions for AI…"
-              value={aiNote}
-              onChange={(e) => setAiNote(e.target.value)}
-              className="text-sm"
-            />
+            <div>
+              <FieldLabel htmlFor="preview-ai-note" hint="Optional. Passed to AI only.">
+                Extra instructions for AI
+              </FieldLabel>
+              <input
+                id="preview-ai-note"
+                placeholder="e.g. shorter tone, mention pricing…"
+                value={aiNote}
+                onChange={(e) => setAiNote(e.target.value)}
+                className="text-sm"
+              />
+            </div>
             <SecondaryButton onClick={() => void runAi()}>Generate body with AI</SecondaryButton>
             {previewText && (
-              <textarea readOnly value={previewText} rows={10} className="font-mono text-xs" />
+              <textarea readOnly value={previewText} rows={8} className="font-mono text-xs" />
             )}
           </div>
         )}

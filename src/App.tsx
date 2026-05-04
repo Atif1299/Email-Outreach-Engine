@@ -5,12 +5,7 @@ import { ImportStep } from '@/steps/ImportStep'
 import { LeadsStep } from '@/steps/LeadsStep'
 import { CampaignStep } from '@/steps/CampaignStep'
 import { SendStep } from '@/steps/SendStep'
-import {
-  readStoredStep,
-  storeStep,
-  WIZARD_STEPS,
-  STEP_COUNT,
-} from '@/wizard/constants'
+import { readStoredStep, storeStep, WIZARD_STEPS, STEP_COUNT } from '@/wizard/constants'
 import './App.css'
 
 const SEL_KEY = 'outreach-selected-ids'

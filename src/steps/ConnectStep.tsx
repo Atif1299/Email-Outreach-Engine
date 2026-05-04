@@ -67,79 +67,99 @@ export function ConnectStep({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5">
       <Panel
         title="Connect email"
         description="Use Gmail with an app password (2FA), or your provider’s SMTP. Required before sending."
       >
-        <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_6.5rem_auto] md:items-end">
+        <div className="space-y-3">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10.5rem,13rem)] sm:items-end">
             <div className="min-w-0">
               <FieldLabel htmlFor="smtp-host">SMTP host</FieldLabel>
               <input
                 id="smtp-host"
+                type="text"
+                autoComplete="off"
                 value={s.smtp.host}
                 onChange={(e) => setS({ ...s, smtp: { ...s.smtp, host: e.target.value } })}
+                className="mt-1.5 block w-full"
               />
             </div>
-            <div>
-              <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
+            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[6.5rem_1fr] sm:items-end">
+              <div className="w-full min-w-0">
+                <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
+                <input
+                  id="smtp-port"
+                  type="number"
+                  value={s.smtp.port}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
+                  className="mt-1.5 block w-full"
+                />
+              </div>
+              <div className="flex min-h-[2.25rem] w-full min-w-0 items-center gap-2.5 self-end rounded-lg border border-edge bg-surface-raised px-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
+                <input
+                  id="smtp-secure"
+                  type="checkbox"
+                  checked={s.smtp.secure}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
+                  className="h-4 w-4 shrink-0"
+                />
+                <label htmlFor="smtp-secure" className="cursor-pointer text-sm text-ink-muted">
+                  SSL / TLS
+                </label>
+              </div>
+            </div>
+          </div>
+          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
+              <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
               <input
-                id="smtp-port"
-                type="number"
-                value={s.smtp.port}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
+                id="smtp-user"
+                type="text"
+                autoComplete="username"
+                value={s.smtp.user}
+                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, user: e.target.value } })}
+                className="mt-1.5 block w-full"
               />
             </div>
-            <label className="flex items-center gap-2 text-sm text-ink-muted md:items-end md:pb-2">
+            <div className="min-w-0">
+              <FieldLabel htmlFor="smtp-pass" hint="Leave blank to keep the saved password.">
+                SMTP password
+              </FieldLabel>
               <input
-                type="checkbox"
-                checked={s.smtp.secure}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
+                id="smtp-pass"
+                type="password"
+                value={smtpPass}
+                onChange={(e) => setSmtpPass(e.target.value)}
+                autoComplete="new-password"
+                className="mt-1.5 block w-full"
               />
-              SSL / TLS
-            </label>
+            </div>
           </div>
-          <div>
-            <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
-            <input
-              id="smtp-user"
-              value={s.smtp.user}
-              onChange={(e) => setS({ ...s, smtp: { ...s.smtp, user: e.target.value } })}
-            />
-          </div>
-          <div>
-            <FieldLabel hint="Leave blank to keep the saved password.">
-              SMTP password
-            </FieldLabel>
-            <input
-              type="password"
-              value={smtpPass}
-              onChange={(e) => setSmtpPass(e.target.value)}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
+          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
               <FieldLabel htmlFor="from-name">From name</FieldLabel>
               <input
                 id="from-name"
+                type="text"
                 value={s.smtp.fromName}
                 onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromName: e.target.value } })}
+                className="mt-1.5 block w-full"
               />
             </div>
-            <div>
+            <div className="min-w-0">
               <FieldLabel htmlFor="from-email">From email</FieldLabel>
               <input
                 id="from-email"
                 type="email"
                 value={s.smtp.fromEmail}
                 onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromEmail: e.target.value } })}
+                className="mt-1.5 block w-full"
               />
             </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
+          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
               <FieldLabel htmlFor="delay">Delay between sends (ms)</FieldLabel>
               <input
                 id="delay"
@@ -148,9 +168,10 @@ export function ConnectStep({
                 step={100}
                 value={s.sendDelayMs}
                 onChange={(e) => setS({ ...s, sendDelayMs: +e.target.value })}
+                className="mt-1.5 block w-full"
               />
             </div>
-            <div>
+            <div className="min-w-0">
               <FieldLabel htmlFor="cap">Daily send cap</FieldLabel>
               <input
                 id="cap"
@@ -158,27 +179,39 @@ export function ConnectStep({
                 min={1}
                 value={s.dailyCap}
                 onChange={(e) => setS({ ...s, dailyCap: +e.target.value })}
+                className="mt-1.5 block w-full"
               />
             </div>
           </div>
         </div>
       </Panel>
 
-      <Panel title="Optional: AI for campaign steps" description="Only needed if you enable “Generate with AI” on a campaign step.">
-        <div className="space-y-4">
-          <div>
-            <FieldLabel>OpenAI model</FieldLabel>
+      <Panel
+        title="Optional: AI for campaign steps"
+        description="Uses one OpenAI key for “Generate with AI” on Campaign steps and for Preview / AI on the Queue step. Skip until you need those features."
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0">
+            <FieldLabel htmlFor="openai-model">OpenAI model</FieldLabel>
             <input
+              id="openai-model"
+              type="text"
               value={s.openaiModel}
               onChange={(e) => setS({ ...s, openaiModel: e.target.value })}
+              className="mt-1.5 block w-full"
             />
           </div>
-          <div>
-            <FieldLabel hint="Leave blank to keep saved key.">OpenAI API key</FieldLabel>
+          <div className="min-w-0">
+            <FieldLabel htmlFor="openai-key" hint="Leave blank to keep saved key.">
+              OpenAI API key
+            </FieldLabel>
             <input
+              id="openai-key"
               type="password"
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
+              autoComplete="off"
+              className="mt-1.5 block w-full"
             />
           </div>
         </div>
@@ -195,7 +228,7 @@ export function ConnectStep({
         />
         <SecondaryButton onClick={() => void test()}>Verify SMTP</SecondaryButton>
       </div>
-      {note && <p className="text-sm text-ink-secondary">{note}</p>}
+      {note && <p className="text-sm text-ink-muted">{note}</p>}
     </div>
   )
 }

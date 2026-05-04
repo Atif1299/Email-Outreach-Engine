@@ -7,12 +7,12 @@ export default {
         sans: ['Inter', 'system-ui', 'Segoe UI', 'sans-serif'],
       },
       colors: {
-        canvas: '#0B0B0C',
+        canvas: '#030303',
         surface: {
-          DEFAULT: '#111113',
-          raised: '#151518',
+          DEFAULT: '#0C0C0D',
+          raised: '#18181B',
         },
-        edge: '#232326',
+        edge: '#212124',
         ink: {
           DEFAULT: '#EDEDED',
           muted: '#A1A1AA',
@@ -29,7 +29,7 @@ export default {
         },
       },
       borderRadius: {
-        card: '10px',
+        card: '8px',
       },
       maxWidth: {
         content: '72rem',
