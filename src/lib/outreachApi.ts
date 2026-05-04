@@ -47,7 +47,7 @@ export type OutreachApi = {
     smtpPassword?: string
     openaiKey?: string
   }) => Promise<boolean>
-  smtpTest: (testAddress: string) => Promise<boolean>
+  smtpTest: (payload: { testAddress: string; smtpPassword?: string }) => Promise<boolean>
   preview: (req: {
     leadId: number
     campaignId: number

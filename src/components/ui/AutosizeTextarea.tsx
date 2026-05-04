@@ -1,19 +1,36 @@
-import { useEffect, useRef, type TextareaHTMLAttributes } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useRef,
+  type MutableRefObject,
+  type Ref,
+  type TextareaHTMLAttributes,
+} from 'react'
 
-export function AutosizeTextarea({
-  minHeightPx = 80,
-  maxHeightPx = 420,
-  className = '',
-  value,
-  ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
-  minHeightPx?: number
-  maxHeightPx?: number
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null)
+function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
+  return (instance: T | null) => {
+    for (const ref of refs) {
+      if (!ref) continue
+      if (typeof ref === 'function') ref(instance)
+      else (ref as MutableRefObject<T | null>).current = instance
+    }
+  }
+}
+
+export const AutosizeTextarea = forwardRef<
+  HTMLTextAreaElement,
+  TextareaHTMLAttributes<HTMLTextAreaElement> & {
+    minHeightPx?: number
+    maxHeightPx?: number
+  }
+>(function AutosizeTextarea(
+  { minHeightPx = 80, maxHeightPx = 420, className = '', value, ...rest },
+  forwardedRef,
+) {
+  const innerRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    const el = ref.current
+    const el = innerRef.current
     if (!el) return
     el.style.height = 'auto'
     const h = Math.max(minHeightPx, Math.min(el.scrollHeight, maxHeightPx))
@@ -21,5 +38,13 @@ export function AutosizeTextarea({
     el.style.overflowY = el.scrollHeight > maxHeightPx ? 'auto' : 'hidden'
   }, [value, minHeightPx, maxHeightPx])
 
-  return <textarea ref={ref} value={value} rows={1} className={className} {...rest} />
-}
+  return (
+    <textarea
+      ref={mergeRefs(innerRef, forwardedRef)}
+      value={value}
+      rows={1}
+      className={className}
+      {...rest}
+    />
+  )
+})

@@ -62,91 +62,105 @@ export function LeadsStep({
   }
 
   return (
-    <Panel
-      title="Review & select leads"
-      description="Choose who can receive the next send. Use search to narrow the list. At least one lead must be selected to continue."
-    >
-      <div className="mb-4 flex flex-wrap gap-3">
-        <div className="min-w-[200px] flex-1">
-          <FieldLabel>Search</FieldLabel>
-          <input
-            type="search"
-            placeholder="Email or any field…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+    <div className="flex h-[calc(100dvh-11rem)] min-h-[18rem] flex-col">
+      <Panel
+        title="Review & select leads"
+        description="Choose who can receive the next send. Use search to narrow the list. At least one lead must be selected to continue."
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+      >
+        <div className="mb-4 flex shrink-0 flex-wrap gap-3">
+          <div className="min-w-[200px] flex-1">
+            <FieldLabel>Search</FieldLabel>
+            <input
+              type="search"
+              placeholder="Email or any field…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <div className="flex items-end gap-2">
+            <SecondaryButton onClick={() => void load()}>Search</SecondaryButton>
+            <SecondaryButton onClick={selectAll}>
+              {selectedIds.size === leads.length && leads.length > 0 ? 'Clear all' : 'Select all'}
+            </SecondaryButton>
+          </div>
         </div>
-        <div className="flex items-end gap-2">
-          <SecondaryButton onClick={() => void load()}>Search</SecondaryButton>
-          <SecondaryButton onClick={selectAll}>
-            {selectedIds.size === leads.length && leads.length > 0 ? 'Clear all' : 'Select all'}
-          </SecondaryButton>
-        </div>
-      </div>
 
-      <div className="overflow-x-auto rounded-card border border-edge">
-        <table className="w-full min-w-0 text-left text-[13px] leading-normal">
-          <thead className="border-b border-edge bg-surface-raised text-xs font-medium uppercase tracking-wide text-ink-faint">
-            <tr>
-              <th className="w-10 p-3"></th>
-              <th className="min-w-[10rem] p-3">Email</th>
-              <th className="min-w-[7rem] p-3">Name</th>
-              <th className="min-w-[8rem] max-w-[220px] p-3">Title</th>
-              <th className="min-w-[8rem] max-w-[200px] p-3">Company</th>
-              <th className="sticky right-0 z-20 min-w-[5.5rem] whitespace-nowrap bg-surface-raised p-3 text-right">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {leads.map((l) => (
-              <tr key={l.id} className="group border-b border-edge hover:bg-surface-raised/80">
-                <td className="p-2 pl-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(l.id)}
-                    onChange={() => toggle(l.id)}
-                  />
-                </td>
-                <td className="p-3 font-mono text-[12px] text-ink-muted">{l.email}</td>
-                <td className="p-3 text-ink">
-                  {l.data.first_name} {l.data.last_name}
-                </td>
-                <td
-                  className="max-w-[220px] truncate p-3 text-ink-muted"
-                  title={l.data.current_title || undefined}
-                >
-                  {l.data.current_title}
-                </td>
-                <td
-                  className="max-w-[200px] truncate p-3 text-ink-muted"
-                  title={l.data.current_employer || undefined}
-                >
-                  {l.data.current_employer}
-                </td>
-                <td className="sticky right-0 z-10 min-w-[5.5rem] whitespace-nowrap bg-surface p-2 text-right shadow-[-12px_0_14px_-10px_rgba(0,0,0,0.65)] group-hover:bg-surface-raised/80">
-                  <DangerButton
-                    onClick={async () => {
-                      await api.leadDelete(l.id)
-                      setSelectedIds((prev) => {
-                        const n = new Set(prev)
-                        n.delete(l.id)
-                        return n
-                      })
-                      void load()
-                    }}
-                  >
-                    Remove
-                  </DangerButton>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {leads.length === 0 && (
-          <p className="p-10 text-center text-sm text-ink-muted">No leads yet. Go back and import a file.</p>
-        )}
-      </div>
-    </Panel>
+        <div className="min-h-0 flex-1 overflow-hidden rounded-card border border-edge">
+          <div className="scrollbar-pane h-full min-h-0 overflow-y-auto overflow-x-auto">
+            {leads.length === 0 ? (
+              <p className="p-10 text-center text-sm text-ink-muted">No leads yet. Go back and import a file.</p>
+            ) : (
+              <table className="w-full min-w-0 text-left text-[13px] leading-normal">
+                <thead className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                  <tr className="border-b border-edge shadow-[0_1px_0_0_rgba(0,0,0,0.35)]">
+                    <th className="sticky top-0 z-20 w-10 border-b border-edge bg-surface-raised p-3"></th>
+                    <th className="sticky top-0 z-20 min-w-[10rem] border-b border-edge bg-surface-raised p-3">
+                      Email
+                    </th>
+                    <th className="sticky top-0 z-20 min-w-[7rem] border-b border-edge bg-surface-raised p-3">
+                      Name
+                    </th>
+                    <th className="sticky top-0 z-20 min-w-[8rem] max-w-[220px] border-b border-edge bg-surface-raised p-3">
+                      Title
+                    </th>
+                    <th className="sticky top-0 z-20 min-w-[8rem] max-w-[200px] border-b border-edge bg-surface-raised p-3">
+                      Company
+                    </th>
+                    <th className="sticky top-0 right-0 z-30 min-w-[5.5rem] whitespace-nowrap border-b border-edge bg-surface-raised p-3 text-right shadow-[-8px_0_12px_-8px_rgba(0,0,0,0.5)]">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map((l) => (
+                    <tr key={l.id} className="group border-b border-edge hover:bg-surface-raised/80">
+                      <td className="p-2 pl-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(l.id)}
+                          onChange={() => toggle(l.id)}
+                        />
+                      </td>
+                      <td className="p-3 font-mono text-[12px] text-ink-muted">{l.email}</td>
+                      <td className="p-3 text-ink">
+                        {l.data.first_name} {l.data.last_name}
+                      </td>
+                      <td
+                        className="max-w-[220px] truncate p-3 text-ink-muted"
+                        title={l.data.current_title || undefined}
+                      >
+                        {l.data.current_title}
+                      </td>
+                      <td
+                        className="max-w-[200px] truncate p-3 text-ink-muted"
+                        title={l.data.current_employer || undefined}
+                      >
+                        {l.data.current_employer}
+                      </td>
+                      <td className="sticky right-0 z-10 min-w-[5.5rem] whitespace-nowrap bg-surface p-2 text-right shadow-[-12px_0_14px_-10px_rgba(0,0,0,0.65)] group-hover:bg-surface-raised/80">
+                        <DangerButton
+                          onClick={async () => {
+                            await api.leadDelete(l.id)
+                            setSelectedIds((prev) => {
+                              const n = new Set(prev)
+                              n.delete(l.id)
+                              return n
+                            })
+                            void load()
+                          }}
+                        >
+                          Remove
+                        </DangerButton>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </Panel>
+    </div>
   )
 }

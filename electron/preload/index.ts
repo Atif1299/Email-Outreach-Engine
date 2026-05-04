@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('outreach', {
   campaignDelete: (id: number) => ipcRenderer.invoke('outreach:campaignDelete', id),
   settingsGet: () => ipcRenderer.invoke('outreach:settingsGet'),
   settingsSave: (payload: unknown) => ipcRenderer.invoke('outreach:settingsSave', payload),
-  smtpTest: (testAddress: string) => ipcRenderer.invoke('outreach:smtpTest', testAddress),
+  smtpTest: (payload: { testAddress: string; smtpPassword?: string }) =>
+    ipcRenderer.invoke('outreach:smtpTest', payload),
   preview: (req: unknown) => ipcRenderer.invoke('outreach:preview', req),
   aiGenerate: (req: unknown) => ipcRenderer.invoke('outreach:aiGenerate', req),
   queueStart: (payload: { campaignId: number; leadIds: number[] }) =>

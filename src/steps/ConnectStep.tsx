@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { outreach } from '@/lib/outreachApi'
 import type { AppSettings } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
-import { FieldLabel } from '@/components/ui/FieldLabel'
+import { FieldHint, FieldLabel } from '@/components/ui/FieldLabel'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 
 export function ConnectStep({
@@ -59,7 +59,10 @@ export function ConnectStep({
   const test = async () => {
     setNote(null)
     try {
-      await api.smtpTest(testAddr)
+      await api.smtpTest({
+        testAddress: testAddr,
+        ...(smtpPass ? { smtpPassword: smtpPass } : {}),
+      })
       setNote('SMTP verified. Test email sent if you entered an address.')
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e))
@@ -67,13 +70,13 @@ export function ConnectStep({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <Panel
         title="Connect email"
         description="Use Gmail with an app password (2FA), or your provider’s SMTP. Required before sending."
       >
-        <div className="space-y-3">
-          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10.5rem,13rem)] sm:items-end">
+        <div className="space-y-2.5">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2 sm:items-end">
             <div className="min-w-0">
               <FieldLabel htmlFor="smtp-host">SMTP host</FieldLabel>
               <input
@@ -85,7 +88,7 @@ export function ConnectStep({
                 className="mt-1.5 block w-full"
               />
             </div>
-            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[6.5rem_1fr] sm:items-end">
+            <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[6.5rem_1fr] sm:items-end">
               <div className="w-full min-w-0">
                 <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
                 <input
@@ -96,7 +99,7 @@ export function ConnectStep({
                   className="mt-1.5 block w-full"
                 />
               </div>
-              <div className="flex min-h-[2.25rem] w-full min-w-0 items-center gap-2.5 self-end rounded-lg border border-edge bg-surface-raised px-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
+              <div className="flex min-h-[2.25rem] w-full min-w-0 items-center gap-2 self-end rounded-lg border border-edge bg-surface-raised px-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
                 <input
                   id="smtp-secure"
                   type="checkbox"
@@ -104,13 +107,13 @@ export function ConnectStep({
                   onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
                   className="h-4 w-4 shrink-0"
                 />
-                <label htmlFor="smtp-secure" className="cursor-pointer text-sm text-ink-muted">
+                <label htmlFor="smtp-secure" className="min-w-0 cursor-pointer text-sm text-ink-muted">
                   SSL / TLS
                 </label>
               </div>
             </div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
               <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
               <input
@@ -123,20 +126,20 @@ export function ConnectStep({
               />
             </div>
             <div className="min-w-0">
-              <FieldLabel htmlFor="smtp-pass" hint="Leave blank to keep the saved password.">
-                SMTP password
-              </FieldLabel>
+              <FieldLabel htmlFor="smtp-pass">SMTP password</FieldLabel>
               <input
                 id="smtp-pass"
                 type="password"
                 value={smtpPass}
                 onChange={(e) => setSmtpPass(e.target.value)}
                 autoComplete="new-password"
+                aria-describedby="smtp-pass-hint"
                 className="mt-1.5 block w-full"
               />
+              <FieldHint id="smtp-pass-hint">Leave blank to keep the saved password.</FieldHint>
             </div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
               <FieldLabel htmlFor="from-name">From name</FieldLabel>
               <input
@@ -158,7 +161,7 @@ export function ConnectStep({
               />
             </div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
               <FieldLabel htmlFor="delay">Delay between sends (ms)</FieldLabel>
               <input
@@ -190,7 +193,7 @@ export function ConnectStep({
         title="Optional: AI for campaign steps"
         description="Uses one OpenAI key for “Generate with AI” on Campaign steps and for Preview / AI on the Queue step. Skip until you need those features."
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <div className="min-w-0">
             <FieldLabel htmlFor="openai-model">OpenAI model</FieldLabel>
             <input
@@ -202,17 +205,17 @@ export function ConnectStep({
             />
           </div>
           <div className="min-w-0">
-            <FieldLabel htmlFor="openai-key" hint="Leave blank to keep saved key.">
-              OpenAI API key
-            </FieldLabel>
+            <FieldLabel htmlFor="openai-key">OpenAI API key</FieldLabel>
             <input
               id="openai-key"
               type="password"
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
               autoComplete="off"
+              aria-describedby="openai-key-hint"
               className="mt-1.5 block w-full"
             />
+            <FieldHint id="openai-key-hint">Leave blank to keep saved key.</FieldHint>
           </div>
         </div>
       </Panel>

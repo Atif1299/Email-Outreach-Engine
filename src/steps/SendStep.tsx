@@ -4,7 +4,7 @@ import type { Campaign, Lead } from '@/shared/types'
 import type { CampaignWithSteps } from '@/lib/outreachApi'
 import type { QueueStatus } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
-import { FieldLabel } from '@/components/ui/FieldLabel'
+import { FieldHint, FieldLabel } from '@/components/ui/FieldLabel'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 
 export function SendStep({
@@ -229,16 +229,16 @@ export function SendStep({
               </div>
             </div>
             <div>
-              <FieldLabel htmlFor="preview-ai-note" hint="Optional. Passed to AI only.">
-                Extra instructions for AI
-              </FieldLabel>
+              <FieldLabel htmlFor="preview-ai-note">Extra instructions for AI</FieldLabel>
               <input
                 id="preview-ai-note"
                 placeholder="e.g. shorter tone, mention pricing…"
                 value={aiNote}
                 onChange={(e) => setAiNote(e.target.value)}
+                aria-describedby="preview-ai-note-hint"
                 className="text-sm"
               />
+              <FieldHint id="preview-ai-note-hint">Optional. Passed to AI only.</FieldHint>
             </div>
             <SecondaryButton onClick={() => void runAi()}>Generate body with AI</SecondaryButton>
             {previewText && (

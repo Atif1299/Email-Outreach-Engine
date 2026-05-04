@@ -2,14 +2,20 @@ import nodemailer from 'nodemailer'
 import type { AppSettings } from '../../src/shared/types'
 import { getSmtpPassword } from './settingsStore'
 
+function smtpPasswordForAuth(override?: string) {
+  if (override && override.length > 0) return override
+  return getSmtpPassword() || undefined
+}
+
 export async function sendMail(
   settings: AppSettings,
   to: string,
   subject: string,
   text: string,
   html?: string,
+  passwordOverride?: string,
 ) {
-  const pass = getSmtpPassword()
+  const pass = smtpPasswordForAuth(passwordOverride)
   const transporter = nodemailer.createTransport({
     host: settings.smtp.host,
     port: settings.smtp.port,
@@ -35,8 +41,8 @@ export async function sendMail(
   return info
 }
 
-export async function verifySmtp(settings: AppSettings) {
-  const pass = getSmtpPassword()
+export async function verifySmtp(settings: AppSettings, passwordOverride?: string) {
+  const pass = smtpPasswordForAuth(passwordOverride)
   const transporter = nodemailer.createTransport({
     host: settings.smtp.host,
     port: settings.smtp.port,

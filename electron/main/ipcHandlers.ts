@@ -162,14 +162,32 @@ export function registerIpcHandlers() {
     },
   )
 
-  ipcMain.handle('outreach:smtpTest', async (_, testAddress: string) => {
-    const s = loadSettings()
-    await verifySmtp(s)
-    if (testAddress?.includes('@')) {
-      await sendMail(s, testAddress.trim(), 'Outreach test', 'This is a test email from Email Outreach.')
-    }
-    return true
-  })
+  ipcMain.handle(
+    'outreach:smtpTest',
+    async (
+      _,
+      payload: { testAddress: string; smtpPassword?: string } | string,
+    ) => {
+      const testAddress = typeof payload === 'string' ? payload : payload.testAddress
+      const smtpPassword =
+        typeof payload === 'string' ? undefined : payload.smtpPassword
+      const passTry =
+        smtpPassword && smtpPassword.length > 0 ? smtpPassword : undefined
+      const s = loadSettings()
+      await verifySmtp(s, passTry)
+      if (testAddress?.includes('@')) {
+        await sendMail(
+          s,
+          testAddress.trim(),
+          'Outreach test',
+          'This is a test email from Email Outreach.',
+          undefined,
+          passTry,
+        )
+      }
+      return true
+    },
+  )
 
   ipcMain.handle(
     'outreach:preview',
