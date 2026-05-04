@@ -93,43 +93,50 @@ export function CampaignStep({
   }
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[240px_1fr]">
-      <Panel title="Campaigns" className="h-fit">
-        <SecondaryButton className="mb-4 w-full" onClick={newCampaign}>
+    <div className="grid gap-6 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] lg:items-start">
+      <Panel title="Campaigns" className="flex min-h-0 flex-col">
+        <SecondaryButton className="mb-4 w-full shrink-0" onClick={newCampaign}>
           New campaign
         </SecondaryButton>
-        <ul className="space-y-1">
-          {list.map((c) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                onClick={() => void loadOne(c.id)}
-                className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition ${editId === c.id ? 'bg-accent-muted text-accent' : 'bg-surface-muted hover:bg-slate-800'
-                  }`}
-              >
-                {c.name}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="max-h-[min(40vh,360px)] min-h-0 overflow-y-auto lg:max-h-[min(50vh,420px)]">
+          <ul className="space-y-1">
+            {list.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => void loadOne(c.id)}
+                  className={`w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                    }`}
+                >
+                  {c.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       </Panel>
 
       <div className="space-y-5">
         <Panel title="Compose sequence">
           <div className="space-y-4">
             <div>
-              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                 Campaign name
               </span>
               <input value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div>
-              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                 Pitch block (`{'{{pitch_block}}'}`)
               </span>
-              <textarea value={pitch} onChange={(e) => setPitch(e.target.value)} rows={4} className="font-mono text-xs" />
+              <textarea
+                value={pitch}
+                onChange={(e) => setPitch(e.target.value)}
+                rows={4}
+                className="min-h-[120px] font-mono text-xs leading-relaxed"
+              />
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs leading-relaxed text-ink-muted">
               Tags: {'{{first_name}}'}, {'{{current_title}}'}, {'{{current_employer}}'}, {'{{industry}}'}, {'{{location}}'},{' '}
               {'{{company_size}}'}, follow-ups: {'{{previous_subject}}'}, {'{{previous_sent_at}}'}, {'{{step_index}}'},{' '}
               {'{{unsubscribe_note}}'}
@@ -141,7 +148,7 @@ export function CampaignStep({
           <Panel key={idx} title={`Step ${idx + 1}`}>
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <label className="flex items-center gap-2 text-sm text-slate-400">
+                <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input
                     type="checkbox"
                     checked={step.use_ai}
@@ -158,7 +165,7 @@ export function CampaignStep({
               </div>
               {idx > 0 && (
                 <div>
-                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                     Delay after previous (hours)
                   </span>
                   <input
@@ -176,7 +183,7 @@ export function CampaignStep({
                 </div>
               )}
               <div>
-                <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                   Subject
                 </span>
                 <input
@@ -186,11 +193,11 @@ export function CampaignStep({
                       s.map((x, i) => (i === idx ? { ...x, subject_template: e.target.value } : x)),
                     )
                   }
-                  className="font-mono text-xs"
+                  className="font-mono text-xs leading-relaxed"
                 />
               </div>
               <div>
-                <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                   Body
                 </span>
                 <textarea
@@ -201,14 +208,14 @@ export function CampaignStep({
                     )
                   }
                   rows={8}
-                  className="font-mono text-xs"
+                  className="min-h-[200px] font-mono text-xs leading-relaxed"
                 />
               </div>
             </div>
           </Panel>
         ))}
 
-        <SecondaryButton onClick={addStep} className="w-full border-dashed">
+        <SecondaryButton onClick={addStep} className="w-full border-dashed border-edge">
           + Add follow-up step
         </SecondaryButton>
 

@@ -119,33 +119,35 @@ export function SendStep({
           </select>
         </Panel>
         <Panel title="Queue status">
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">Due now</p>
-              <p className="text-2xl font-semibold text-white">{due}</p>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Due now</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{due}</p>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">Recipients selected</p>
-              <p className="text-2xl font-semibold text-white">{selectedCount}</p>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                Recipients selected
+              </p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{selectedCount}</p>
             </div>
           </div>
           {status && (
-            <div className="mt-4 space-y-1 border-t border-border pt-4 text-xs text-slate-400">
+            <div className="mt-4 space-y-1 border-t border-edge pt-4 text-xs text-ink-muted">
               <p>
-                <span className="text-slate-500">Running</span>{' '}
-                <span className={status.running ? 'text-emerald-400' : 'text-slate-500'}>
+                <span className="text-ink-faint">Running</span>{' '}
+                <span className={status.running ? 'font-medium text-accent' : 'text-ink-faint'}>
                   {status.running ? 'yes' : 'no'}
                 </span>
                 {' · '}
-                <span className="text-slate-500">Paused</span>{' '}
-                {status.paused ? 'yes' : 'no'}
+                <span className="text-ink-faint">Paused</span>{' '}
+                <span className="font-medium text-ink">{status.paused ? 'yes' : 'no'}</span>
               </p>
               <p>
-                Sent today: <span className="text-slate-200">{status.sendsToday}</span> · Session:{' '}
-                <span className="text-slate-200">{status.processedInSession}</span>
+                Sent today: <span className="text-ink">{status.sendsToday}</span> · Session:{' '}
+                <span className="text-ink">{status.processedInSession}</span>
               </p>
               {status.lastError && (
-                <p className="text-rose-400/90">Error: {status.lastError}</p>
+                <p className="font-medium text-danger">Error: {status.lastError}</p>
               )}
             </div>
           )}
@@ -153,8 +155,8 @@ export function SendStep({
       </div>
 
       <Panel title="Run queue">
-        <p className="mb-4 text-sm text-slate-400">
-          Starts sending for the selected leads from the previous step. Respect your daily cap and delay in Connect.
+        <p className="mb-4 text-sm leading-relaxed text-ink-muted">
+          Sends for leads selected in the previous step. Honors daily cap and delay from Connect.
         </p>
         <div className="flex flex-wrap gap-2">
           <PrimaryButton
@@ -168,26 +170,26 @@ export function SendStep({
           <button
             type="button"
             onClick={() => void api.queueStop()}
-            className="rounded-xl border border-rose-900/60 px-4 py-2.5 text-sm font-medium text-rose-300/90 transition hover:bg-rose-950/50"
+            className="rounded-lg border border-edge px-4 py-2.5 text-sm font-medium text-danger transition-colors duration-150 hover:bg-danger-muted"
           >
             Stop
           </button>
         </div>
       </Panel>
 
-      <div className="rounded-2xl border border-border bg-surface-elevated/40">
+      <div className="rounded-card border border-edge bg-surface">
         <button
           type="button"
           onClick={() => setPreviewOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-slate-200"
+          className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-raised"
         >
           Preview & AI tools
-          <span className="text-slate-500">{previewOpen ? '▼' : '▶'}</span>
+          <span className="text-ink-faint">{previewOpen ? '▼' : '▶'}</span>
         </button>
         {previewOpen && (
-          <div className="space-y-4 border-t border-border px-5 pb-5 pt-2">
+          <div className="space-y-4 border-t border-edge px-5 pb-5 pt-4">
             <div className="flex flex-wrap gap-3">
-              <label className="text-sm text-slate-400">
+              <label className="text-sm text-ink-muted">
                 Lead
                 <select
                   value={previewLead ?? ''}
@@ -202,7 +204,7 @@ export function SendStep({
                   ))}
                 </select>
               </label>
-              <label className="text-sm text-slate-400">
+              <label className="text-sm text-ink-muted">
                 Step
                 <input
                   type="number"

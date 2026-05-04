@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { WizardShell } from '@/layout/WizardShell'
+import { AppShell } from '@/layout/AppShell'
 import { ConnectStep } from '@/steps/ConnectStep'
 import { ImportStep } from '@/steps/ImportStep'
 import { LeadsStep } from '@/steps/LeadsStep'
@@ -68,51 +68,41 @@ export default function App() {
   const isLast = step === STEP_COUNT - 1
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface text-slate-100">
-      <header className="border-b border-border-subtle bg-surface-elevated/80 px-4 py-5 backdrop-blur-sm sm:px-8">
-        <div className="mx-auto flex max-w-wizard flex-col gap-1">
-          <h1 className="text-xl font-semibold tracking-tight text-white">Email Outreach</h1>
-          <p className="text-sm text-slate-500">
-            Connect → import leads → choose recipients → build your sequence → send.
-          </p>
-        </div>
-      </header>
-
-      <WizardShell
-        currentStep={step}
-        onBack={onBack}
-        onNext={onNext}
-        canGoBack={step > 0}
-        canGoNext={!isLast && gate}
-        nextLabel={nextLabel}
-        showNext={!isLast}
-      >
-        {step === 0 && <ConnectStep onValidityChange={setGate} />}
-        {step === 1 && (
-          <ImportStep onImported={bumpImport} onValidityChange={setGate} />
-        )}
-        {step === 2 && (
-          <LeadsStep
-            leadVersion={leadVersion}
-            selectedIds={selectedIds}
-            setSelectedIds={setSelectedIds}
-            onValidityChange={setGate}
-          />
-        )}
-        {step === 3 && (
-          <CampaignStep
-            onCampaignSaved={(id) => setLastCampaignId(id)}
-            onValidityChange={setGate}
-          />
-        )}
-        {step === 4 && (
-          <SendStep
-            leadVersion={leadVersion}
-            selectedIds={selectedIds}
-            preferredCampaignId={lastCampaignId}
-          />
-        )}
-      </WizardShell>
-    </div>
+    <AppShell
+      currentStep={step}
+      onStepChange={setStep}
+      onBack={onBack}
+      onNext={onNext}
+      canGoBack={step > 0}
+      canGoNext={!isLast && gate}
+      nextLabel={nextLabel}
+      showNext={!isLast}
+    >
+      {step === 0 && <ConnectStep onValidityChange={setGate} />}
+      {step === 1 && (
+        <ImportStep onImported={bumpImport} onValidityChange={setGate} />
+      )}
+      {step === 2 && (
+        <LeadsStep
+          leadVersion={leadVersion}
+          selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
+          onValidityChange={setGate}
+        />
+      )}
+      {step === 3 && (
+        <CampaignStep
+          onCampaignSaved={(id) => setLastCampaignId(id)}
+          onValidityChange={setGate}
+        />
+      )}
+      {step === 4 && (
+        <SendStep
+          leadVersion={leadVersion}
+          selectedIds={selectedIds}
+          preferredCampaignId={lastCampaignId}
+        />
+      )}
+    </AppShell>
   )
 }

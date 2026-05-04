@@ -84,21 +84,23 @@ export function LeadsStep({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-border bg-surface-muted/50 text-xs uppercase tracking-wide text-slate-500">
+      <div className="overflow-x-auto rounded-card border border-edge">
+        <table className="w-full min-w-0 text-left text-[13px] leading-normal">
+          <thead className="border-b border-edge bg-surface-raised text-xs font-medium uppercase tracking-wide text-ink-faint">
             <tr>
               <th className="w-10 p-3"></th>
-              <th className="p-3">Email</th>
-              <th className="p-3">Name</th>
-              <th className="p-3">Title</th>
-              <th className="p-3">Company</th>
-              <th className="p-3 w-20"></th>
+              <th className="min-w-[10rem] p-3">Email</th>
+              <th className="min-w-[7rem] p-3">Name</th>
+              <th className="min-w-[8rem] max-w-[220px] p-3">Title</th>
+              <th className="min-w-[8rem] max-w-[200px] p-3">Company</th>
+              <th className="sticky right-0 z-20 min-w-[5.5rem] whitespace-nowrap bg-surface-raised p-3 text-right">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
             {leads.map((l) => (
-              <tr key={l.id} className="border-b border-border/60 hover:bg-surface-muted/30">
+              <tr key={l.id} className="group border-b border-edge hover:bg-surface-raised/80">
                 <td className="p-2 pl-3">
                   <input
                     type="checkbox"
@@ -106,13 +108,23 @@ export function LeadsStep({
                     onChange={() => toggle(l.id)}
                   />
                 </td>
-                <td className="p-3 font-mono text-xs text-slate-300">{l.email}</td>
-                <td className="p-3 text-slate-200">
+                <td className="p-3 font-mono text-[12px] text-ink-muted">{l.email}</td>
+                <td className="p-3 text-ink">
                   {l.data.first_name} {l.data.last_name}
                 </td>
-                <td className="max-w-[200px] truncate p-3 text-slate-400">{l.data.current_title}</td>
-                <td className="max-w-[180px] truncate p-3 text-slate-400">{l.data.current_employer}</td>
-                <td className="p-2">
+                <td
+                  className="max-w-[220px] truncate p-3 text-ink-muted"
+                  title={l.data.current_title || undefined}
+                >
+                  {l.data.current_title}
+                </td>
+                <td
+                  className="max-w-[200px] truncate p-3 text-ink-muted"
+                  title={l.data.current_employer || undefined}
+                >
+                  {l.data.current_employer}
+                </td>
+                <td className="sticky right-0 z-10 min-w-[5.5rem] whitespace-nowrap bg-surface p-2 text-right shadow-[-12px_0_14px_-10px_rgba(0,0,0,0.65)] group-hover:bg-surface-raised/80">
                   <DangerButton
                     onClick={async () => {
                       await api.leadDelete(l.id)
@@ -132,7 +144,7 @@ export function LeadsStep({
           </tbody>
         </table>
         {leads.length === 0 && (
-          <p className="p-10 text-center text-sm text-slate-500">No leads yet. Go back and import a file.</p>
+          <p className="p-10 text-center text-sm text-ink-muted">No leads yet. Go back and import a file.</p>
         )}
       </div>
     </Panel>

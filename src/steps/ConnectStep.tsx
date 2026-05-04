@@ -35,7 +35,7 @@ export function ConnectStep({
   if (!s) {
     return (
       <Panel title="Connect email">
-        <p className="text-sm text-slate-400">Loading settings…</p>
+        <p className="text-sm text-ink-muted">Loading settings…</p>
       </Panel>
     )
   }
@@ -67,14 +67,14 @@ export function ConnectStep({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <Panel
         title="Connect email"
         description="Use Gmail with an app password (2FA), or your provider’s SMTP. Required before sending."
       >
         <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_6.5rem_auto] md:items-end">
+            <div className="min-w-0">
               <FieldLabel htmlFor="smtp-host">SMTP host</FieldLabel>
               <input
                 id="smtp-host"
@@ -82,25 +82,23 @@ export function ConnectStep({
                 onChange={(e) => setS({ ...s, smtp: { ...s.smtp, host: e.target.value } })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
-                <input
-                  id="smtp-port"
-                  type="number"
-                  value={s.smtp.port}
-                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
-                />
-              </div>
-              <label className="flex items-end gap-2 pb-2 text-sm text-slate-400">
-                <input
-                  type="checkbox"
-                  checked={s.smtp.secure}
-                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
-                />
-                SSL / TLS
-              </label>
+            <div>
+              <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
+              <input
+                id="smtp-port"
+                type="number"
+                value={s.smtp.port}
+                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
+              />
             </div>
+            <label className="flex items-center gap-2 text-sm text-ink-muted md:items-end md:pb-2">
+              <input
+                type="checkbox"
+                checked={s.smtp.secure}
+                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
+              />
+              SSL / TLS
+            </label>
           </div>
           <div>
             <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
@@ -193,11 +191,11 @@ export function ConnectStep({
           placeholder="test@you.com"
           value={testAddr}
           onChange={(e) => setTestAddr(e.target.value)}
-          className="max-w-xs"
+          className="min-w-[min(100%,14rem)] max-w-xs flex-1 sm:flex-none"
         />
         <SecondaryButton onClick={() => void test()}>Verify SMTP</SecondaryButton>
       </div>
-      {note && <p className="text-sm text-amber-200/90">{note}</p>}
+      {note && <p className="text-sm text-ink-secondary">{note}</p>}
     </div>
   )
 }

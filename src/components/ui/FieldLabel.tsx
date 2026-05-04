@@ -10,9 +10,11 @@ export function FieldLabel({
   htmlFor?: string
 }) {
   return (
-    <label htmlFor={htmlFor} className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{children}</span>
-      {hint && <span className="text-xs font-normal normal-case text-slate-600">{hint}</span>}
+    <label htmlFor={htmlFor} className="flex flex-col gap-1">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">{children}</span>
+      {hint && (
+        <span className="text-xs font-normal normal-case text-ink-muted">{hint}</span>
+      )}
     </label>
   )
 }

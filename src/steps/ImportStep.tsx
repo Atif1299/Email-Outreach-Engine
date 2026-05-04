@@ -65,7 +65,7 @@ export function ImportStep({
   const headers = preview?.headers ?? []
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <Panel
         title="Import leads"
         description="Choose a CSV or Excel file from your export. Map at least the email column before importing."
@@ -76,14 +76,14 @@ export function ImportStep({
 
         {preview && (
           <div className="mt-6 space-y-4">
-            <p className="text-sm text-slate-400">
-              <span className="font-medium text-slate-200">{preview.filename}</span> — {preview.totalRows}{' '}
+            <p className="text-sm text-ink-muted">
+              <span className="font-medium text-ink">{preview.filename}</span> — {preview.totalRows}{' '}
               rows (preview {preview.previewRows.length})
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               {LEAD_FIELD_KEYS.map((key) => (
                 <label key={key} className="flex flex-col gap-1.5 text-sm">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{key}</span>
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">{key}</span>
                   <select
                     value={mapping[key] ?? ''}
                     onChange={(e) => setMapping((m) => ({ ...m, [key]: e.target.value || '' }))}
@@ -104,7 +104,7 @@ export function ImportStep({
           </div>
         )}
       </Panel>
-      {msg && <p className="text-sm text-amber-200/90">{msg}</p>}
+      {msg && <p className="text-sm text-ink-secondary">{msg}</p>}
     </div>
   )
 }

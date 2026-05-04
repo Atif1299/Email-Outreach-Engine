@@ -13,12 +13,14 @@ export function Panel({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-border bg-surface-elevated/80 p-5 shadow-sm backdrop-blur-sm ${className}`}
+      className={`rounded-card border border-edge bg-surface p-5 md:p-6 ${className}`}
     >
       {title && (
-        <div className="mb-4">
-          <h2 className="text-base font-semibold text-white">{title}</h2>
-          {description && <p className="mt-1 text-sm text-slate-400">{description}</p>}
+        <div className="mb-5">
+          <h2 className="text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
+          {description && (
+            <p className="mt-1.5 text-sm font-normal leading-relaxed text-ink-muted">{description}</p>
+          )}
         </div>
       )}
       {children}
