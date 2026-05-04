@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply m-0 min-h-screen bg-surface text-slate-100;
+  }
+  #root {
+    @apply min-h-screen;
+  }
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='number'],
+  input[type='search'],
+  select,
+  textarea {
+    @apply w-full rounded-xl border border-border bg-surface-elevated px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition;
+    @apply focus:border-accent focus:ring-1 focus:ring-accent/30;
+  }
+  input[type='checkbox'] {
+    @apply h-4 w-4 rounded border-border bg-surface-elevated text-accent focus:ring-accent;
+  }
+}
