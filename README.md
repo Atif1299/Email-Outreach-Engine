@@ -1,40 +1,65 @@
-```text
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                           ┃
-┃   Email Outreach                                                          ┃
-┃   Desktop application for lead import, templated campaigns, and SMTP.     ┃
-┃                                                                           ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-```
+<p align="center">
+  <img src="./docs/readme-banner.svg" alt="Email Outreach" width="100%" />
+</p>
 
-**Email Outreach** is an Electron desktop app for operators who import lead lists (CSV or Excel), map columns, compose multi-step email sequences with merge fields, and send through their own SMTP account (for example Gmail with an app password). The interface is a linear wizard: connect mail settings, import data, select recipients, save a campaign, then run a rate-limited queue.
+<p align="center">
+  <img src="https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
+  <img src="https://img.shields.io/badge/React-20232a?style=flat-square&logo=react&logoColor=61dafb" alt="React" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+</p>
+
+<p align="center">
+  <strong>Import your leads. Map columns. Build sequences. Send through your SMTP — with pacing you control.</strong>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a>
+  &nbsp;·&nbsp;
+  <a href="#capabilities">Capabilities</a>
+  &nbsp;·&nbsp;
+  <a href="#production-build">Build</a>
+  &nbsp;·&nbsp;
+  <a href="#repository-layout">Layout</a>
+  &nbsp;·&nbsp;
+  <a href="#compliance-and-deliverability">Compliance</a>
+</p>
 
 ---
 
+## What is Email Outreach?
+
+Email Outreach is a **desktop operator tool** for teams that already export contacts from LinkedIn or other sources as spreadsheets. You bring the file; the app handles **column mapping**, **merge-field templates**, **multi-step follow-ups** timed by hours after the previous send, and **SMTP delivery** through your own account so credentials stay under your control.
+
+The workflow is intentionally linear: connect mail settings, import data, choose recipients for this run, save a campaign definition, then start a queue that respects **delay between messages** and a **daily cap**. Optional **OpenAI** integration can draft step bodies from your templates and lead fields when you enable it per step; preview remains available before anything sends.
+
+Data lives on disk in **SQLite**. SMTP passwords and API keys use Electron **`safeStorage`** where the operating system provides keychain-backed encryption.
+
 ## Capabilities
 
-- **Import** — Parse `.csv`, `.xlsx`, or `.xls`; map file columns to lead fields; rows without a valid email address are not stored.
-- **Leads** — Search, review, and select which contacts receive the current run.
-- **Campaigns** — One or more steps (first message and follow-ups) with per-step delay after the previous send. Handlebars-style placeholders (for example `{{first_name}}`, `{{current_employer}}`, `{{pitch_block}}`, and follow-up context such as `{{previous_subject}}`).
-- **Optional AI** — If you configure an OpenAI API key, individual steps can generate message body text from your templates and lead data; you can still preview before sending.
-- **Sending** — Nodemailer over SMTP, configurable delay between messages and a daily cap. Secrets for SMTP and API keys are stored with Electron `safeStorage` where the OS supports it.
-- **Persistence** — SQLite (`better-sqlite3`) for leads, campaigns, send history, and queue state.
+- **Import** — `.csv`, `.xlsx`, `.xls` with preview and mapping; rows without a valid email are skipped.
+- **Leads** — Search, review, and select who receives the current run.
+- **Campaigns** — First touch plus follow-ups; Handlebars-style placeholders (`{{first_name}}`, `{{pitch_block}}`, `{{previous_subject}}`, etc.).
+- **Optional AI** — OpenAI-backed generation per campaign step when configured.
+- **Sending** — Nodemailer over SMTP; configurable inter-send delay and daily maximum sends.
 
 ## Requirements
 
-- **Node.js** 18 or newer (LTS recommended).
-- **Windows, macOS, or Linux** for development; this repository’s build configuration targets Windows NSIS by default. Adjust `electron-builder` if you ship for other platforms.
+- **Node.js** 18+ (LTS recommended).
+- Development supported on **Windows, macOS, Linux**. The bundled `electron-builder` configuration targets **Windows NSIS** by default; adjust for other installers if needed.
 
 ## Quick start
 
 ```bash
-git clone <your-repo-url>
+git clone <your-repository-url>
 cd "Email Automations Engine"
 npm install
 npm run dev
 ```
 
-The Vite dev server runs together with the Electron shell. Set SMTP and optional API keys in the first wizard step before attempting to send.
+Configure SMTP (and optionally OpenAI) in the first wizard step before sending.
 
 ## Production build
 
@@ -42,21 +67,21 @@ The Vite dev server runs together with the Electron shell. Set SMTP and optional
 npm run build
 ```
 
-Produces renderer and main-process bundles, then runs `electron-builder`. Installers and unpacked artifacts are written under `release/<version>/` (see `electron-builder.json`).
+Outputs bundles and runs **electron-builder**. Artifacts appear under `release/<version>/` (see `electron-builder.json`).
 
 ## Repository layout
 
 | Path | Role |
 |------|------|
-| `electron/main` | Main process: IPC, SQLite, file import, mail queue, OpenAI calls. |
-| `electron/preload` | Context-isolated bridge exposing a small `outreach` API to the UI. |
-| `src` | React (TypeScript) renderer: wizard steps, forms, and status. |
-| `src/shared` | Shared type definitions. |
+| `electron/main` | IPC, SQLite, import parsing, mail queue, optional OpenAI. |
+| `electron/preload` | Context bridge exposing the `outreach` API to the UI. |
+| `src` | React + TypeScript wizard UI. |
+| `src/shared` | Shared types. |
 
 ## Compliance and deliverability
 
-Cold email is subject to **CAN-SPAM**, **GDPR** (if you contact people in the EU/UK), and your provider’s anti-abuse rules. The app includes an `{{unsubscribe_note}}` merge field for opt-out language in templates; **legal basis, list provenance, and copy are your responsibility** as the sender.
+Outbound cold email must comply with **CAN-SPAM**, **GDPR** (for EU/UK contacts), and your mail provider’s policies. Templates support **`{{unsubscribe_note}}`** for opt-out wording; **lawful basis, list sourcing, and message content remain your responsibility.**
 
 ## License
 
-MIT. This project was initially scaffolded from the `electron-vite-react` template; application logic and documentation describe the Email Outreach product built on top.
+MIT. Originally scaffolded from **electron-vite-react**; product behavior and docs describe this application.
