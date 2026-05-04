@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { outreach } from '@/lib/outreachApi'
-import type { Campaign, CampaignStep as CampaignStepRow } from '@/shared/types'
+import type { Campaign, CampaignStep as CampaignStepModel } from '@/shared/types'
 import { defaultPitch, defaultStep } from '@/wizard/constants'
 import { Panel } from '@/components/ui/Panel'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
@@ -52,7 +52,7 @@ export function CampaignStep({
     setName(c.name)
     setPitch(c.pitch_block)
     setSteps(
-      c.steps.map((s: CampaignStepRow) => ({
+      c.steps.map((s: CampaignStepModel) => ({
         step_order: s.step_order,
         delay_hours_after_previous: s.delay_hours_after_previous,
         subject_template: s.subject_template,
@@ -104,9 +104,8 @@ export function CampaignStep({
               <button
                 type="button"
                 onClick={() => void loadOne(c.id)}
-                className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition ${
-                  editId === c.id ? 'bg-accent-muted text-accent' : 'bg-surface-muted hover:bg-slate-800'
-                }`}
+                className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition ${editId === c.id ? 'bg-accent-muted text-accent' : 'bg-surface-muted hover:bg-slate-800'
+                  }`}
               >
                 {c.name}
               </button>

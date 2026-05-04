@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { outreach } from '@/lib/outreachApi'
 import type { Lead } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
@@ -14,7 +14,7 @@ export function LeadsStep({
 }: {
   leadVersion: number
   selectedIds: Set<number>
-  setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>
+  setSelectedIds: Dispatch<SetStateAction<Set<number>>>
   onValidityChange: (ok: boolean) => void
 }) {
   const api = outreach()

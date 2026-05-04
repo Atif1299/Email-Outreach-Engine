@@ -19,11 +19,10 @@ export function ImportStep({
   const [mapping, setMapping] = useState<ColumnMapping>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [importDone, setImportDone] = useState(false)
 
-  const valid =
-    !!path &&
-    !!preview &&
-    !!(mapping.email && String(mapping.email).length > 0)
+  const mappingOk = !!(mapping.email && String(mapping.email).length > 0)
+  const valid = importDone
 
   useEffect(() => {
     onValidityChange(valid)
@@ -31,6 +30,7 @@ export function ImportStep({
 
   const pickFile = async () => {
     setMsg(null)
+    setImportDone(false)
     const p = await api.openImportDialog()
     if (!p) return
     setBusy(true)
@@ -53,6 +53,7 @@ export function ImportStep({
     try {
       const r = await api.importCommit({ filePath: path, mapping })
       setMsg(`Imported ${r.imported} leads. Skipped ${r.skippedNoEmail} without valid email.`)
+      setImportDone(true)
       onImported()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
@@ -97,7 +98,7 @@ export function ImportStep({
                 </label>
               ))}
             </div>
-            <PrimaryButton disabled={busy || !valid} onClick={() => void commit()}>
+            <PrimaryButton disabled={busy || !mappingOk} onClick={() => void commit()}>
               Import leads
             </PrimaryButton>
           </div>

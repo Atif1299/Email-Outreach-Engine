@@ -45,6 +45,10 @@ export function SendStep({
   }, [load, leadVersion])
 
   useEffect(() => {
+    if (preferredCampaignId != null) setCampaignId(preferredCampaignId)
+  }, [preferredCampaignId])
+
+  useEffect(() => {
     if (!campaignId) {
       setCw(null)
       return
