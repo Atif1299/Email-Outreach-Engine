@@ -12,16 +12,20 @@ const defaults: AppSettings = {
     fromName: '',
     fromEmail: '',
   },
-  sendDelayMs: 3000,
+  sendDelayMinMs: 2000,
+  sendDelayMaxMs: 5000,
   dailyCap: 400,
   openaiModel: 'gpt-4o-mini',
 }
 
 type FileShape = {
   smtp: SmtpSettings
-  sendDelayMs: number
+  sendDelayMinMs: number
+  sendDelayMaxMs: number
   dailyCap: number
   openaiModel: string
+  /** Legacy single delay; migrated to min=max on read */
+  sendDelayMs?: number
   smtpPasswordEnc: string | null
   openaiKeyEnc: string | null
 }
@@ -42,9 +46,19 @@ function readFile(): FileShape {
   try {
     const raw = fs.readFileSync(p, 'utf8')
     const j = JSON.parse(raw) as Partial<FileShape>
+    let sendDelayMinMs = defaults.sendDelayMinMs
+    let sendDelayMaxMs = defaults.sendDelayMaxMs
+    if (typeof j.sendDelayMinMs === 'number' && typeof j.sendDelayMaxMs === 'number') {
+      sendDelayMinMs = j.sendDelayMinMs
+      sendDelayMaxMs = j.sendDelayMaxMs
+    } else if (typeof j.sendDelayMs === 'number') {
+      sendDelayMinMs = j.sendDelayMs
+      sendDelayMaxMs = j.sendDelayMs
+    }
     return {
       smtp: { ...defaults.smtp, ...j.smtp },
-      sendDelayMs: typeof j.sendDelayMs === 'number' ? j.sendDelayMs : defaults.sendDelayMs,
+      sendDelayMinMs,
+      sendDelayMaxMs,
       dailyCap: typeof j.dailyCap === 'number' ? j.dailyCap : defaults.dailyCap,
       openaiModel: typeof j.openaiModel === 'string' ? j.openaiModel : defaults.openaiModel,
       smtpPasswordEnc: j.smtpPasswordEnc ?? null,
@@ -53,6 +67,8 @@ function readFile(): FileShape {
   } catch {
     return {
       ...defaults,
+      sendDelayMinMs: defaults.sendDelayMinMs,
+      sendDelayMaxMs: defaults.sendDelayMaxMs,
       smtpPasswordEnc: null,
       openaiKeyEnc: null,
     }
@@ -88,7 +104,8 @@ export function loadSettings(): AppSettings {
   const f = readFile()
   return {
     smtp: f.smtp,
-    sendDelayMs: f.sendDelayMs,
+    sendDelayMinMs: f.sendDelayMinMs,
+    sendDelayMaxMs: f.sendDelayMaxMs,
     dailyCap: f.dailyCap,
     openaiModel: f.openaiModel,
   }
@@ -98,7 +115,8 @@ export function saveSettings(s: AppSettings) {
   const f = readFile()
   writeFile({
     smtp: s.smtp,
-    sendDelayMs: s.sendDelayMs,
+    sendDelayMinMs: s.sendDelayMinMs,
+    sendDelayMaxMs: s.sendDelayMaxMs,
     dailyCap: s.dailyCap,
     openaiModel: s.openaiModel,
     smtpPasswordEnc: f.smtpPasswordEnc,

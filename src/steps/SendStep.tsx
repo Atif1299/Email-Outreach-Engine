@@ -28,6 +28,8 @@ export function SendStep({
   const [cw, setCw] = useState<CampaignWithSteps | null>(null)
   const [previewLead, setPreviewLead] = useState<number | null>(null)
   const [previewStep, setPreviewStep] = useState(1)
+  /** How many leads to call OpenAI for in parallel per wave (“Generate all”). */
+  const [aiBatchSize, setAiBatchSize] = useState(3)
   const [previewText, setPreviewText] = useState('')
   const [aiNote, setAiNote] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -39,6 +41,8 @@ export function SendStep({
   const [bulkErrors, setBulkErrors] = useState<Record<number, string>>({})
   /** Lead order from last bulk run — for ‹ › navigation */
   const [bulkOrderIds, setBulkOrderIds] = useState<number[]>([])
+  /** Set after a successful “Use AI bodies for sending” for the matching campaign + step (UI selected state). */
+  const [aiBodiesSavedScope, setAiBodiesSavedScope] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [c, l] = await Promise.all([api.campaignsList(), api.leadsList()])
@@ -103,12 +107,25 @@ export function SendStep({
       .then((j) => setDue(j.length))
   }, [api, campaignId, selectedIds])
 
+  useEffect(() => {
+    setAiBodiesSavedScope(null)
+  }, [campaignId, previewStep])
+
+  useEffect(() => {
+    setPreviewText('')
+  }, [previewLead, previewStep, campaignId])
+
+  const isAiBodiesSaveActive =
+    campaignId != null && aiBodiesSavedScope === `${campaignId}-${previewStep}`
+
   const runPreview = async () => {
     if (!campaignId || !previewLead) return
+    /** Template merge only for this preview so it does not duplicate “Generate all” AI output below. Overrides DB still wins when set. */
     const r = await api.preview({
       leadId: previewLead,
       campaignId,
       stepOrder: previewStep,
+      useAiOverride: false,
     })
     setPreviewText(`${r.subject}\n\n---\n\n${r.body}`)
   }
@@ -121,7 +138,13 @@ export function SendStep({
       stepOrder: previewStep,
       customInstructions: aiNote || undefined,
     })
-    setPreviewText((t) => `${t}\n\n--- AI body ---\n\n${r.body}`)
+    setBulkBodies((prev) => ({ ...prev, [previewLead]: r.body }))
+    setBulkErrors((prev) => {
+      const next = { ...prev }
+      delete next[previewLead]
+      return next
+    })
+    setBulkOrderIds((prev) => (prev.includes(previewLead) ? prev : [...prev, previewLead]))
   }
 
   const runBulkAi = async () => {
@@ -129,26 +152,32 @@ export function SendStep({
     const ids = leads.filter((l) => selectedIds.has(l.id)).map((l) => l.id)
     if (ids.length === 0) return
     setBulkRunning(true)
+    setAiBodiesSavedScope(null)
     setBulkBodies({})
     setBulkErrors({})
     setBulkOrderIds(ids)
     setBulkTotal(ids.length)
     setBulkCurrent(0)
-    for (let i = 0; i < ids.length; i++) {
-      const leadId = ids[i]
-      setBulkCurrent(i + 1)
-      try {
-        const r = await api.aiGenerate({
-          leadId,
-          campaignId,
-          stepOrder: previewStep,
-          customInstructions: aiNote || undefined,
-        })
-        setBulkBodies((prev) => ({ ...prev, [leadId]: r.body }))
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        setBulkErrors((prev) => ({ ...prev, [leadId]: msg }))
-      }
+    const batch = Math.max(1, Math.min(50, Number.isFinite(aiBatchSize) ? aiBatchSize : 3))
+    for (let i = 0; i < ids.length; i += batch) {
+      const chunk = ids.slice(i, i + batch)
+      await Promise.all(
+        chunk.map(async (leadId) => {
+          try {
+            const r = await api.aiGenerate({
+              leadId,
+              campaignId,
+              stepOrder: previewStep,
+              customInstructions: aiNote || undefined,
+            })
+            setBulkBodies((prev) => ({ ...prev, [leadId]: r.body }))
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            setBulkErrors((prev) => ({ ...prev, [leadId]: msg }))
+          }
+        }),
+      )
+      setBulkCurrent(Math.min(i + chunk.length, ids.length))
     }
     setBulkRunning(false)
     setPreviewLead((p) => p ?? ids[0] ?? null)
@@ -163,6 +192,24 @@ export function SendStep({
 
   const hasBulkResults =
     Object.keys(bulkBodies).length > 0 || Object.keys(bulkErrors).length > 0
+
+  const bulkReadyItems = Object.entries(bulkBodies).filter(
+    ([id]) => bulkErrors[+id] === undefined,
+  ) as [string, string][]
+
+  const applyBodiesForSending = async () => {
+    if (!campaignId || bulkReadyItems.length === 0) return
+    const items = bulkReadyItems.map(([id, body]) => ({ leadId: +id, body }))
+    await api.applyAiBodyOverrides({ campaignId, stepOrder: previewStep, items })
+    setAiBodiesSavedScope(`${campaignId}-${previewStep}`)
+  }
+
+  const clearSavedBodiesForStep = async () => {
+    if (!campaignId) return
+    if (!confirm(`Remove all saved AI bodies for step ${previewStep} in this campaign?`)) return
+    await api.clearStepBodyOverrides({ campaignId, stepOrder: previewStep })
+    setAiBodiesSavedScope(null)
+  }
 
   const maxStep = cw?.steps.length ?? 1
   const selectedCount = selectedIds.size
@@ -258,7 +305,7 @@ export function SendStep({
         </button>
         {previewOpen && (
           <div className="space-y-3 border-t border-edge px-4 pb-4 pt-3 md:px-5 md:pb-5 md:pt-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_5.5rem_auto] sm:items-end">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_auto] sm:items-end">
               <div className="min-w-0">
                 <FieldLabel htmlFor="preview-lead">Lead</FieldLabel>
                 <div className="mt-1.5 flex gap-1.5">
@@ -309,12 +356,31 @@ export function SendStep({
                   className="w-full text-sm sm:max-w-[5.5rem]"
                 />
               </div>
+              <div>
+                <FieldLabel htmlFor="ai-batch-size">Batch</FieldLabel>
+                <input
+                  id="ai-batch-size"
+                  type="number"
+                  min={1}
+                  max={50}
+                  title="Parallel AI requests per wave for Generate all"
+                  value={aiBatchSize}
+                  onChange={(e) =>
+                    setAiBatchSize(Math.min(50, Math.max(1, +e.target.value || 1)))
+                  }
+                  disabled={bulkRunning}
+                  className="w-full text-sm sm:max-w-[5.5rem]"
+                />
+              </div>
               <div className="sm:justify-self-start sm:pb-0.5">
                 <SecondaryButton disabled={bulkRunning} onClick={() => void runPreview()}>
                   Preview merged
                 </SecondaryButton>
               </div>
             </div>
+            <FieldHint id="ai-batch-hint">
+              Batch = how many leads are generated in parallel each wave (default 3). Lower it if the API rate-limits.
+            </FieldHint>
             <div>
               <FieldLabel htmlFor="preview-ai-note">Extra instructions for AI</FieldLabel>
               <input
@@ -338,7 +404,36 @@ export function SendStep({
               >
                 Generate all (AI)
               </PrimaryButton>
+              {isAiBodiesSaveActive ? (
+                <PrimaryButton
+                  disabled={!campaignId || bulkReadyItems.length === 0 || bulkRunning}
+                  onClick={() => void applyBodiesForSending()}
+                  aria-pressed="true"
+                  title="Saved — queue will use these AI bodies for this step"
+                >
+                  Use AI bodies for sending
+                </PrimaryButton>
+              ) : (
+                <SecondaryButton
+                  disabled={!campaignId || bulkReadyItems.length === 0 || bulkRunning}
+                  onClick={() => void applyBodiesForSending()}
+                  aria-pressed="false"
+                >
+                  Use AI bodies for sending
+                </SecondaryButton>
+              )}
+              <SecondaryButton
+                disabled={!campaignId || bulkRunning}
+                onClick={() => void clearSavedBodiesForStep()}
+              >
+                Clear saved bodies (this step)
+              </SecondaryButton>
             </div>
+            <FieldHint id="apply-ai-hint">
+              “Use AI bodies for sending” stores the generated text for this campaign step. The queue then sends that
+              text instead of merging the template or calling AI again. Subject lines still come from the merged subject
+              template (not AI-generated).
+            </FieldHint>
             {bulkTotal > 0 && (
               <div className="space-y-1">
                 <p className="text-xs text-ink-muted">
@@ -362,8 +457,18 @@ export function SendStep({
             )}
             {previewText && (
               <div>
-                <p className="mb-1 text-[11px] font-medium uppercase text-ink-faint">Merged preview</p>
-                <textarea readOnly value={previewText} rows={8} className="font-mono text-xs" />
+                <p className="mb-1 text-[11px] font-medium uppercase text-ink-faint">Template merge preview</p>
+                <textarea
+                  readOnly
+                  value={previewText}
+                  rows={8}
+                  className="font-mono text-xs"
+                  aria-describedby="merge-preview-hint"
+                />
+                <FieldHint id="merge-preview-hint">
+                  Subject + body from your templates and merge tags only (step “Generate body with AI” is not used here).
+                  If you saved AI bodies for sending, this shows that saved text instead.
+                </FieldHint>
               </div>
             )}
             {hasBulkResults && previewLead != null && (

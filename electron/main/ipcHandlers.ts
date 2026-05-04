@@ -16,6 +16,8 @@ import {
   getLead,
   getDb,
   clearAllLeadsData,
+  replaceLeadBodyOverrides,
+  clearLeadBodyOverridesForStep,
 } from './db'
 import {
   parseFileBuffer,
@@ -207,6 +209,29 @@ export function registerIpcHandlers() {
     'outreach:preview',
     async (_, req: { leadId: number; campaignId: number; stepOrder: number; useAiOverride?: boolean }) => {
       return renderStepForLead(req.campaignId, req.stepOrder, req.leadId, req.useAiOverride)
+    },
+  )
+
+  ipcMain.handle(
+    'outreach:applyAiBodyOverrides',
+    async (
+      _,
+      payload: {
+        campaignId: number
+        stepOrder: number
+        items: { leadId: number; body: string }[]
+      },
+    ) => {
+      replaceLeadBodyOverrides(payload.campaignId, payload.stepOrder, payload.items)
+      return { saved: payload.items.length }
+    },
+  )
+
+  ipcMain.handle(
+    'outreach:clearStepBodyOverrides',
+    async (_, payload: { campaignId: number; stepOrder: number }) => {
+      clearLeadBodyOverridesForStep(payload.campaignId, payload.stepOrder)
+      return true
     },
   )
 

@@ -30,7 +30,9 @@ export type SmtpSettings = {
 
 export type AppSettings = {
   smtp: SmtpSettings
-  sendDelayMs: number
+  /** Inclusive; queue waits a random delay in this range (ms) between each send. */
+  sendDelayMinMs: number
+  sendDelayMaxMs: number
   dailyCap: number
   openaiModel: string
 }

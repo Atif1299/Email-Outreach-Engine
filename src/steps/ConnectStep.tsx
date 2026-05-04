@@ -160,16 +160,36 @@ export function ConnectStep({
           </div>
           <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
             <div className="min-w-0">
-              <FieldLabel htmlFor="delay">Delay between sends (ms)</FieldLabel>
+              <FieldLabel htmlFor="delay-min">Min delay between sends (ms)</FieldLabel>
               <input
-                id="delay"
+                id="delay-min"
                 type="number"
-                min={500}
+                min={0}
                 step={100}
-                value={s.sendDelayMs}
-                onChange={(e) => setS({ ...s, sendDelayMs: +e.target.value })}
+                value={s.sendDelayMinMs}
+                onChange={(e) => setS({ ...s, sendDelayMinMs: +e.target.value })}
                 className="mt-1.5 block w-full"
+                aria-describedby="delay-range-hint"
               />
+            </div>
+            <div className="min-w-0">
+              <FieldLabel htmlFor="delay-max">Max delay between sends (ms)</FieldLabel>
+              <input
+                id="delay-max"
+                type="number"
+                min={0}
+                step={100}
+                value={s.sendDelayMaxMs}
+                onChange={(e) => setS({ ...s, sendDelayMaxMs: +e.target.value })}
+                className="mt-1.5 block w-full"
+                aria-describedby="delay-range-hint"
+              />
+            </div>
+            <div className="min-w-0 sm:col-span-2">
+              <FieldHint id="delay-range-hint">
+                Queue waits a random duration between min and max after each send (inclusive). Default range is 2–5
+                seconds.
+              </FieldHint>
             </div>
             <div className="min-w-0">
               <FieldLabel htmlFor="cap">Daily send cap</FieldLabel>

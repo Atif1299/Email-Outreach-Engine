@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import type { LeadData } from '../../src/shared/types'
+import type { AppSettings, LeadData } from '../../src/shared/types'
 import {
   getCampaign,
   getDb,
@@ -160,6 +160,13 @@ async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms))
 }
 
+function randomSendDelayMs(settings: AppSettings): number {
+  const lo = Math.min(settings.sendDelayMinMs, settings.sendDelayMaxMs)
+  const hi = Math.max(settings.sendDelayMinMs, settings.sendDelayMaxMs)
+  if (hi <= 0) return 0
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo
+}
+
 async function processOne(job: Job): Promise<void> {
   const settings = loadSettings()
   if (countSendsToday() >= settings.dailyCap) {
@@ -249,7 +256,7 @@ async function runLoop() {
       })
       await processOne(job)
       emitStatus()
-      await sleep(settings.sendDelayMs)
+      await sleep(randomSendDelayMs(settings))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       lastError = msg
@@ -272,7 +279,7 @@ async function runLoop() {
         /* ignore */
       }
       emitStatus()
-      await sleep(settings.sendDelayMs)
+      await sleep(randomSendDelayMs(settings))
     }
   }
 }

@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('outreach', {
     ipcRenderer.invoke('outreach:smtpTest', payload),
   preview: (req: unknown) => ipcRenderer.invoke('outreach:preview', req),
   aiGenerate: (req: unknown) => ipcRenderer.invoke('outreach:aiGenerate', req),
+  applyAiBodyOverrides: (payload: unknown) =>
+    ipcRenderer.invoke('outreach:applyAiBodyOverrides', payload),
+  clearStepBodyOverrides: (payload: { campaignId: number; stepOrder: number }) =>
+    ipcRenderer.invoke('outreach:clearStepBodyOverrides', payload),
   queueStart: (payload: { campaignId: number; leadIds: number[] }) =>
     ipcRenderer.invoke('outreach:queueStart', payload),
   queuePause: () => ipcRenderer.invoke('outreach:queuePause'),

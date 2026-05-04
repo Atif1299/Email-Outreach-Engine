@@ -66,6 +66,15 @@ export type OutreachApi = {
     stepOrder: number
     customInstructions?: string
   }) => Promise<{ body: string }>
+  applyAiBodyOverrides: (payload: {
+    campaignId: number
+    stepOrder: number
+    items: { leadId: number; body: string }[]
+  }) => Promise<{ saved: number }>
+  clearStepBodyOverrides: (payload: {
+    campaignId: number
+    stepOrder: number
+  }) => Promise<boolean>
   queueStart: (payload: { campaignId: number; leadIds: number[] }) => Promise<boolean>
   queuePause: () => Promise<boolean>
   queueResume: () => Promise<boolean>
