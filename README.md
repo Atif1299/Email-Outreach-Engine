@@ -1,91 +1,62 @@
-# electron-vite-react
+```text
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                           ┃
+┃   Email Outreach                                                          ┃
+┃   Desktop application for lead import, templated campaigns, and SMTP.     ┃
+┃                                                                           ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
 
-[![awesome-vite](https://awesome.re/mentioned-badge.svg)](https://github.com/vitejs/awesome-vite)
-![GitHub stars](https://img.shields.io/github/stars/caoxiemeihao/vite-react-electron?color=fa6470)
-![GitHub issues](https://img.shields.io/github/issues/caoxiemeihao/vite-react-electron?color=d8b22d)
-![GitHub license](https://img.shields.io/github/license/caoxiemeihao/vite-react-electron)
-[![Required Node.JS >= 14.18.0 || >=16.0.0](https://img.shields.io/static/v1?label=node&message=14.18.0%20||%20%3E=16.0.0&logo=node.js&color=3f893e)](https://nodejs.org/about/releases)
+**Email Outreach** is an Electron desktop app for operators who import lead lists (CSV or Excel), map columns, compose multi-step email sequences with merge fields, and send through their own SMTP account (for example Gmail with an app password). The interface is a linear wizard: connect mail settings, import data, select recipients, save a campaign, then run a rate-limited queue.
 
-English | [简体中文](README.zh-CN.md)
+---
 
-## 👀 Overview
+## Capabilities
 
-📦 Ready out of the box  
-🎯 Based on the official [template-react-ts](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts), project structure will be familiar to you  
-🌱 Easily extendable and customizable  
-💪 Supports Node.js API in the renderer process  
-🔩 Supports C/C++ native addons  
-🐞 Debugger configuration included  
-🖥 Easy to implement multiple windows  
+- **Import** — Parse `.csv`, `.xlsx`, or `.xls`; map file columns to lead fields; rows without a valid email address are not stored.
+- **Leads** — Search, review, and select which contacts receive the current run.
+- **Campaigns** — One or more steps (first message and follow-ups) with per-step delay after the previous send. Handlebars-style placeholders (for example `{{first_name}}`, `{{current_employer}}`, `{{pitch_block}}`, and follow-up context such as `{{previous_subject}}`).
+- **Optional AI** — If you configure an OpenAI API key, individual steps can generate message body text from your templates and lead data; you can still preview before sending.
+- **Sending** — Nodemailer over SMTP, configurable delay between messages and a daily cap. Secrets for SMTP and API keys are stored with Electron `safeStorage` where the OS supports it.
+- **Persistence** — SQLite (`better-sqlite3`) for leads, campaigns, send history, and queue state.
 
-## 🛫 Quick Setup
+## Requirements
 
-```sh
-# clone the project
-git clone https://github.com/electron-vite/electron-vite-react.git
+- **Node.js** 18 or newer (LTS recommended).
+- **Windows, macOS, or Linux** for development; this repository’s build configuration targets Windows NSIS by default. Adjust `electron-builder` if you ship for other platforms.
 
-# enter the project directory
-cd electron-vite-react
+## Quick start
 
-# install dependency
+```bash
+git clone <your-repo-url>
+cd "Email Automations Engine"
 npm install
-
-# develop
 npm run dev
 ```
 
-## 🐞 Debug
+The Vite dev server runs together with the Electron shell. Set SMTP and optional API keys in the first wizard step before attempting to send.
 
-![electron-vite-react-debug.gif](/electron-vite-react-debug.gif)
+## Production build
 
-## 📂 Directory structure
-
-Familiar React application structure, just with `electron` folder on the top :wink:  
-*Files in this folder will be separated from your React application and built into `dist-electron`*  
-
-```tree
-├── electron                                 Electron-related code
-│   ├── main                                 Main-process source code
-│   └── preload                              Preload-scripts source code
-│
-├── release                                  Generated after production build, contains executables
-│   └── {version}
-│       ├── {os}-{os_arch}                   Contains unpacked application executable
-│       └── {app_name}_{version}.{ext}       Installer for the application
-│
-├── public                                   Static assets
-└── src                                      Renderer source code, your React application
+```bash
+npm run build
 ```
 
-<!--
-## 🚨 Be aware
+Produces renderer and main-process bundles, then runs `electron-builder`. Installers and unpacked artifacts are written under `release/<version>/` (see `electron-builder.json`).
 
-This template integrates Node.js API to the renderer process by default. If you want to follow **Electron Security Concerns** you might want to disable this feature. You will have to expose needed API by yourself.  
+## Repository layout
 
-To get started, remove the option as shown below. This will [modify the Vite configuration and disable this feature](https://github.com/electron-vite/vite-plugin-electron-renderer#config-presets-opinionated).
+| Path | Role |
+|------|------|
+| `electron/main` | Main process: IPC, SQLite, file import, mail queue, OpenAI calls. |
+| `electron/preload` | Context-isolated bridge exposing a small `outreach` API to the UI. |
+| `src` | React (TypeScript) renderer: wizard steps, forms, and status. |
+| `src/shared` | Shared type definitions. |
 
-```diff
-# vite.config.ts
+## Compliance and deliverability
 
-export default {
-  plugins: [
-    ...
--   // Use Node.js API in the Renderer-process
--   renderer({
--     nodeIntegration: true,
--   }),
-    ...
-  ],
-}
-```
--->
+Cold email is subject to **CAN-SPAM**, **GDPR** (if you contact people in the EU/UK), and your provider’s anti-abuse rules. The app includes an `{{unsubscribe_note}}` merge field for opt-out language in templates; **legal basis, list provenance, and copy are your responsibility** as the sender.
 
-## 🔧 Additional features
+## License
 
-1. electron-updater 👉 [see docs](src/components/update/README.md)
-1. playwright
-
-## ❔ FAQ
-
-- [C/C++ addons, Node.js modules - Pre-Bundling](https://github.com/electron-vite/vite-plugin-electron-renderer#dependency-pre-bundling)
-- [dependencies vs devDependencies](https://github.com/electron-vite/vite-plugin-electron-renderer#dependencies-vs-devdependencies)
+MIT. This project was initially scaffolded from the `electron-vite-react` template; application logic and documentation describe the Email Outreach product built on top.
