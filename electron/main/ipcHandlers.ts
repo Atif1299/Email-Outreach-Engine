@@ -15,15 +15,17 @@ import {
   getCampaign,
   getLead,
   getDb,
+  clearAllLeadsData,
 } from './db'
 import {
   parseFileBuffer,
   guessMapping,
   applyMapping,
   filterLeadsWithEmail,
+  dedupeLeadsByEmail,
 } from './parseFile'
 import { loadSettings, saveSettings, setSmtpPassword, setOpenaiKey } from './settingsStore'
-import { verifySmtp, sendMail } from './mailService'
+import { verifySmtp, sendMail, enhanceSmtpError } from './mailService'
 import {
   startQueue,
   pauseQueue,
@@ -61,16 +63,22 @@ export function registerIpcHandlers() {
   ipcMain.handle(
     'outreach:importCommit',
     async (_, payload: { filePath: string; mapping: ColumnMapping }) => {
+      stopQueue()
+      clearAllLeadsData()
       const parsed = parseFileBuffer(payload.filePath)
       const mapped = applyMapping(parsed.rows, payload.mapping)
       const filtered = filterLeadsWithEmail(mapped)
+      const unique = dedupeLeadsByEmail(filtered)
       const batchId = insertImportBatch(path.basename(payload.filePath))
-      for (const row of filtered) {
-        insertLead(batchId, row.email.trim(), row)
+      const leadIds: number[] = []
+      for (const row of unique) {
+        leadIds.push(insertLead(batchId, row.email.trim(), row))
       }
       return {
-        imported: filtered.length,
+        imported: unique.length,
         skippedNoEmail: mapped.length - filtered.length,
+        duplicatesSkipped: filtered.length - unique.length,
+        leadIds,
       }
     },
   )
@@ -101,6 +109,7 @@ export function registerIpcHandlers() {
         id?: number
         name: string
         pitch_block: string
+        sender_info?: string
         steps: {
           step_order: number
           delay_hours_after_previous: number
@@ -111,10 +120,11 @@ export function registerIpcHandlers() {
       },
     ) => {
       let id = payload.id
+      const senderInfo = payload.sender_info ?? ''
       if (id) {
-        updateCampaign(id, payload.name, payload.pitch_block)
+        updateCampaign(id, payload.name, payload.pitch_block, senderInfo)
       } else {
-        id = createCampaign(payload.name, payload.pitch_block)
+        id = createCampaign(payload.name, payload.pitch_block, senderInfo)
       }
       replaceSteps(id, payload.steps)
       return id
@@ -174,18 +184,22 @@ export function registerIpcHandlers() {
       const passTry =
         smtpPassword && smtpPassword.length > 0 ? smtpPassword : undefined
       const s = loadSettings()
-      await verifySmtp(s, passTry)
-      if (testAddress?.includes('@')) {
-        await sendMail(
-          s,
-          testAddress.trim(),
-          'Outreach test',
-          'This is a test email from Email Outreach.',
-          undefined,
-          passTry,
-        )
+      try {
+        await verifySmtp(s, passTry)
+        if (testAddress?.includes('@')) {
+          await sendMail(
+            s,
+            testAddress.trim(),
+            'Outreach test',
+            'This is a test email from Email Outreach.',
+            undefined,
+            passTry,
+          )
+        }
+        return true
+      } catch (e) {
+        throw enhanceSmtpError(e, s)
       }
-      return true
     },
   )
 
@@ -230,6 +244,7 @@ export function registerIpcHandlers() {
       const body = await generateEmailBody(
         settings.openaiModel,
         camp.pitch_block,
+        camp.sender_info,
         lead,
         prevCtx,
         req.stepOrder,

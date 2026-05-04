@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { outreach } from '@/lib/outreachApi'
 import type { Campaign, Lead } from '@/shared/types'
 import type { CampaignWithSteps } from '@/lib/outreachApi'
@@ -10,10 +11,12 @@ import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 export function SendStep({
   leadVersion,
   selectedIds,
+  setSelectedIds,
   preferredCampaignId,
 }: {
   leadVersion: number
   selectedIds: Set<number>
+  setSelectedIds: Dispatch<SetStateAction<Set<number>>>
   preferredCampaignId: number | null
 }) {
   const api = outreach()
@@ -28,6 +31,14 @@ export function SendStep({
   const [previewText, setPreviewText] = useState('')
   const [aiNote, setAiNote] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkCurrent, setBulkCurrent] = useState(0)
+  const [bulkTotal, setBulkTotal] = useState(0)
+  /** One AI body per lead id after “Generate all”; pick Lead below to view (like list → detail). */
+  const [bulkBodies, setBulkBodies] = useState<Record<number, string>>({})
+  const [bulkErrors, setBulkErrors] = useState<Record<number, string>>({})
+  /** Lead order from last bulk run — for ‹ › navigation */
+  const [bulkOrderIds, setBulkOrderIds] = useState<number[]>([])
 
   const load = useCallback(async () => {
     const [c, l] = await Promise.all([api.campaignsList(), api.leadsList()])
@@ -44,6 +55,20 @@ export function SendStep({
   useEffect(() => {
     void load()
   }, [load, leadVersion])
+
+  /** Drop stale lead ids (e.g. after re-import); if none left, select everyone so Queue stats match DB. */
+  useEffect(() => {
+    if (leads.length === 0) return
+    const validIds = new Set(leads.map((l) => l.id))
+    setSelectedIds((prev) => {
+      const next = new Set<number>()
+      for (const id of prev) {
+        if (validIds.has(id)) next.add(id)
+      }
+      if (next.size > 0) return next
+      return new Set(validIds)
+    })
+  }, [leads, setSelectedIds])
 
   useEffect(() => {
     if (preferredCampaignId != null) setCampaignId(preferredCampaignId)
@@ -98,6 +123,46 @@ export function SendStep({
     })
     setPreviewText((t) => `${t}\n\n--- AI body ---\n\n${r.body}`)
   }
+
+  const runBulkAi = async () => {
+    if (!campaignId || selectedIds.size === 0) return
+    const ids = leads.filter((l) => selectedIds.has(l.id)).map((l) => l.id)
+    if (ids.length === 0) return
+    setBulkRunning(true)
+    setBulkBodies({})
+    setBulkErrors({})
+    setBulkOrderIds(ids)
+    setBulkTotal(ids.length)
+    setBulkCurrent(0)
+    for (let i = 0; i < ids.length; i++) {
+      const leadId = ids[i]
+      setBulkCurrent(i + 1)
+      try {
+        const r = await api.aiGenerate({
+          leadId,
+          campaignId,
+          stepOrder: previewStep,
+          customInstructions: aiNote || undefined,
+        })
+        setBulkBodies((prev) => ({ ...prev, [leadId]: r.body }))
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setBulkErrors((prev) => ({ ...prev, [leadId]: msg }))
+      }
+    }
+    setBulkRunning(false)
+    setPreviewLead((p) => p ?? ids[0] ?? null)
+  }
+
+  const bulkNavLead = (dir: -1 | 1) => {
+    if (!bulkOrderIds.length) return
+    const cur = previewLead != null ? bulkOrderIds.indexOf(previewLead) : -1
+    const idx = cur < 0 ? 0 : (cur + dir + bulkOrderIds.length) % bulkOrderIds.length
+    setPreviewLead(bulkOrderIds[idx])
+  }
+
+  const hasBulkResults =
+    Object.keys(bulkBodies).length > 0 || Object.keys(bulkErrors).length > 0
 
   const maxStep = cw?.steps.length ?? 1
   const selectedCount = selectedIds.size
@@ -196,19 +261,39 @@ export function SendStep({
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_5.5rem_auto] sm:items-end">
               <div className="min-w-0">
                 <FieldLabel htmlFor="preview-lead">Lead</FieldLabel>
-                <select
-                  id="preview-lead"
-                  value={previewLead ?? ''}
-                  onChange={(e) => setPreviewLead(+e.target.value || null)}
-                  className="text-sm"
-                >
-                  <option value="">—</option>
-                  {leads.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.email}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1.5 flex gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Previous lead"
+                    disabled={!bulkOrderIds.length}
+                    onClick={() => bulkNavLead(-1)}
+                    className="flex h-[2.25rem] w-9 shrink-0 items-center justify-center rounded-lg border border-edge bg-surface-raised text-ink-muted transition-colors hover:bg-surface hover:text-ink disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
+                  </button>
+                  <select
+                    id="preview-lead"
+                    value={previewLead ?? ''}
+                    onChange={(e) => setPreviewLead(+e.target.value || null)}
+                    className="min-w-0 flex-1 text-sm"
+                  >
+                    <option value="">—</option>
+                    {leads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.email}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    aria-label="Next lead"
+                    disabled={!bulkOrderIds.length}
+                    onClick={() => bulkNavLead(1)}
+                    className="flex h-[2.25rem] w-9 shrink-0 items-center justify-center rounded-lg border border-edge bg-surface-raised text-ink-muted transition-colors hover:bg-surface hover:text-ink disabled:opacity-40"
+                  >
+                    <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
+                  </button>
+                </div>
               </div>
               <div>
                 <FieldLabel htmlFor="preview-step">Step</FieldLabel>
@@ -225,7 +310,9 @@ export function SendStep({
                 />
               </div>
               <div className="sm:justify-self-start sm:pb-0.5">
-                <SecondaryButton onClick={() => void runPreview()}>Preview merged</SecondaryButton>
+                <SecondaryButton disabled={bulkRunning} onClick={() => void runPreview()}>
+                  Preview merged
+                </SecondaryButton>
               </div>
             </div>
             <div>
@@ -236,13 +323,74 @@ export function SendStep({
                 value={aiNote}
                 onChange={(e) => setAiNote(e.target.value)}
                 aria-describedby="preview-ai-note-hint"
+                disabled={bulkRunning}
                 className="text-sm"
               />
               <FieldHint id="preview-ai-note-hint">Optional. Passed to AI only.</FieldHint>
             </div>
-            <SecondaryButton onClick={() => void runAi()}>Generate body with AI</SecondaryButton>
+            <div className="flex flex-wrap items-center gap-2">
+              <SecondaryButton onClick={() => void runAi()} disabled={bulkRunning}>
+                Generate body with AI
+              </SecondaryButton>
+              <PrimaryButton
+                disabled={!campaignId || selectedIds.size === 0 || bulkRunning}
+                onClick={() => void runBulkAi()}
+              >
+                Generate all (AI)
+              </PrimaryButton>
+            </div>
+            {bulkTotal > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs text-ink-muted">
+                  {bulkRunning
+                    ? `Generating… ${bulkCurrent} / ${bulkTotal} (step ${previewStep}, uses campaign pitch + each lead’s fields).`
+                    : `Last run: ${bulkTotal} lead(s).`}
+                </p>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-edge">
+                  <div
+                    className="h-2 rounded-full bg-accent transition-[width] duration-200"
+                    style={{
+                      width: bulkRunning
+                        ? `${(bulkCurrent / Math.max(bulkTotal, 1)) * 100}%`
+                        : bulkTotal > 0 && !bulkRunning
+                          ? '100%'
+                          : '0%',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             {previewText && (
-              <textarea readOnly value={previewText} rows={8} className="font-mono text-xs" />
+              <div>
+                <p className="mb-1 text-[11px] font-medium uppercase text-ink-faint">Merged preview</p>
+                <textarea readOnly value={previewText} rows={8} className="font-mono text-xs" />
+              </div>
+            )}
+            {hasBulkResults && previewLead != null && (
+              <div>
+                <FieldLabel htmlFor="bulk-ai-body">
+                  AI body (bulk) — {leads.find((l) => l.id === previewLead)?.email ?? previewLead}
+                </FieldLabel>
+                <textarea
+                  id="bulk-ai-body"
+                  readOnly
+                  placeholder={
+                    bulkBodies[previewLead] === undefined && bulkErrors[previewLead] === undefined
+                      ? 'No result for this lead in the last bulk run (pick another lead or run Generate all again).'
+                      : undefined
+                  }
+                  value={
+                    bulkErrors[previewLead] !== undefined
+                      ? `Error: ${bulkErrors[previewLead]}`
+                      : bulkBodies[previewLead] ?? ''
+                  }
+                  rows={12}
+                  className={`mt-1.5 font-mono text-xs ${bulkErrors[previewLead] !== undefined ? 'border-danger/60 text-danger-muted' : ''}`}
+                />
+                <p className="mt-1 text-xs text-ink-muted">
+                  Each lead has its own saved output; switch Lead or use ‹ › to review one at a time.
+                </p>
+              </div>
             )}
           </div>
         )}

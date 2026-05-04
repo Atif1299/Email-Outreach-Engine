@@ -5,6 +5,7 @@ import {
   getDb,
   getLastSend,
   getLead,
+  getLeadBodyOverride,
   insertSend,
   listSteps,
   countSendsToday,
@@ -115,7 +116,12 @@ export async function renderStepForLead(
   const prevCtx = prev
     ? { subject: prev.subject, sent_at: prev.sent_at, body_snippet: prev.body_snippet }
     : undefined
-  const ctx = buildContext(lead, campaign.pitch_block, prevCtx, stepOrder)
+  const ctx = buildContext(lead, campaign.pitch_block, campaign.sender_info, prevCtx, stepOrder)
+  const storedBody = getLeadBodyOverride(leadId, campaignId, stepOrder)
+  if (storedBody !== undefined) {
+    const subject = renderTemplate(step.subject_template, ctx)
+    return { subject, body: storedBody }
+  }
   const settings = loadSettings()
   const useAiFinal = useAi ?? stepUseAi
   let body: string
@@ -123,6 +129,7 @@ export async function renderStepForLead(
     body = await generateEmailBody(
       settings.openaiModel,
       campaign.pitch_block,
+      campaign.sender_info,
       lead,
       prevCtx,
       stepOrder,
@@ -137,6 +144,7 @@ export async function renderStepForLead(
       subject = await generateSubjectLine(
         settings.openaiModel,
         campaign.pitch_block,
+        campaign.sender_info,
         lead,
         subject,
         body,

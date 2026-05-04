@@ -3,6 +3,7 @@ import type { LeadData } from '../../src/shared/types'
 
 export type RenderContext = LeadData & {
   pitch_block: string
+  sender_info: string
   previous_subject: string
   previous_sent_at: string
   previous_body_snippet: string
@@ -20,6 +21,7 @@ Handlebars.registerHelper('truncate', (str: unknown, len: number) => {
 export function buildContext(
   lead: LeadData,
   pitchBlock: string,
+  senderInfo: string,
   previous:
     | { subject: string; sent_at: string; body_snippet: string | null }
     | undefined,
@@ -28,6 +30,7 @@ export function buildContext(
   return {
     ...lead,
     pitch_block: pitchBlock,
+    sender_info: senderInfo,
     previous_subject: previous?.subject ?? '',
     previous_sent_at: previous?.sent_at ?? '',
     previous_body_snippet: previous?.body_snippet ?? '',

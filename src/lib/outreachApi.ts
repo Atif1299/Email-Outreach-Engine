@@ -23,7 +23,12 @@ export type OutreachApi = {
   importCommit: (payload: {
     filePath: string
     mapping: ColumnMapping
-  }) => Promise<{ imported: number; skippedNoEmail: number }>
+  }) => Promise<{
+    imported: number
+    skippedNoEmail: number
+    duplicatesSkipped: number
+    leadIds: number[]
+  }>
   leadsList: (search?: string) => Promise<Lead[]>
   leadDelete: (id: number) => Promise<boolean>
   campaignsList: () => Promise<Campaign[]>
@@ -31,6 +36,7 @@ export type OutreachApi = {
     id?: number
     name: string
     pitch_block: string
+    sender_info: string
     steps: {
       step_order: number
       delay_hours_after_previous: number

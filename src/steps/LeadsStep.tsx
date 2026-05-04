@@ -1,10 +1,25 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { outreach } from '@/lib/outreachApi'
-import type { Lead } from '@/shared/types'
+import { LEAD_FIELD_KEYS, type Lead } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
 import { FieldLabel } from '@/components/ui/FieldLabel'
 import { SecondaryButton } from '@/components/ui/buttons'
 import { DangerButton } from '@/components/ui/buttons'
+
+function columnLabel(key: string) {
+  if (key === 'linkedin_url') return 'LinkedIn URL'
+  if (key === 'linkedin_handle') return 'LinkedIn handle'
+  if (key === 'company_size') return 'Company size'
+  return key
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+function cellValue(l: Lead, key: (typeof LEAD_FIELD_KEYS)[number]) {
+  if (key === 'email') return l.email || l.data.email || ''
+  return l.data[key] ?? ''
+}
 
 export function LeadsStep({
   leadVersion,
@@ -20,6 +35,7 @@ export function LeadsStep({
   const api = outreach()
   const [leads, setLeads] = useState<Lead[]>([])
   const [q, setQ] = useState('')
+  const headerSelectRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     const rows = await api.leadsList(q || undefined)
@@ -46,6 +62,14 @@ export function LeadsStep({
       return next
     })
   }, [leads, setSelectedIds])
+
+  const allSelected = leads.length > 0 && selectedIds.size === leads.length
+  const someSelected = selectedIds.size > 0 && !allSelected
+
+  useEffect(() => {
+    const el = headerSelectRef.current
+    if (el) el.indeterminate = someSelected
+  }, [someSelected])
 
   const toggle = (id: number) => {
     setSelectedIds((prev) => {
@@ -80,34 +104,35 @@ export function LeadsStep({
           </div>
           <div className="flex items-end gap-2">
             <SecondaryButton onClick={() => void load()}>Search</SecondaryButton>
-            <SecondaryButton onClick={selectAll}>
-              {selectedIds.size === leads.length && leads.length > 0 ? 'Clear all' : 'Select all'}
-            </SecondaryButton>
           </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden rounded-card border border-edge">
-          <div className="scrollbar-pane h-full min-h-0 overflow-y-auto overflow-x-auto">
+          <div className="h-full min-h-0 overflow-y-auto overflow-x-auto">
             {leads.length === 0 ? (
               <p className="p-10 text-center text-sm text-ink-muted">No leads yet. Go back and import a file.</p>
             ) : (
-              <table className="w-full min-w-0 text-left text-[13px] leading-normal">
+              <table className="w-max min-w-full text-left text-[13px] leading-normal">
                 <thead className="text-xs font-medium uppercase tracking-wide text-ink-faint">
                   <tr className="border-b border-edge shadow-[0_1px_0_0_rgba(0,0,0,0.35)]">
-                    <th className="sticky top-0 z-20 w-10 border-b border-edge bg-surface-raised p-3"></th>
-                    <th className="sticky top-0 z-20 min-w-[10rem] border-b border-edge bg-surface-raised p-3">
-                      Email
+                    <th className="sticky left-0 top-0 z-30 w-12 min-w-[3rem] border-b border-edge bg-surface-raised p-3 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.45)]">
+                      <input
+                        ref={headerSelectRef}
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={selectAll}
+                        aria-label="Select all leads"
+                      />
                     </th>
-                    <th className="sticky top-0 z-20 min-w-[7rem] border-b border-edge bg-surface-raised p-3">
-                      Name
-                    </th>
-                    <th className="sticky top-0 z-20 min-w-[8rem] max-w-[220px] border-b border-edge bg-surface-raised p-3">
-                      Title
-                    </th>
-                    <th className="sticky top-0 z-20 min-w-[8rem] max-w-[200px] border-b border-edge bg-surface-raised p-3">
-                      Company
-                    </th>
-                    <th className="sticky top-0 right-0 z-30 min-w-[5.5rem] whitespace-nowrap border-b border-edge bg-surface-raised p-3 text-right shadow-[-8px_0_12px_-8px_rgba(0,0,0,0.5)]">
+                    {LEAD_FIELD_KEYS.map((key) => (
+                      <th
+                        key={key}
+                        className="sticky top-0 z-20 min-w-[9rem] whitespace-nowrap border-b border-edge bg-surface-raised px-3 py-3"
+                      >
+                        {columnLabel(key)}
+                      </th>
+                    ))}
+                    <th className="sticky right-0 top-0 z-30 min-w-[5.5rem] whitespace-nowrap border-b border-edge bg-surface-raised p-3 text-right shadow-[-8px_0_12px_-8px_rgba(0,0,0,0.5)]">
                       Actions
                     </th>
                   </tr>
@@ -115,29 +140,27 @@ export function LeadsStep({
                 <tbody>
                   {leads.map((l) => (
                     <tr key={l.id} className="group border-b border-edge hover:bg-surface-raised/80">
-                      <td className="p-2 pl-3">
+                      <td className="sticky left-0 z-20 bg-surface p-2 pl-3 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.35)] group-hover:bg-surface-raised/80">
                         <input
                           type="checkbox"
                           checked={selectedIds.has(l.id)}
                           onChange={() => toggle(l.id)}
+                          aria-label={`Select lead ${l.email}`}
                         />
                       </td>
-                      <td className="p-3 font-mono text-[12px] text-ink-muted">{l.email}</td>
-                      <td className="p-3 text-ink">
-                        {l.data.first_name} {l.data.last_name}
-                      </td>
-                      <td
-                        className="max-w-[220px] truncate p-3 text-ink-muted"
-                        title={l.data.current_title || undefined}
-                      >
-                        {l.data.current_title}
-                      </td>
-                      <td
-                        className="max-w-[200px] truncate p-3 text-ink-muted"
-                        title={l.data.current_employer || undefined}
-                      >
-                        {l.data.current_employer}
-                      </td>
+                      {LEAD_FIELD_KEYS.map((key) => (
+                        <td
+                          key={key}
+                          className="max-w-[min(16rem,40vw)] truncate px-3 py-3 text-ink-muted group-hover:bg-surface-raised/80"
+                          title={cellValue(l, key) || undefined}
+                        >
+                          {key === 'email' ? (
+                            <span className="font-mono text-[12px]">{cellValue(l, key)}</span>
+                          ) : (
+                            cellValue(l, key)
+                          )}
+                        </td>
+                      ))}
                       <td className="sticky right-0 z-10 min-w-[5.5rem] whitespace-nowrap bg-surface p-2 text-right shadow-[-12px_0_14px_-10px_rgba(0,0,0,0.65)] group-hover:bg-surface-raised/80">
                         <DangerButton
                           onClick={async () => {

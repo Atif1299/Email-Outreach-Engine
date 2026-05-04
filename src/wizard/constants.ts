@@ -14,8 +14,8 @@ export const defaultStep = (order: number): Omit<CampaignStep, 'id' | 'campaign_
       : 'Following up — {{first_name}}, {{current_employer}}',
   body_template:
     order === 1
-      ? `Hi {{first_name}},\n\n{{pitch_block}}\n\nI noticed your role as {{current_title}} at {{current_employer}} — we often help teams in {{industry}} with lightweight AI workflows.\n\nWould a 15-minute chat next week be useful?\n\nBest,\n{{unsubscribe_note}}`
-      : `Hi {{first_name}},\n\nFollowing up on my note about AI automation — previously: "{{truncate previous_subject 60}}".\n\nStill happy to share a concrete example for {{current_employer}}.\n\n{{unsubscribe_note}}`,
+      ? `Hi {{first_name}},\n\n{{pitch_block}}\n\nI noticed your role as {{current_title}} at {{current_employer}} — we often help teams in {{industry}} with lightweight AI workflows.\n\nWould a 15-minute chat next week be useful?\n\nBest regards,\n{{sender_info}}\n\n{{unsubscribe_note}}`
+      : `Hi {{first_name}},\n\nFollowing up on my note about AI automation — previously: "{{truncate previous_subject 60}}".\n\nStill happy to share a concrete example for {{current_employer}}.\n\nBest regards,\n{{sender_info}}\n\n{{unsubscribe_note}}`,
   use_ai: false,
 })
 

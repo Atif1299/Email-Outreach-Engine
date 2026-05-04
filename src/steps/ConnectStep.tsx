@@ -3,6 +3,7 @@ import { outreach } from '@/lib/outreachApi'
 import type { AppSettings } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
 import { FieldHint, FieldLabel } from '@/components/ui/FieldLabel'
+import { SecretInput } from '@/components/ui/SecretInput'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 
 export function ConnectStep({
@@ -49,8 +50,6 @@ export function ConnectStep({
         ...(openaiKey ? { openaiKey } : {}),
       })
       setNote('Saved.')
-      setSmtpPass('')
-      setOpenaiKey('')
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e))
     }
@@ -127,14 +126,12 @@ export function ConnectStep({
             </div>
             <div className="min-w-0">
               <FieldLabel htmlFor="smtp-pass">SMTP password</FieldLabel>
-              <input
+              <SecretInput
                 id="smtp-pass"
-                type="password"
                 value={smtpPass}
-                onChange={(e) => setSmtpPass(e.target.value)}
+                onChange={setSmtpPass}
                 autoComplete="new-password"
                 aria-describedby="smtp-pass-hint"
-                className="mt-1.5 block w-full"
               />
               <FieldHint id="smtp-pass-hint">Leave blank to keep the saved password.</FieldHint>
             </div>
@@ -206,14 +203,12 @@ export function ConnectStep({
           </div>
           <div className="min-w-0">
             <FieldLabel htmlFor="openai-key">OpenAI API key</FieldLabel>
-            <input
+            <SecretInput
               id="openai-key"
-              type="password"
               value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
+              onChange={setOpenaiKey}
               autoComplete="off"
               aria-describedby="openai-key-hint"
-              className="mt-1.5 block w-full"
             />
             <FieldHint id="openai-key-hint">Leave blank to keep saved key.</FieldHint>
           </div>

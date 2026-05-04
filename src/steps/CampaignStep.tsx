@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { outreach } from '@/lib/outreachApi'
 import type { Campaign, CampaignStep as CampaignStepModel } from '@/shared/types'
 import { defaultPitch, defaultStep } from '@/wizard/constants'
@@ -22,6 +23,7 @@ const PITCH_MERGE_TAGS = [
   '{{industry}}',
   '{{location}}',
   '{{company_size}}',
+  '{{sender_info}}',
   '{{previous_subject}}',
   '{{previous_sent_at}}',
   '{{step_index}}',
@@ -41,10 +43,13 @@ export function CampaignStep({
   const [committedId, setCommittedId] = useState<number | null>(null)
   const [name, setName] = useState('My campaign')
   const [pitch, setPitch] = useState(defaultPitch)
+  const [senderInfo, setSenderInfo] = useState('')
   const [steps, setSteps] = useState<DraftStep[]>([defaultStep(1)])
   const [activeStepIdx, setActiveStepIdx] = useState(0)
   const pitchRef = useRef<HTMLTextAreaElement>(null)
-  const mergeCursorRef = useRef<number | null>(null)
+  const senderRef = useRef<HTMLTextAreaElement>(null)
+  const mergeTargetRef = useRef<'pitch' | 'sender'>('pitch')
+  const mergeCursorRef = useRef<{ target: 'pitch' | 'sender'; pos: number } | null>(null)
 
   const valid = committedId !== null && steps.length > 0
 
@@ -68,6 +73,7 @@ export function CampaignStep({
     onCampaignSaved(id)
     setName(c.name)
     setPitch(c.pitch_block)
+    setSenderInfo(c.sender_info ?? '')
     setSteps(
       c.steps.map((s: CampaignStepModel) => ({
         step_order: s.step_order,
@@ -85,6 +91,7 @@ export function CampaignStep({
     setCommittedId(null)
     setName('New campaign')
     setPitch(defaultPitch)
+    setSenderInfo('')
     setSteps([defaultStep(1), defaultStep(2)])
     setActiveStepIdx(0)
   }
@@ -94,6 +101,7 @@ export function CampaignStep({
       id: editId ?? undefined,
       name,
       pitch_block: pitch,
+      sender_info: senderInfo,
       steps: steps.map((s, i) => ({ ...s, step_order: i + 1 })),
     })
     setEditId(id)
@@ -122,23 +130,28 @@ export function CampaignStep({
   }, [steps.length])
 
   const insertPitchMergeTag = useCallback((tag: string) => {
-    const el = pitchRef.current
+    const target = mergeTargetRef.current
+    const el = target === 'sender' ? senderRef.current : pitchRef.current
     if (!el) return
     const start = el.selectionStart ?? 0
     const end = el.selectionEnd ?? 0
-    mergeCursorRef.current = start + tag.length
-    setPitch((prev) => prev.slice(0, start) + tag + prev.slice(end))
+    mergeCursorRef.current = { target, pos: start + tag.length }
+    const apply =
+      target === 'sender'
+        ? () => setSenderInfo((prev) => prev.slice(0, start) + tag + prev.slice(end))
+        : () => setPitch((prev) => prev.slice(0, start) + tag + prev.slice(end))
+    apply()
   }, [])
 
   useLayoutEffect(() => {
-    const pos = mergeCursorRef.current
-    if (pos === null) return
+    const cur = mergeCursorRef.current
+    if (cur === null) return
     mergeCursorRef.current = null
-    const el = pitchRef.current
+    const el = cur.target === 'sender' ? senderRef.current : pitchRef.current
     if (!el) return
     el.focus()
-    el.setSelectionRange(pos, pos)
-  }, [pitch])
+    el.setSelectionRange(cur.pos, cur.pos)
+  }, [pitch, senderInfo])
 
   return (
     <div className="flex min-h-0 flex-col gap-5 xl:max-h-[min(calc(100dvh-10rem),56rem)] xl:min-h-0 xl:flex-row xl:items-stretch xl:gap-5 xl:overflow-hidden">
@@ -148,22 +161,35 @@ export function CampaignStep({
         </SecondaryButton>
         <ul className="space-y-1">
           {list.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="flex gap-1.5">
               <button
                 type="button"
                 onClick={() => void loadOne(c.id)}
-                className={`w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
                   }`}
               >
                 {c.name}
               </button>
+              <DangerButton
+                className="shrink-0 px-2.5 py-2.5"
+                aria-label={`Delete ${c.name}`}
+                title="Delete campaign"
+                onClick={async () => {
+                  if (!confirm(`Delete campaign “${c.name}”?`)) return
+                  await api.campaignDelete(c.id)
+                  if (editId === c.id) newCampaign()
+                  void loadList()
+                }}
+              >
+                <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+              </DangerButton>
             </li>
           ))}
         </ul>
       </Panel>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
           <Panel
             title="Compose sequence"
             description={
@@ -192,8 +218,31 @@ export function CampaignStep({
                   ref={pitchRef}
                   value={pitch}
                   onChange={(e) => setPitch(e.target.value)}
+                  onFocus={() => {
+                    mergeTargetRef.current = 'pitch'
+                  }}
                   minHeightPx={120}
                   maxHeightPx={360}
+                  className="mt-1.5 font-mono text-xs leading-relaxed"
+                />
+              </div>
+              <div>
+                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                  Sender / sign-off (`{'{{sender_info}}'}`)
+                </span>
+                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+                  Use in your step body (default templates include it after “Best regards,”). Plain text and URLs on
+                  their own lines. Passed to AI so the closing matches your team or personal details.
+                </p>
+                <AutosizeTextarea
+                  ref={senderRef}
+                  value={senderInfo}
+                  onChange={(e) => setSenderInfo(e.target.value)}
+                  onFocus={() => {
+                    mergeTargetRef.current = 'sender'
+                  }}
+                  minHeightPx={80}
+                  maxHeightPx={240}
                   className="mt-1.5 font-mono text-xs leading-relaxed"
                 />
               </div>
@@ -202,7 +251,8 @@ export function CampaignStep({
                   Available merge tags
                 </summary>
                 <p className="mt-2 text-xs leading-relaxed text-ink-muted">
-                  Click a tag to insert it in the pitch block at the cursor.
+                  Click a tag to insert at the cursor; uses whichever field you focused last (pitch or sender — default is
+                  pitch).
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {PITCH_MERGE_TAGS.map((tag) => (

@@ -109,3 +109,16 @@ export function hasValidEmail(email: string): boolean {
 export function filterLeadsWithEmail(leads: LeadData[]): LeadData[] {
   return leads.filter((l) => hasValidEmail(l.email ?? ''))
 }
+
+/** Keep first row per email (case-insensitive); drops duplicate lines in the file. */
+export function dedupeLeadsByEmail(leads: LeadData[]): LeadData[] {
+  const seen = new Set<string>()
+  const out: LeadData[] = []
+  for (const l of leads) {
+    const k = (l.email ?? '').trim().toLowerCase()
+    if (!k || seen.has(k)) continue
+    seen.add(k)
+    out.push(l)
+  }
+  return out
+}

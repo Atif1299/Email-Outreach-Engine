@@ -12,7 +12,14 @@ const SEL_KEY = 'outreach-selected-ids'
 
 function loadSelectedIds(): Set<number> {
   try {
-    const raw = sessionStorage.getItem(SEL_KEY)
+    let raw = localStorage.getItem(SEL_KEY)
+    if (!raw) {
+      raw = sessionStorage.getItem(SEL_KEY)
+      if (raw) {
+        localStorage.setItem(SEL_KEY, raw)
+        sessionStorage.removeItem(SEL_KEY)
+      }
+    }
     if (!raw) return new Set()
     const a = JSON.parse(raw) as unknown
     if (!Array.isArray(a)) return new Set()
@@ -39,13 +46,16 @@ export default function App() {
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(SEL_KEY, JSON.stringify([...selectedIds]))
+      localStorage.setItem(SEL_KEY, JSON.stringify([...selectedIds]))
     } catch {
       /* ignore */
     }
   }, [selectedIds])
 
-  const bumpImport = useCallback(() => setLeadVersion((v) => v + 1), [])
+  const onImportDone = useCallback((leadIds: number[]) => {
+    setLeadVersion((v) => v + 1)
+    setSelectedIds(new Set(leadIds))
+  }, [])
 
   const onNext = () => {
     if (step >= STEP_COUNT - 1) return
@@ -75,7 +85,7 @@ export default function App() {
     >
       {step === 0 && <ConnectStep onValidityChange={setGate} />}
       {step === 1 && (
-        <ImportStep onImported={bumpImport} onValidityChange={setGate} />
+        <ImportStep onImported={onImportDone} onValidityChange={setGate} />
       )}
       {step === 2 && (
         <LeadsStep
@@ -95,6 +105,7 @@ export default function App() {
         <SendStep
           leadVersion={leadVersion}
           selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
           preferredCampaignId={lastCampaignId}
         />
       )}

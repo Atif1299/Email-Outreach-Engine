@@ -53,6 +53,7 @@ export type Campaign = {
   id: number
   name: string
   pitch_block: string
+  sender_info: string
   created_at: string
 }
 

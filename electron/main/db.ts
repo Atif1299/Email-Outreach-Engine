@@ -64,6 +64,22 @@ function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_lead_sends_lead ON lead_sends(lead_id, campaign_id);
   `)
+  const campaignCols = db.prepare('PRAGMA table_info(campaigns)').all() as { name: string }[]
+  if (!campaignCols.some((c) => c.name === 'sender_info')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN sender_info TEXT NOT NULL DEFAULT ''`)
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lead_body_overrides (
+      lead_id INTEGER NOT NULL,
+      campaign_id INTEGER NOT NULL,
+      step_order INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (lead_id, campaign_id, step_order),
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    );
+  `)
 }
 
 export function insertImportBatch(filename: string): number {
@@ -129,6 +145,13 @@ export function deleteLead(id: number) {
   getDb().prepare('DELETE FROM leads WHERE id = ?').run(id)
 }
 
+/** Removes all leads and their send history; clears import batch records. Next import starts clean. */
+export function clearAllLeadsData() {
+  const db = getDb()
+  db.prepare('DELETE FROM leads').run()
+  db.prepare('DELETE FROM import_batches').run()
+}
+
 export function getLead(id: number) {
   const row = getDb()
     .prepare('SELECT id, import_batch_id, email, data_json, created_at FROM leads WHERE id = ?')
@@ -146,34 +169,85 @@ export function getLead(id: number) {
 
 export function listCampaigns() {
   return getDb()
-    .prepare(`SELECT id, name, pitch_block, created_at FROM campaigns ORDER BY id DESC`)
-    .all() as { id: number; name: string; pitch_block: string; created_at: string }[]
+    .prepare(
+      `SELECT id, name, pitch_block, sender_info, created_at FROM campaigns ORDER BY id DESC`,
+    )
+    .all() as {
+      id: number
+      name: string
+      pitch_block: string
+      sender_info: string
+      created_at: string
+    }[]
 }
 
 export function getCampaign(id: number) {
   return getDb()
-    .prepare(`SELECT id, name, pitch_block, created_at FROM campaigns WHERE id = ?`)
+    .prepare(`SELECT id, name, pitch_block, sender_info, created_at FROM campaigns WHERE id = ?`)
     .get(id) as
-    | { id: number; name: string; pitch_block: string; created_at: string }
+    | { id: number; name: string; pitch_block: string; sender_info: string; created_at: string }
     | undefined
 }
 
-export function createCampaign(name: string, pitchBlock: string) {
+export function createCampaign(name: string, pitchBlock: string, senderInfo: string) {
   const db = getDb()
   const r = db
-    .prepare('INSERT INTO campaigns (name, pitch_block, created_at) VALUES (?, ?, ?)')
-    .run(name, pitchBlock, new Date().toISOString())
+    .prepare(
+      'INSERT INTO campaigns (name, pitch_block, sender_info, created_at) VALUES (?, ?, ?, ?)',
+    )
+    .run(name, pitchBlock, senderInfo, new Date().toISOString())
   return Number(r.lastInsertRowid)
 }
 
-export function updateCampaign(id: number, name: string, pitchBlock: string) {
+export function updateCampaign(id: number, name: string, pitchBlock: string, senderInfo: string) {
   getDb()
-    .prepare('UPDATE campaigns SET name = ?, pitch_block = ? WHERE id = ?')
-    .run(name, pitchBlock, id)
+    .prepare('UPDATE campaigns SET name = ?, pitch_block = ?, sender_info = ? WHERE id = ?')
+    .run(name, pitchBlock, senderInfo, id)
 }
 
 export function deleteCampaign(id: number) {
   getDb().prepare('DELETE FROM campaigns WHERE id = ?').run(id)
+}
+
+export function getLeadBodyOverride(
+  leadId: number,
+  campaignId: number,
+  stepOrder: number,
+): string | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT body FROM lead_body_overrides WHERE lead_id = ? AND campaign_id = ? AND step_order = ?`,
+    )
+    .get(leadId, campaignId, stepOrder) as { body: string } | undefined
+  return row?.body
+}
+
+export function replaceLeadBodyOverrides(
+  campaignId: number,
+  stepOrder: number,
+  items: { leadId: number; body: string }[],
+) {
+  const db = getDb()
+  const ins = db.prepare(
+    `INSERT INTO lead_body_overrides (lead_id, campaign_id, step_order, body, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(lead_id, campaign_id, step_order) DO UPDATE SET
+       body = excluded.body,
+       updated_at = excluded.updated_at`,
+  )
+  const run = db.transaction(() => {
+    const now = new Date().toISOString()
+    for (const { leadId, body } of items) {
+      ins.run(leadId, campaignId, stepOrder, body, now)
+    }
+  })
+  run()
+}
+
+export function clearLeadBodyOverridesForStep(campaignId: number, stepOrder: number) {
+  getDb()
+    .prepare(`DELETE FROM lead_body_overrides WHERE campaign_id = ? AND step_order = ?`)
+    .run(campaignId, stepOrder)
 }
 
 export function listSteps(campaignId: number) {

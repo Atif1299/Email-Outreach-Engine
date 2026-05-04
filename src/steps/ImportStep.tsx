@@ -10,7 +10,7 @@ export function ImportStep({
   onImported,
   onValidityChange,
 }: {
-  onImported: () => void
+  onImported: (leadIds: number[]) => void
   onValidityChange: (ok: boolean) => void
 }) {
   const api = outreach()
@@ -52,9 +52,21 @@ export function ImportStep({
     setMsg(null)
     try {
       const r = await api.importCommit({ filePath: path, mapping })
-      setMsg(`Imported ${r.imported} leads. Skipped ${r.skippedNoEmail} without valid email.`)
+      setMsg(
+        [
+          `Replaced all leads with this file. Saved ${r.imported} unique email${r.imported === 1 ? '' : 's'}.`,
+          r.duplicatesSkipped > 0
+            ? `Skipped ${r.duplicatesSkipped} duplicate row${r.duplicatesSkipped === 1 ? '' : 's'} (same email).`
+            : null,
+          r.skippedNoEmail > 0
+            ? `${r.skippedNoEmail} row${r.skippedNoEmail === 1 ? '' : 's'} had no valid email.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      )
       setImportDone(true)
-      onImported()
+      onImported(r.leadIds)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
     } finally {
@@ -68,7 +80,7 @@ export function ImportStep({
     <div className="space-y-8">
       <Panel
         title="Import leads"
-        description="Choose a CSV or Excel file from your export. Map at least the email column before importing."
+        description="Each import replaces all leads in the app with this file. Map at least the email column before importing."
       >
         <SecondaryButton disabled={busy} onClick={pickFile}>
           Choose file…
