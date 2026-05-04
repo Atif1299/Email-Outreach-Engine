@@ -103,54 +103,58 @@ export function SendStep({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Panel title="Campaign to send">
-          <select
-            value={campaignId ?? ''}
-            onChange={(e) => setCampaignId(+e.target.value || null)}
-            className="text-sm"
-          >
-            <option value="">Select…</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Panel>
-        <Panel title="Queue status">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Due now</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{due}</p>
-            </div>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                Recipients selected
-              </p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{selectedCount}</p>
-            </div>
+      <div className="grid gap-4 md:grid-cols-2 md:items-stretch">
+        <Panel title="Campaign to send" className="flex h-full min-h-0 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col justify-center">
+            <select
+              value={campaignId ?? ''}
+              onChange={(e) => setCampaignId(+e.target.value || null)}
+              className="min-h-[2.5rem] w-full text-sm"
+            >
+              <option value="">Select…</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
-          {status && (
-            <div className="mt-4 space-y-1 border-t border-edge pt-4 text-xs text-ink-muted">
-              <p>
-                <span className="text-ink-faint">Running</span>{' '}
-                <span className={status.running ? 'font-medium text-accent' : 'text-ink-faint'}>
-                  {status.running ? 'yes' : 'no'}
-                </span>
-                {' · '}
-                <span className="text-ink-faint">Paused</span>{' '}
-                <span className="font-medium text-ink">{status.paused ? 'yes' : 'no'}</span>
-              </p>
-              <p>
-                Sent today: <span className="text-ink">{status.sendsToday}</span> · Session:{' '}
-                <span className="text-ink">{status.processedInSession}</span>
-              </p>
-              {status.lastError && (
-                <p className="font-medium text-danger">Error: {status.lastError}</p>
-              )}
+        </Panel>
+        <Panel title="Queue status" className="flex h-full min-h-0 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Due now</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{due}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                  Recipients selected
+                </p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">{selectedCount}</p>
+              </div>
             </div>
-          )}
+            {status && (
+              <div className="mt-4 flex-1 border-t border-edge pt-4 text-xs text-ink-muted">
+                <p>
+                  {status.running ? (
+                    <span className="font-medium text-accent">Running</span>
+                  ) : (
+                    <span className="text-ink-faint">Idle</span>
+                  )}
+                  <span className="text-ink-faint"> · </span>
+                  Paused: <span className="font-medium text-ink">{status.paused ? 'yes' : 'no'}</span>
+                  <span className="text-ink-faint"> · </span>
+                  Sent today: <span className="text-ink">{status.sendsToday}</span>
+                  <span className="text-ink-faint"> · </span>
+                  Session: <span className="text-ink">{status.processedInSession}</span>
+                </p>
+                {status.lastError && (
+                  <p className="mt-2 font-medium text-danger">Error: {status.lastError}</p>
+                )}
+              </div>
+            )}
+          </div>
         </Panel>
       </div>
 
@@ -181,13 +185,13 @@ export function SendStep({
         <button
           type="button"
           onClick={() => setPreviewOpen((o) => !o)}
-          className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-raised"
+          className="flex w-full items-center justify-between rounded-t-card px-5 py-4 text-left text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-raised"
         >
           Preview & AI tools
           <span className="text-ink-faint">{previewOpen ? '▼' : '▶'}</span>
         </button>
         {previewOpen && (
-          <div className="space-y-4 border-t border-edge px-5 pb-5 pt-4">
+          <div className="space-y-4 border-t border-edge px-5 pb-6 pt-5 md:px-6">
             <div className="flex flex-wrap gap-3">
               <label className="text-sm text-ink-muted">
                 Lead
