@@ -4,6 +4,7 @@ import { ConnectStep } from '@/steps/ConnectStep'
 import { ImportStep } from '@/steps/ImportStep'
 import { LeadsStep } from '@/steps/LeadsStep'
 import { CampaignStep } from '@/steps/CampaignStep'
+import { PreviewStep } from '@/steps/PreviewStep'
 import { SendStep } from '@/steps/SendStep'
 import { readStoredStep, storeStep, WIZARD_STEPS, STEP_COUNT } from '@/wizard/constants'
 import './App.css'
@@ -102,6 +103,14 @@ export default function App() {
         />
       )}
       {step === 4 && (
+        <PreviewStep
+          leadVersion={leadVersion}
+          selectedIds={selectedIds}
+          preferredCampaignId={lastCampaignId}
+          onValidityChange={setGate}
+        />
+      )}
+      {step === 5 && (
         <SendStep
           leadVersion={leadVersion}
           selectedIds={selectedIds}

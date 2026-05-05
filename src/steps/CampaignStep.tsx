@@ -47,10 +47,14 @@ export function CampaignStep({
   const [steps, setSteps] = useState<DraftStep[]>([defaultStep(1)])
   const [activeStepIdx, setActiveStepIdx] = useState(0)
   const [editorTab, setEditorTab] = useState<'overview' | 'sequence'>('overview')
+  const [saving, setSaving] = useState(false)
+  const [saveNote, setSaveNote] = useState<string | null>(null)
   const pitchRef = useRef<HTMLTextAreaElement>(null)
   const senderRef = useRef<HTMLTextAreaElement>(null)
-  const mergeTargetRef = useRef<'pitch' | 'sender'>('pitch')
-  const mergeCursorRef = useRef<{ target: 'pitch' | 'sender'; pos: number } | null>(null)
+  const subjectRef = useRef<HTMLInputElement>(null)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const mergeTargetRef = useRef<'pitch' | 'sender' | 'subject' | 'body'>('pitch')
+  const mergeCursorRef = useRef<{ target: 'pitch' | 'sender' | 'subject' | 'body'; pos: number } | null>(null)
 
   const valid = committedId !== null && steps.length > 0
 
@@ -100,17 +104,27 @@ export function CampaignStep({
   }
 
   const save = async () => {
-    const id = await api.campaignSave({
-      id: editId ?? undefined,
-      name,
-      pitch_block: pitch,
-      sender_info: senderInfo,
-      steps: steps.map((s, i) => ({ ...s, step_order: i + 1 })),
-    })
-    setEditId(id)
-    setCommittedId(id)
-    onCampaignSaved(id)
-    void loadList()
+    setSaving(true)
+    setSaveNote(null)
+    try {
+      const id = await api.campaignSave({
+        id: editId ?? undefined,
+        name,
+        pitch_block: pitch,
+        sender_info: senderInfo,
+        steps: steps.map((s, i) => ({ ...s, step_order: i + 1 })),
+      })
+      setEditId(id)
+      setCommittedId(id)
+      onCampaignSaved(id)
+      setSaveNote('Saved.')
+      void loadList()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setSaveNote(`Save failed: ${msg}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const addStep = () => {
@@ -132,29 +146,55 @@ export function CampaignStep({
     setActiveStepIdx((i) => (steps.length === 0 ? 0 : Math.min(i, steps.length - 1)))
   }, [steps.length])
 
-  const insertPitchMergeTag = useCallback((tag: string) => {
+  const insertMergeTag = useCallback((tag: string) => {
     const target = mergeTargetRef.current
-    const el = target === 'sender' ? senderRef.current : pitchRef.current
+    const el =
+      target === 'sender'
+        ? senderRef.current
+        : target === 'subject'
+          ? subjectRef.current
+          : target === 'body'
+            ? bodyRef.current
+            : pitchRef.current
     if (!el) return
     const start = el.selectionStart ?? 0
     const end = el.selectionEnd ?? 0
     mergeCursorRef.current = { target, pos: start + tag.length }
-    const apply =
-      target === 'sender'
-        ? () => setSenderInfo((prev) => prev.slice(0, start) + tag + prev.slice(end))
-        : () => setPitch((prev) => prev.slice(0, start) + tag + prev.slice(end))
-    apply()
-  }, [])
+    if (target === 'sender') {
+      setSenderInfo((prev) => prev.slice(0, start) + tag + prev.slice(end))
+      return
+    }
+    if (target === 'pitch') {
+      setPitch((prev) => prev.slice(0, start) + tag + prev.slice(end))
+      return
+    }
+    setSteps((prev) =>
+      prev.map((s, i) => {
+        if (i !== activeStepIdx) return s
+        if (target === 'subject') {
+          return { ...s, subject_template: s.subject_template.slice(0, start) + tag + s.subject_template.slice(end) }
+        }
+        return { ...s, body_template: s.body_template.slice(0, start) + tag + s.body_template.slice(end) }
+      }),
+    )
+  }, [activeStepIdx])
 
   useLayoutEffect(() => {
     const cur = mergeCursorRef.current
     if (cur === null) return
     mergeCursorRef.current = null
-    const el = cur.target === 'sender' ? senderRef.current : pitchRef.current
+    const el =
+      cur.target === 'sender'
+        ? senderRef.current
+        : cur.target === 'subject'
+          ? subjectRef.current
+          : cur.target === 'body'
+            ? bodyRef.current
+            : pitchRef.current
     if (!el) return
     el.focus()
     el.setSelectionRange(cur.pos, cur.pos)
-  }, [pitch, senderInfo])
+  }, [pitch, senderInfo, steps, activeStepIdx])
 
   const editingTitle =
     editId === null && committedId === null ? 'New campaign (unsaved)' : `Editing: ${name}`
@@ -166,7 +206,7 @@ export function CampaignStep({
       </p>
 
       <div className="flex min-h-0 flex-col gap-5 xl:max-h-[min(calc(100dvh-10rem),56rem)] xl:min-h-0 xl:flex-row xl:items-stretch xl:gap-5 xl:overflow-hidden">
-        <div className="shrink-0 xl:max-w-[300px] xl:shrink-0">
+        <div className="shrink-0 xl:w-[clamp(16rem,22vw,24rem)] xl:max-w-[min(24rem,28vw)] xl:shrink-0">
           <div className="mb-2 flex items-center gap-2">
             <span
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-accent bg-accent-subtle text-xs font-bold tabular-nums text-accent"
@@ -180,33 +220,39 @@ export function CampaignStep({
             <SecondaryButton className="mb-3 w-full" onClick={newCampaign}>
               New campaign
             </SecondaryButton>
-            <ul className="space-y-1">
-              {list.map((c) => (
-                <li key={c.id} className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => void loadOne(c.id)}
-                    className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
-                      }`}
-                  >
-                    {c.name}
-                  </button>
-                  <DangerButton
-                    className="shrink-0 px-2.5 py-2.5"
-                    aria-label={`Delete ${c.name}`}
-                    title="Delete campaign"
-                    onClick={async () => {
-                      if (!confirm(`Delete campaign “${c.name}”?`)) return
-                      await api.campaignDelete(c.id)
-                      if (editId === c.id) newCampaign()
-                      void loadList()
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-                  </DangerButton>
-                </li>
-              ))}
-            </ul>
+            {list.length === 0 ? (
+              <p className="text-sm leading-snug text-ink-muted">
+                No campaigns yet. Click <span className="font-medium text-ink">New campaign</span> to create one.
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {list.map((c) => (
+                  <li key={c.id} className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void loadOne(c.id)}
+                      className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                        }`}
+                    >
+                      {c.name}
+                    </button>
+                    <DangerButton
+                      className="shrink-0 px-2.5 py-2.5"
+                      aria-label={`Delete ${c.name}`}
+                      title="Delete campaign"
+                      onClick={async () => {
+                        if (!confirm(`Delete campaign “${c.name}”?`)) return
+                        await api.campaignDelete(c.id)
+                        if (editId === c.id) newCampaign()
+                        void loadList()
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                    </DangerButton>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Panel>
         </div>
 
@@ -225,35 +271,58 @@ export function CampaignStep({
           </div>
 
           <div
-            className="mb-3 flex gap-1 rounded-lg border border-edge bg-canvas p-1"
-            role="tablist"
-            aria-label="Editor sections"
+            className="mb-3 flex flex-wrap items-center justify-between gap-2"
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={editorTab === 'overview'}
-              onClick={() => setEditorTab('overview')}
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'overview'
-                ? 'bg-accent-subtle text-accent'
-                : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
-                }`}
+            <div
+              className="flex gap-1 rounded-lg border border-edge bg-surface p-1"
+              role="tablist"
+              aria-label="Editor sections"
             >
-              Overview
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={editorTab === 'sequence'}
-              onClick={() => setEditorTab('sequence')}
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'sequence'
-                ? 'bg-accent-subtle text-accent'
-                : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
-                }`}
-            >
-              Sequence
-            </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={editorTab === 'overview'}
+                onClick={() => setEditorTab('overview')}
+                className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'overview'
+                  ? 'bg-accent-subtle text-accent'
+                  : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
+                  }`}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={editorTab === 'sequence'}
+                onClick={() => setEditorTab('sequence')}
+                className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'sequence'
+                  ? 'bg-accent-subtle text-accent'
+                  : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
+                  }`}
+              >
+                Sequence
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {editorTab === 'sequence' && (
+                <SecondaryButton onClick={addStep} className="border-dashed border-edge">
+                  + Add follow-up step
+                </SecondaryButton>
+              )}
+              <PrimaryButton onClick={() => void save()} disabled={saving}>
+                {saving ? 'Saving…' : 'Save campaign'}
+              </PrimaryButton>
+            </div>
           </div>
+          {saveNote && (
+            <p
+              className={`text-sm ${saveNote.startsWith('Save failed:') ? 'text-danger' : 'text-ink-muted'}`}
+              role={saveNote.startsWith('Save failed:') ? 'alert' : undefined}
+            >
+              {saveNote}
+            </p>
+          )}
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
             {editorTab === 'overview' && (
@@ -265,7 +334,7 @@ export function CampaignStep({
                     : 'Name, pitch, and sender apply to every step in this campaign.'
                 }
               >
-                <div className="space-y-4">
+                <div className="mx-auto w-full max-w-[65ch] space-y-4">
                   <div>
                     <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                       Campaign name
@@ -313,27 +382,6 @@ export function CampaignStep({
                       className="mt-1.5 font-mono text-xs leading-relaxed"
                     />
                   </div>
-                  <details className="rounded-lg border border-edge bg-canvas/40 px-3 py-2">
-                    <summary className="cursor-pointer select-none text-sm font-medium text-ink-muted hover:text-ink">
-                      Available merge tags
-                    </summary>
-                    <p className="mt-2 text-xs leading-relaxed text-ink-muted">
-                      Click a tag to insert at the cursor; uses whichever field you focused last (pitch or sender — default is
-                      pitch).
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {PITCH_MERGE_TAGS.map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => insertPitchMergeTag(tag)}
-                          className="rounded-md border border-edge bg-surface-raised px-2 py-1 font-mono text-[11px] leading-none text-ink-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)] transition-colors hover:border-accent/40 hover:bg-surface hover:text-ink"
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
                 </div>
               </Panel>
             )}
@@ -358,7 +406,7 @@ export function CampaignStep({
                   </div>
                   {steps.map((step, idx) =>
                     idx === activeStepIdx ? (
-                      <div key={idx} className="mt-4 space-y-3">
+                      <div key={idx} className="mx-auto mt-4 w-full max-w-[65ch] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0 flex-1 space-y-1">
                             <label className="flex items-center gap-2 text-sm text-ink-muted">
@@ -406,12 +454,16 @@ export function CampaignStep({
                           </span>
                           <input
                             type="text"
+                            ref={subjectRef}
                             value={step.subject_template}
                             onChange={(e) =>
                               setSteps((s) =>
                                 s.map((x, i) => (i === idx ? { ...x, subject_template: e.target.value } : x)),
                               )
                             }
+                            onFocus={() => {
+                              mergeTargetRef.current = 'subject'
+                            }}
                             className="mt-1.5 block w-full font-mono text-xs leading-relaxed"
                           />
                         </div>
@@ -420,30 +472,49 @@ export function CampaignStep({
                             Body
                           </span>
                           <AutosizeTextarea
+                            ref={bodyRef}
                             value={step.body_template}
                             onChange={(e) =>
                               setSteps((s) =>
                                 s.map((x, i) => (i === idx ? { ...x, body_template: e.target.value } : x)),
                               )
                             }
+                            onFocus={() => {
+                              mergeTargetRef.current = 'body'
+                            }}
                             minHeightPx={120}
                             maxHeightPx={420}
                             className="font-mono text-xs leading-relaxed"
                           />
                         </div>
+                        <details className="rounded-lg border border-edge bg-canvas/40 px-3 py-2">
+                          <summary className="cursor-pointer select-none text-sm font-medium text-ink-muted hover:text-ink">
+                            Available merge tags
+                          </summary>
+                          <p className="mt-2 text-xs leading-relaxed text-ink-muted">
+                            Click a tag to insert at the cursor; uses whichever field you focused last (subject/body — default is pitch).
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {PITCH_MERGE_TAGS.map((tag) => (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => insertMergeTag(tag)}
+                                className="rounded-md border border-edge bg-surface-raised px-2 py-1 font-mono text-[11px] leading-none text-ink-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)] transition-colors hover:border-accent/40 hover:bg-surface hover:text-ink"
+                              >
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
                       </div>
                     ) : null,
                   )}
                 </Panel>
-
-                <SecondaryButton onClick={addStep} className="w-full border-dashed border-edge">
-                  + Add follow-up step
-                </SecondaryButton>
               </>
             )}
 
             <div className="flex flex-wrap gap-3">
-              <PrimaryButton onClick={() => void save()}>Save campaign</PrimaryButton>
               {editId != null && (
                 <DangerButton
                   onClick={async () => {

@@ -21,6 +21,26 @@ function cellValue(l: Lead, key: (typeof LEAD_FIELD_KEYS)[number]) {
   return l.data[key] ?? ''
 }
 
+/** Wider caps on large viewports so URL/email use horizontal space; table still scrolls when needed. */
+function columnHeaderClass(key: (typeof LEAD_FIELD_KEYS)[number]): string {
+  const base = 'sticky top-0 z-20 whitespace-nowrap border-b border-edge bg-surface-raised px-3 py-3'
+  if (key === 'linkedin_url') return `${base} min-w-[12rem] lg:min-w-[18rem]`
+  if (key === 'email') return `${base} min-w-[11rem] lg:min-w-[15rem]`
+  if (key === 'current_employer' || key === 'current_title') return `${base} min-w-[10rem]`
+  return `${base} min-w-[9rem]`
+}
+
+function columnCellClass(key: (typeof LEAD_FIELD_KEYS)[number]): string {
+  const base = 'truncate px-3 py-3 text-ink-muted group-hover:bg-surface-raised/80'
+  if (key === 'linkedin_url')
+    return `${base} min-w-[12rem] max-w-[min(42rem,58vw)] lg:min-w-[18rem] lg:max-w-[min(48rem,52vw)]`
+  if (key === 'email')
+    return `${base} min-w-[11rem] max-w-[min(36rem,52vw)] lg:min-w-[15rem] lg:max-w-[min(40rem,48vw)]`
+  if (key === 'current_employer' || key === 'current_title')
+    return `${base} min-w-[10rem] max-w-[min(22rem,36vw)]`
+  return `${base} min-w-[9rem] max-w-[min(18rem,28vw)]`
+}
+
 export function LeadsStep({
   leadVersion,
   selectedIds,
@@ -125,10 +145,7 @@ export function LeadsStep({
                       />
                     </th>
                     {LEAD_FIELD_KEYS.map((key) => (
-                      <th
-                        key={key}
-                        className="sticky top-0 z-20 min-w-[9rem] whitespace-nowrap border-b border-edge bg-surface-raised px-3 py-3"
-                      >
+                      <th key={key} className={columnHeaderClass(key)}>
                         {columnLabel(key)}
                       </th>
                     ))}
@@ -151,7 +168,7 @@ export function LeadsStep({
                       {LEAD_FIELD_KEYS.map((key) => (
                         <td
                           key={key}
-                          className="max-w-[min(16rem,40vw)] truncate px-3 py-3 text-ink-muted group-hover:bg-surface-raised/80"
+                          className={columnCellClass(key)}
                           title={cellValue(l, key) || undefined}
                         >
                           {key === 'email' ? (

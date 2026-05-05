@@ -23,7 +23,8 @@ export const WIZARD_STEPS = [
   { id: 'connect', label: 'Connect', next: 'Import' },
   { id: 'import', label: 'Import', next: 'Leads' },
   { id: 'leads', label: 'Leads', next: 'Campaign' },
-  { id: 'campaign', label: 'Campaign', next: 'Queue' },
+  { id: 'campaign', label: 'Campaign', next: 'Preview' },
+  { id: 'preview', label: 'Preview', next: 'Queue' },
   { id: 'send', label: 'Queue', next: '' },
 ] as const
 

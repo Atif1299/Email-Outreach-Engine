@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react'
-import { Layers3, Plug, Send, Upload, Users } from 'lucide-react'
+import { Eye, Layers3, Plug, Send, Upload, Users } from 'lucide-react'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 import { WIZARD_STEPS } from '@/wizard/constants'
 
-const STEP_ICONS = [Plug, Upload, Users, Layers3, Send] as const
+const STEP_ICONS = [Plug, Upload, Users, Layers3, Eye, Send] as const
+
+/** Main column tracks window width; keeps modest side gutters and a generous upper bound on ultrawide screens. */
+const SHELL_MAX_CLASS = 'max-w-[min(100%,min(160rem,calc(100vw-3rem)))]'
 
 export function AppShell({
   currentStep,
@@ -33,7 +36,7 @@ export function AppShell({
       </header>
 
       <nav className="shrink-0 border-b border-edge bg-surface py-2.5" aria-label="Workflow steps">
-        <div className="mx-auto flex w-full max-w-[min(100%,72rem)] flex-wrap gap-2 px-5 md:px-7">
+        <div className={`mx-auto flex w-full ${SHELL_MAX_CLASS} flex-wrap gap-2 px-5 md:px-7`}>
           {WIZARD_STEPS.map((s, i) => {
             const Icon = STEP_ICONS[i]
             const active = i === currentStep
@@ -60,13 +63,13 @@ export function AppShell({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[min(100%,72rem)] px-5 py-4 md:px-7 md:py-5">
+          <div className={`mx-auto w-full ${SHELL_MAX_CLASS} px-5 py-4 md:px-7 md:py-5`}>
             {children}
           </div>
         </div>
 
         <footer className="shrink-0 border-t border-edge bg-canvas">
-          <div className="mx-auto flex w-full max-w-[min(100%,72rem)] items-center justify-between gap-4 px-5 py-3.5 md:px-7">
+          <div className={`mx-auto flex w-full ${SHELL_MAX_CLASS} items-center justify-between gap-4 px-5 py-3.5 md:px-7`}>
             <SecondaryButton onClick={onBack} disabled={!canGoBack} className="min-w-[88px]">
               Back
             </SecondaryButton>
@@ -76,7 +79,7 @@ export function AppShell({
               </PrimaryButton>
             ) : (
               <p className="max-w-md text-right text-xs leading-snug text-ink-muted">
-                Queue controls above; preview is optional. Back returns to earlier steps.
+                Preview is its own step; Queue is where you start or pause sending. Use Back to return to earlier steps.
               </p>
             )}
           </div>
