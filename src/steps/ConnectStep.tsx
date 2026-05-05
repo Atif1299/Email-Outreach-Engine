@@ -70,170 +70,172 @@ export function ConnectStep({
 
   return (
     <div className="space-y-4">
-      <Panel
-        title="Connect email"
-        description="Use Gmail with an app password (2FA), or your provider’s SMTP. Required before sending."
-      >
-        <div className="space-y-2.5">
-          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2 sm:items-end">
-            <div className="min-w-0">
-              <FieldLabel htmlFor="smtp-host">SMTP host</FieldLabel>
-              <input
-                id="smtp-host"
-                type="text"
-                autoComplete="off"
-                value={s.smtp.host}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, host: e.target.value } })}
-                className="mt-1.5 block w-full"
-              />
-            </div>
-            <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[6.5rem_1fr] sm:items-end">
-              <div className="w-full min-w-0">
-                <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+        <Panel
+          title="Connect email"
+          description="Use Gmail with an app password (2FA), or your provider’s SMTP. Required before sending."
+        >
+          <div className="space-y-2.5">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2 sm:items-end">
+              <div className="min-w-0">
+                <FieldLabel htmlFor="smtp-host">SMTP host</FieldLabel>
                 <input
-                  id="smtp-port"
-                  type="number"
-                  value={s.smtp.port}
-                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
+                  id="smtp-host"
+                  type="text"
+                  autoComplete="off"
+                  value={s.smtp.host}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, host: e.target.value } })}
                   className="mt-1.5 block w-full"
                 />
               </div>
-              <div className="flex min-h-[2.25rem] w-full min-w-0 items-center gap-2 self-end rounded-lg border border-edge bg-surface-raised px-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
+              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[6.5rem_1fr] sm:items-end">
+                <div className="w-full min-w-0">
+                  <FieldLabel htmlFor="smtp-port">Port</FieldLabel>
+                  <input
+                    id="smtp-port"
+                    type="number"
+                    value={s.smtp.port}
+                    onChange={(e) => setS({ ...s, smtp: { ...s.smtp, port: +e.target.value } })}
+                    className="mt-1.5 block w-full"
+                  />
+                </div>
+                <div className="flex min-h-[2.25rem] w-full min-w-0 items-center gap-2 self-end rounded-lg border border-edge bg-surface-raised px-3 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
+                  <input
+                    id="smtp-secure"
+                    type="checkbox"
+                    checked={s.smtp.secure}
+                    onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
+                    className="h-4 w-4 shrink-0"
+                  />
+                  <label htmlFor="smtp-secure" className="min-w-0 cursor-pointer text-sm text-ink-muted">
+                    SSL / TLS
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="min-w-0">
+                <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
                 <input
-                  id="smtp-secure"
-                  type="checkbox"
-                  checked={s.smtp.secure}
-                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, secure: e.target.checked } })}
-                  className="h-4 w-4 shrink-0"
+                  id="smtp-user"
+                  type="text"
+                  autoComplete="username"
+                  value={s.smtp.user}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, user: e.target.value } })}
+                  className="mt-1.5 block w-full"
                 />
-                <label htmlFor="smtp-secure" className="min-w-0 cursor-pointer text-sm text-ink-muted">
-                  SSL / TLS
-                </label>
+              </div>
+              <div className="min-w-0">
+                <FieldLabel htmlFor="smtp-pass">SMTP password</FieldLabel>
+                <SecretInput
+                  id="smtp-pass"
+                  value={smtpPass}
+                  onChange={setSmtpPass}
+                  autoComplete="new-password"
+                  aria-describedby="smtp-pass-hint"
+                />
+                <FieldHint id="smtp-pass-hint">Leave blank to keep the saved password.</FieldHint>
+              </div>
+            </div>
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="min-w-0">
+                <FieldLabel htmlFor="from-name">From name</FieldLabel>
+                <input
+                  id="from-name"
+                  type="text"
+                  value={s.smtp.fromName}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromName: e.target.value } })}
+                  className="mt-1.5 block w-full"
+                />
+              </div>
+              <div className="min-w-0">
+                <FieldLabel htmlFor="from-email">From email</FieldLabel>
+                <input
+                  id="from-email"
+                  type="email"
+                  value={s.smtp.fromEmail}
+                  onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromEmail: e.target.value } })}
+                  className="mt-1.5 block w-full"
+                />
+              </div>
+            </div>
+            <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="min-w-0">
+                <FieldLabel htmlFor="delay-min">Min delay between sends (ms)</FieldLabel>
+                <input
+                  id="delay-min"
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={s.sendDelayMinMs}
+                  onChange={(e) => setS({ ...s, sendDelayMinMs: +e.target.value })}
+                  className="mt-1.5 block w-full"
+                  aria-describedby="delay-range-hint"
+                />
+              </div>
+              <div className="min-w-0">
+                <FieldLabel htmlFor="delay-max">Max delay between sends (ms)</FieldLabel>
+                <input
+                  id="delay-max"
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={s.sendDelayMaxMs}
+                  onChange={(e) => setS({ ...s, sendDelayMaxMs: +e.target.value })}
+                  className="mt-1.5 block w-full"
+                  aria-describedby="delay-range-hint"
+                />
+              </div>
+              <div className="min-w-0 sm:col-span-2">
+                <FieldHint id="delay-range-hint">
+                  Queue waits a random duration between min and max after each send (inclusive). Default range is 2–5
+                  seconds.
+                </FieldHint>
+              </div>
+              <div className="min-w-0">
+                <FieldLabel htmlFor="cap">Daily send cap</FieldLabel>
+                <input
+                  id="cap"
+                  type="number"
+                  min={1}
+                  value={s.dailyCap}
+                  onChange={(e) => setS({ ...s, dailyCap: +e.target.value })}
+                  className="mt-1.5 block w-full"
+                />
               </div>
             </div>
           </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <div className="min-w-0">
-              <FieldLabel htmlFor="smtp-user">Username</FieldLabel>
-              <input
-                id="smtp-user"
-                type="text"
-                autoComplete="username"
-                value={s.smtp.user}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, user: e.target.value } })}
-                className="mt-1.5 block w-full"
-              />
-            </div>
-            <div className="min-w-0">
-              <FieldLabel htmlFor="smtp-pass">SMTP password</FieldLabel>
-              <SecretInput
-                id="smtp-pass"
-                value={smtpPass}
-                onChange={setSmtpPass}
-                autoComplete="new-password"
-                aria-describedby="smtp-pass-hint"
-              />
-              <FieldHint id="smtp-pass-hint">Leave blank to keep the saved password.</FieldHint>
-            </div>
-          </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <div className="min-w-0">
-              <FieldLabel htmlFor="from-name">From name</FieldLabel>
-              <input
-                id="from-name"
-                type="text"
-                value={s.smtp.fromName}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromName: e.target.value } })}
-                className="mt-1.5 block w-full"
-              />
-            </div>
-            <div className="min-w-0">
-              <FieldLabel htmlFor="from-email">From email</FieldLabel>
-              <input
-                id="from-email"
-                type="email"
-                value={s.smtp.fromEmail}
-                onChange={(e) => setS({ ...s, smtp: { ...s.smtp, fromEmail: e.target.value } })}
-                className="mt-1.5 block w-full"
-              />
-            </div>
-          </div>
-          <div className="grid w-full min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <div className="min-w-0">
-              <FieldLabel htmlFor="delay-min">Min delay between sends (ms)</FieldLabel>
-              <input
-                id="delay-min"
-                type="number"
-                min={0}
-                step={100}
-                value={s.sendDelayMinMs}
-                onChange={(e) => setS({ ...s, sendDelayMinMs: +e.target.value })}
-                className="mt-1.5 block w-full"
-                aria-describedby="delay-range-hint"
-              />
-            </div>
-            <div className="min-w-0">
-              <FieldLabel htmlFor="delay-max">Max delay between sends (ms)</FieldLabel>
-              <input
-                id="delay-max"
-                type="number"
-                min={0}
-                step={100}
-                value={s.sendDelayMaxMs}
-                onChange={(e) => setS({ ...s, sendDelayMaxMs: +e.target.value })}
-                className="mt-1.5 block w-full"
-                aria-describedby="delay-range-hint"
-              />
-            </div>
-            <div className="min-w-0 sm:col-span-2">
-              <FieldHint id="delay-range-hint">
-                Queue waits a random duration between min and max after each send (inclusive). Default range is 2–5
-                seconds.
-              </FieldHint>
-            </div>
-            <div className="min-w-0">
-              <FieldLabel htmlFor="cap">Daily send cap</FieldLabel>
-              <input
-                id="cap"
-                type="number"
-                min={1}
-                value={s.dailyCap}
-                onChange={(e) => setS({ ...s, dailyCap: +e.target.value })}
-                className="mt-1.5 block w-full"
-              />
-            </div>
-          </div>
-        </div>
-      </Panel>
+        </Panel>
 
-      <Panel
-        title="Optional: AI for campaign steps"
-        description="Uses one OpenAI key for “Generate with AI” on Campaign steps and for Preview / AI on the Queue step. Skip until you need those features."
-      >
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          <div className="min-w-0">
-            <FieldLabel htmlFor="openai-model">OpenAI model</FieldLabel>
-            <input
-              id="openai-model"
-              type="text"
-              value={s.openaiModel}
-              onChange={(e) => setS({ ...s, openaiModel: e.target.value })}
-              className="mt-1.5 block w-full"
-            />
+        <Panel
+          title="Optional: AI for campaign steps"
+          description="Uses one OpenAI key for “Generate with AI” on Campaign steps and for Preview / AI on the Queue step. Skip until you need those features."
+        >
+          <div className="grid grid-cols-1 gap-2.5">
+            <div className="min-w-0">
+              <FieldLabel htmlFor="openai-model">OpenAI model</FieldLabel>
+              <input
+                id="openai-model"
+                type="text"
+                value={s.openaiModel}
+                onChange={(e) => setS({ ...s, openaiModel: e.target.value })}
+                className="mt-1.5 block w-full"
+              />
+            </div>
+            <div className="min-w-0">
+              <FieldLabel htmlFor="openai-key">OpenAI API key</FieldLabel>
+              <SecretInput
+                id="openai-key"
+                value={openaiKey}
+                onChange={setOpenaiKey}
+                autoComplete="off"
+                aria-describedby="openai-key-hint"
+              />
+              <FieldHint id="openai-key-hint">Leave blank to keep saved key.</FieldHint>
+            </div>
           </div>
-          <div className="min-w-0">
-            <FieldLabel htmlFor="openai-key">OpenAI API key</FieldLabel>
-            <SecretInput
-              id="openai-key"
-              value={openaiKey}
-              onChange={setOpenaiKey}
-              autoComplete="off"
-              aria-describedby="openai-key-hint"
-            />
-            <FieldHint id="openai-key-hint">Leave blank to keep saved key.</FieldHint>
-          </div>
-        </div>
-      </Panel>
+        </Panel>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <PrimaryButton onClick={() => void save()}>Save connection</PrimaryButton>
