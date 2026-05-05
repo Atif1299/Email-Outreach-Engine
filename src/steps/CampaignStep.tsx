@@ -46,6 +46,7 @@ export function CampaignStep({
   const [senderInfo, setSenderInfo] = useState('')
   const [steps, setSteps] = useState<DraftStep[]>([defaultStep(1)])
   const [activeStepIdx, setActiveStepIdx] = useState(0)
+  const [editorTab, setEditorTab] = useState<'overview' | 'sequence'>('overview')
   const pitchRef = useRef<HTMLTextAreaElement>(null)
   const senderRef = useRef<HTMLTextAreaElement>(null)
   const mergeTargetRef = useRef<'pitch' | 'sender'>('pitch')
@@ -84,6 +85,7 @@ export function CampaignStep({
       })),
     )
     setActiveStepIdx(0)
+    setEditorTab('overview')
   }
 
   const newCampaign = () => {
@@ -94,6 +96,7 @@ export function CampaignStep({
     setSenderInfo('')
     setSteps([defaultStep(1), defaultStep(2)])
     setActiveStepIdx(0)
+    setEditorTab('overview')
   }
 
   const save = async () => {
@@ -153,237 +156,307 @@ export function CampaignStep({
     el.setSelectionRange(cur.pos, cur.pos)
   }, [pitch, senderInfo])
 
+  const editingTitle =
+    editId === null && committedId === null ? 'New campaign (unsaved)' : `Editing: ${name}`
+
   return (
-    <div className="flex min-h-0 flex-col gap-5 xl:max-h-[min(calc(100dvh-10rem),56rem)] xl:min-h-0 xl:flex-row xl:items-stretch xl:gap-5 xl:overflow-hidden">
-      <Panel title="Campaigns" className="shrink-0 xl:max-w-[300px] xl:shrink-0">
-        <SecondaryButton className="mb-3 w-full" onClick={newCampaign}>
-          New campaign
-        </SecondaryButton>
-        <ul className="space-y-1">
-          {list.map((c) => (
-            <li key={c.id} className="flex gap-1.5">
-              <button
-                type="button"
-                onClick={() => void loadOne(c.id)}
-                className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
-                  }`}
-              >
-                {c.name}
-              </button>
-              <DangerButton
-                className="shrink-0 px-2.5 py-2.5"
-                aria-label={`Delete ${c.name}`}
-                title="Delete campaign"
-                onClick={async () => {
-                  if (!confirm(`Delete campaign “${c.name}”?`)) return
-                  await api.campaignDelete(c.id)
-                  if (editId === c.id) newCampaign()
-                  void loadList()
-                }}
-              >
-                <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-              </DangerButton>
-            </li>
-          ))}
-        </ul>
-      </Panel>
+    <div className="space-y-4">
+      <p className="text-sm leading-snug text-ink-muted">
+        Choose a campaign from the list or create one, then edit the sequence in the panel on the right.
+      </p>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
-          <Panel
-            title="Compose sequence"
-            description={
-              committedId === null
-                ? 'Save this campaign (or load one from the list) before using Next to continue.'
-                : undefined
-            }
-          >
-            <div className="space-y-4">
-              <div>
-                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                  Campaign name
-                </span>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="mt-1.5 block w-full"
-                />
-              </div>
-              <div>
-                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                  Pitch block (`{'{{pitch_block}}'}`)
-                </span>
-                <AutosizeTextarea
-                  ref={pitchRef}
-                  value={pitch}
-                  onChange={(e) => setPitch(e.target.value)}
-                  onFocus={() => {
-                    mergeTargetRef.current = 'pitch'
-                  }}
-                  minHeightPx={120}
-                  maxHeightPx={360}
-                  className="mt-1.5 font-mono text-xs leading-relaxed"
-                />
-              </div>
-              <div>
-                <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                  Sender / sign-off (`{'{{sender_info}}'}`)
-                </span>
-                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                  Use in your step body (default templates include it after “Best regards,”). Plain text and URLs on
-                  their own lines. Passed to AI so the closing matches your team or personal details.
-                </p>
-                <AutosizeTextarea
-                  ref={senderRef}
-                  value={senderInfo}
-                  onChange={(e) => setSenderInfo(e.target.value)}
-                  onFocus={() => {
-                    mergeTargetRef.current = 'sender'
-                  }}
-                  minHeightPx={80}
-                  maxHeightPx={240}
-                  className="mt-1.5 font-mono text-xs leading-relaxed"
-                />
-              </div>
-              <details className="rounded-lg border border-edge bg-canvas/40 px-3 py-2">
-                <summary className="cursor-pointer select-none text-sm font-medium text-ink-muted hover:text-ink">
-                  Available merge tags
-                </summary>
-                <p className="mt-2 text-xs leading-relaxed text-ink-muted">
-                  Click a tag to insert at the cursor; uses whichever field you focused last (pitch or sender — default is
-                  pitch).
-                </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {PITCH_MERGE_TAGS.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => insertPitchMergeTag(tag)}
-                      className="rounded-md border border-edge bg-surface-raised px-2 py-1 font-mono text-[11px] leading-none text-ink-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)] transition-colors hover:border-accent/40 hover:bg-surface hover:text-ink"
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              </details>
-            </div>
-          </Panel>
-
-          <Panel title="Sequence steps">
-            <div className="flex flex-wrap gap-2 border-b border-edge pb-3">
-              {steps.map((_, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setActiveStepIdx(idx)}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${activeStepIdx === idx
-                    ? 'bg-accent-subtle text-accent'
-                    : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
-                    }`}
-                >
-                  Step {idx + 1}
-                </button>
+      <div className="flex min-h-0 flex-col gap-5 xl:max-h-[min(calc(100dvh-10rem),56rem)] xl:min-h-0 xl:flex-row xl:items-stretch xl:gap-5 xl:overflow-hidden">
+        <div className="shrink-0 xl:max-w-[300px] xl:shrink-0">
+          <div className="mb-2 flex items-center gap-2">
+            <span
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-accent bg-accent-subtle text-xs font-bold tabular-nums text-accent"
+              aria-hidden
+            >
+              1
+            </span>
+            <span className="text-sm font-semibold text-ink">Choose campaign</span>
+          </div>
+          <Panel title="Your campaigns" className="shrink-0">
+            <SecondaryButton className="mb-3 w-full" onClick={newCampaign}>
+              New campaign
+            </SecondaryButton>
+            <ul className="space-y-1">
+              {list.map((c) => (
+                <li key={c.id} className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void loadOne(c.id)}
+                    className={`min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150 ${editId === c.id ? 'bg-accent-subtle text-accent' : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                      }`}
+                  >
+                    {c.name}
+                  </button>
+                  <DangerButton
+                    className="shrink-0 px-2.5 py-2.5"
+                    aria-label={`Delete ${c.name}`}
+                    title="Delete campaign"
+                    onClick={async () => {
+                      if (!confirm(`Delete campaign “${c.name}”?`)) return
+                      await api.campaignDelete(c.id)
+                      if (editId === c.id) newCampaign()
+                      void loadList()
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+                  </DangerButton>
+                </li>
               ))}
+            </ul>
+          </Panel>
+        </div>
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-accent bg-accent-subtle text-xs font-bold tabular-nums text-accent"
+                aria-hidden
+              >
+                2
+              </span>
+              <span className="text-sm font-semibold text-ink">Edit sequence</span>
             </div>
-            {steps.map((step, idx) =>
-              idx === activeStepIdx ? (
-                <div key={idx} className="mt-4 space-y-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <label className="flex items-center gap-2 text-sm text-ink-muted">
-                        <input
-                          type="checkbox"
-                          checked={step.use_ai}
-                          onChange={(e) => {
-                            const v = e.target.checked
-                            setSteps((s) => s.map((x, i) => (i === idx ? { ...x, use_ai: v } : x)))
-                          }}
-                        />
-                        Generate body with AI
-                      </label>
-                      <p className="text-xs leading-relaxed text-ink-faint">
-                        Each step can use AI independently. Uses your OpenAI settings from Connect; try merged preview on
-                        the Queue step.
-                      </p>
-                    </div>
-                    {steps.length > 1 && (
-                      <DangerButton onClick={() => removeStep(idx)}>Remove step</DangerButton>
-                    )}
-                  </div>
-                  {idx > 0 && (
-                    <div>
-                      <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                        Delay after previous (hours)
-                      </span>
-                      <input
-                        type="number"
-                        min={0}
-                        className="max-w-[120px]"
-                        value={step.delay_hours_after_previous}
-                        onChange={(e) => {
-                          const v = +e.target.value
-                          setSteps((s) =>
-                            s.map((x, i) => (i === idx ? { ...x, delay_hours_after_previous: v } : x)),
-                          )
-                        }}
-                      />
-                    </div>
-                  )}
+            <p className="min-w-0 text-sm font-medium text-ink">{editingTitle}</p>
+          </div>
+
+          <div
+            className="mb-3 flex gap-1 rounded-lg border border-edge bg-canvas p-1"
+            role="tablist"
+            aria-label="Editor sections"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorTab === 'overview'}
+              onClick={() => setEditorTab('overview')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'overview'
+                ? 'bg-accent-subtle text-accent'
+                : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
+                }`}
+            >
+              Overview
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorTab === 'sequence'}
+              onClick={() => setEditorTab('sequence')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${editorTab === 'sequence'
+                ? 'bg-accent-subtle text-accent'
+                : 'text-ink-muted hover:bg-surface-raised hover:text-ink'
+                }`}
+            >
+              Sequence
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
+            {editorTab === 'overview' && (
+              <Panel
+                title="Overview"
+                description={
+                  committedId === null
+                    ? 'Save this campaign (or load one from the list) before using Next to continue.'
+                    : 'Name, pitch, and sender apply to every step in this campaign.'
+                }
+              >
+                <div className="space-y-4">
                   <div>
                     <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                      Subject
+                      Campaign name
                     </span>
                     <input
                       type="text"
-                      value={step.subject_template}
-                      onChange={(e) =>
-                        setSteps((s) =>
-                          s.map((x, i) => (i === idx ? { ...x, subject_template: e.target.value } : x)),
-                        )
-                      }
-                      className="mt-1.5 block w-full font-mono text-xs leading-relaxed"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="mt-1.5 block w-full"
                     />
                   </div>
                   <div>
                     <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                      Body
+                      Pitch block (`{'{{pitch_block}}'}`)
                     </span>
                     <AutosizeTextarea
-                      value={step.body_template}
-                      onChange={(e) =>
-                        setSteps((s) =>
-                          s.map((x, i) => (i === idx ? { ...x, body_template: e.target.value } : x)),
-                        )
-                      }
+                      ref={pitchRef}
+                      value={pitch}
+                      onChange={(e) => setPitch(e.target.value)}
+                      onFocus={() => {
+                        mergeTargetRef.current = 'pitch'
+                      }}
                       minHeightPx={120}
-                      maxHeightPx={420}
-                      className="font-mono text-xs leading-relaxed"
+                      maxHeightPx={360}
+                      className="mt-1.5 font-mono text-xs leading-relaxed"
                     />
                   </div>
+                  <div>
+                    <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                      Sender / sign-off (`{'{{sender_info}}'}`)
+                    </span>
+                    <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+                      Use in your step body (default templates include it after “Best regards,”). Plain text and URLs on
+                      their own lines. Passed to AI so the closing matches your team or personal details.
+                    </p>
+                    <AutosizeTextarea
+                      ref={senderRef}
+                      value={senderInfo}
+                      onChange={(e) => setSenderInfo(e.target.value)}
+                      onFocus={() => {
+                        mergeTargetRef.current = 'sender'
+                      }}
+                      minHeightPx={80}
+                      maxHeightPx={240}
+                      className="mt-1.5 font-mono text-xs leading-relaxed"
+                    />
+                  </div>
+                  <details className="rounded-lg border border-edge bg-canvas/40 px-3 py-2">
+                    <summary className="cursor-pointer select-none text-sm font-medium text-ink-muted hover:text-ink">
+                      Available merge tags
+                    </summary>
+                    <p className="mt-2 text-xs leading-relaxed text-ink-muted">
+                      Click a tag to insert at the cursor; uses whichever field you focused last (pitch or sender — default is
+                      pitch).
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {PITCH_MERGE_TAGS.map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => insertPitchMergeTag(tag)}
+                          className="rounded-md border border-edge bg-surface-raised px-2 py-1 font-mono text-[11px] leading-none text-ink-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)] transition-colors hover:border-accent/40 hover:bg-surface hover:text-ink"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                 </div>
-              ) : null,
+              </Panel>
             )}
-          </Panel>
 
-          <SecondaryButton onClick={addStep} className="w-full border-dashed border-edge">
-            + Add follow-up step
-          </SecondaryButton>
+            {editorTab === 'sequence' && (
+              <>
+                <Panel title="Sequence steps">
+                  <div className="flex flex-wrap gap-2 border-b border-edge pb-3">
+                    {steps.map((_, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setActiveStepIdx(idx)}
+                        className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${activeStepIdx === idx
+                          ? 'bg-accent-subtle text-accent'
+                          : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                          }`}
+                      >
+                        Step {idx + 1}
+                      </button>
+                    ))}
+                  </div>
+                  {steps.map((step, idx) =>
+                    idx === activeStepIdx ? (
+                      <div key={idx} className="mt-4 space-y-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <label className="flex items-center gap-2 text-sm text-ink-muted">
+                              <input
+                                type="checkbox"
+                                checked={step.use_ai}
+                                onChange={(e) => {
+                                  const v = e.target.checked
+                                  setSteps((s) => s.map((x, i) => (i === idx ? { ...x, use_ai: v } : x)))
+                                }}
+                              />
+                              Generate body with AI
+                            </label>
+                            <p className="text-xs leading-relaxed text-ink-faint">
+                              Each step can use AI independently. Uses your OpenAI settings from Connect; try merged preview on
+                              the Queue step.
+                            </p>
+                          </div>
+                          {steps.length > 1 && (
+                            <DangerButton onClick={() => removeStep(idx)}>Remove step</DangerButton>
+                          )}
+                        </div>
+                        {idx > 0 && (
+                          <div>
+                            <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                              Delay after previous (hours)
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              className="max-w-[120px]"
+                              value={step.delay_hours_after_previous}
+                              onChange={(e) => {
+                                const v = +e.target.value
+                                setSteps((s) =>
+                                  s.map((x, i) => (i === idx ? { ...x, delay_hours_after_previous: v } : x)),
+                                )
+                              }}
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                            Subject
+                          </span>
+                          <input
+                            type="text"
+                            value={step.subject_template}
+                            onChange={(e) =>
+                              setSteps((s) =>
+                                s.map((x, i) => (i === idx ? { ...x, subject_template: e.target.value } : x)),
+                              )
+                            }
+                            className="mt-1.5 block w-full font-mono text-xs leading-relaxed"
+                          />
+                        </div>
+                        <div>
+                          <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                            Body
+                          </span>
+                          <AutosizeTextarea
+                            value={step.body_template}
+                            onChange={(e) =>
+                              setSteps((s) =>
+                                s.map((x, i) => (i === idx ? { ...x, body_template: e.target.value } : x)),
+                              )
+                            }
+                            minHeightPx={120}
+                            maxHeightPx={420}
+                            className="font-mono text-xs leading-relaxed"
+                          />
+                        </div>
+                      </div>
+                    ) : null,
+                  )}
+                </Panel>
 
-          <div className="flex flex-wrap gap-3">
-            <PrimaryButton onClick={() => void save()}>Save campaign</PrimaryButton>
-            {editId != null && (
-              <DangerButton
-                onClick={async () => {
-                  if (!confirm('Delete this campaign?')) return
-                  await api.campaignDelete(editId)
-                  newCampaign()
-                  void loadList()
-                }}
-              >
-                Delete campaign
-              </DangerButton>
+                <SecondaryButton onClick={addStep} className="w-full border-dashed border-edge">
+                  + Add follow-up step
+                </SecondaryButton>
+              </>
             )}
+
+            <div className="flex flex-wrap gap-3">
+              <PrimaryButton onClick={() => void save()}>Save campaign</PrimaryButton>
+              {editId != null && (
+                <DangerButton
+                  onClick={async () => {
+                    if (!confirm('Delete this campaign?')) return
+                    await api.campaignDelete(editId)
+                    newCampaign()
+                    void loadList()
+                  }}
+                >
+                  Delete campaign
+                </DangerButton>
+              )}
+            </div>
           </div>
         </div>
       </div>
