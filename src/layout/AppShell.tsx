@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { ChevronRight, Eye, Layers3, Plug, Send, Upload, Users } from 'lucide-react'
-import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 import { WIZARD_STEPS } from '@/wizard/constants'
 import appLogo from '@/assets/logo-electron.svg'
 
@@ -95,23 +94,6 @@ export function AppShell({
             {children}
           </div>
         </div>
-
-        <footer className="shrink-0 border-t border-edge bg-canvas">
-          <div className={`mx-auto flex w-full ${SHELL_MAX_CLASS} items-center justify-between gap-4 px-5 py-3.5 md:px-7`}>
-            <SecondaryButton onClick={onBack} disabled={!canGoBack} className="min-w-[88px]">
-              Back
-            </SecondaryButton>
-            {showNext ? (
-              <PrimaryButton onClick={onNext} disabled={!canGoNext} className="min-w-[200px]">
-                {nextLabel}
-              </PrimaryButton>
-            ) : (
-              <p className="max-w-md text-right text-xs leading-snug text-ink-muted">
-                Preview is its own step; Queue is where you start or pause sending. Use Back to return to earlier steps.
-              </p>
-            )}
-          </div>
-        </footer>
       </div>
     </div>
   )

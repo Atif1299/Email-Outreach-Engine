@@ -78,10 +78,8 @@ export function CampaignStep({
     void api.importBatchesList().then(setImportBatches)
   }, [api, leadVersion])
 
-  const toggleTargetBatch = (batchId: number) => {
-    setTargetImportBatchIds((prev) =>
-      prev.includes(batchId) ? prev.filter((x) => x !== batchId) : [...prev, batchId].sort((a, b) => a - b),
-    )
+  const setTargetBatch = (batchId: number | null) => {
+    setTargetImportBatchIds(batchId == null ? [] : [batchId])
   }
 
   const loadOne = async (id: number) => {
@@ -322,11 +320,6 @@ export function CampaignStep({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {editorTab === 'sequence' && (
-                <SecondaryButton onClick={addStep} className="border-dashed border-edge">
-                  + Add follow-up step
-                </SecondaryButton>
-              )}
               <PrimaryButton onClick={() => void save()} disabled={saving}>
                 {saving ? 'Saving…' : 'Save campaign'}
               </PrimaryButton>
@@ -350,35 +343,30 @@ export function CampaignStep({
                     ? 'Save this campaign (or load one from the list) before using Next to continue.'
                     : 'Name, pitch, and sender apply to every step in this campaign.'
                 }
+                headerRight={
+                  <label className="block min-w-[16rem]">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                      Lead group
+                    </span>
+                    <select
+                      value={targetImportBatchIds[0] ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setTargetBatch(v === '' ? null : +v)
+                      }}
+                      className="mt-1.5 w-full text-sm"
+                    >
+                      <option value="">All groups</option>
+                      {importBatches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.filename} ({b.leadCount})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                }
               >
-                <div className="mx-auto w-full max-w-[65ch] space-y-4">
-                  <div className="rounded-lg border border-edge bg-canvas/30 p-3">
-                    <p className="mb-2 text-xs leading-relaxed text-ink-muted">
-                      <span className="font-medium text-ink">Target lead groups</span> (optional). Check one or more CSV
-                      imports this campaign may send to. Leave all unchecked to allow any lead in the app. Queue defaults
-                      to leads from these groups when you pick this campaign.
-                    </p>
-                    {importBatches.length === 0 ? (
-                      <p className="text-sm text-ink-muted">No lead groups yet. Import a CSV on the Import step.</p>
-                    ) : (
-                      <ul className="flex max-h-40 flex-col gap-2 overflow-y-auto">
-                        {importBatches.map((b) => (
-                          <li key={b.id}>
-                            <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-                              <input
-                                type="checkbox"
-                                checked={targetImportBatchIds.includes(b.id)}
-                                onChange={() => toggleTargetBatch(b.id)}
-                                className="h-4 w-4 shrink-0"
-                              />
-                              <span className="min-w-0 truncate font-medium">{b.filename}</span>
-                              <span className="shrink-0 tabular-nums text-xs text-ink-faint">({b.leadCount})</span>
-                            </label>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+                <div className="w-full space-y-4">
                   <div>
                     <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                       Campaign name
@@ -433,20 +421,25 @@ export function CampaignStep({
             {editorTab === 'sequence' && (
               <>
                 <Panel title="Sequence steps">
-                  <div className="flex flex-wrap gap-2 border-b border-edge pb-3">
-                    {steps.map((_, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setActiveStepIdx(idx)}
-                        className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${activeStepIdx === idx
-                          ? 'bg-accent-subtle text-accent'
-                          : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
-                          }`}
-                      >
-                        Step {idx + 1}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
+                    <div className="flex flex-wrap gap-2">
+                      {steps.map((_, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActiveStepIdx(idx)}
+                          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${activeStepIdx === idx
+                            ? 'bg-accent-subtle text-accent'
+                            : 'bg-surface-raised text-ink-muted hover:bg-surface hover:text-ink'
+                            }`}
+                        >
+                          Step {idx + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <SecondaryButton onClick={addStep} className="shrink-0 border-dashed border-edge">
+                      + Add follow-up step
+                    </SecondaryButton>
                   </div>
                   {steps.map((step, idx) =>
                     idx === activeStepIdx ? (
