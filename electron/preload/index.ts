@@ -25,7 +25,11 @@ contextBridge.exposeInMainWorld('outreach', {
   parsePreview: (filePath: string) => ipcRenderer.invoke('outreach:parsePreview', filePath),
   importCommit: (payload: { filePath: string; mapping: Record<string, string> }) =>
     ipcRenderer.invoke('outreach:importCommit', payload),
-  leadsList: (search?: string) => ipcRenderer.invoke('outreach:leadsList', search),
+  importBatchesList: () => ipcRenderer.invoke('outreach:importBatchesList'),
+  leadIdsForCampaign: (campaignId: number) =>
+    ipcRenderer.invoke('outreach:leadIdsForCampaign', campaignId),
+  leadsList: (arg?: string | { search?: string; importBatchId?: number }) =>
+    ipcRenderer.invoke('outreach:leadsList', arg),
   leadDelete: (id: number) => ipcRenderer.invoke('outreach:leadDelete', id),
   campaignsList: () => ipcRenderer.invoke('outreach:campaignsList'),
   campaignSave: (payload: unknown) => ipcRenderer.invoke('outreach:campaignSave', payload),

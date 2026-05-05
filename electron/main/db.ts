@@ -79,6 +79,14 @@ function migrate(db: Database.Database) {
       FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS campaign_target_batches (
+      campaign_id INTEGER NOT NULL,
+      import_batch_id INTEGER NOT NULL,
+      PRIMARY KEY (campaign_id, import_batch_id),
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+      FOREIGN KEY (import_batch_id) REFERENCES import_batches(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_leads_import_batch ON leads(import_batch_id);
   `)
 }
 
@@ -110,10 +118,30 @@ export function insertLead(
   return Number(r.lastInsertRowid)
 }
 
-export function listLeads(search?: string) {
+export function listLeads(opts?: { search?: string; importBatchId?: number }) {
   const db = getDb()
-  if (search && search.trim()) {
-    const q = `%${search.trim().toLowerCase()}%`
+  const search = opts?.search?.trim()
+  const batchId = opts?.importBatchId
+
+  if (search && batchId != null) {
+    const q = `%${search.toLowerCase()}%`
+    return db
+      .prepare(
+        `SELECT id, import_batch_id, email, data_json, created_at FROM leads
+         WHERE import_batch_id = ?
+           AND (LOWER(email) LIKE ? OR LOWER(data_json) LIKE ?)
+         ORDER BY id DESC`,
+      )
+      .all(batchId, q, q) as {
+        id: number
+        import_batch_id: number | null
+        email: string
+        data_json: string
+        created_at: string
+      }[]
+  }
+  if (search) {
+    const q = `%${search.toLowerCase()}%`
     return db
       .prepare(
         `SELECT id, import_batch_id, email, data_json, created_at FROM leads
@@ -121,6 +149,21 @@ export function listLeads(search?: string) {
          ORDER BY id DESC`,
       )
       .all(q, q) as {
+        id: number
+        import_batch_id: number | null
+        email: string
+        data_json: string
+        created_at: string
+      }[]
+  }
+  if (batchId != null) {
+    return db
+      .prepare(
+        `SELECT id, import_batch_id, email, data_json, created_at FROM leads
+         WHERE import_batch_id = ?
+         ORDER BY id DESC`,
+      )
+      .all(batchId) as {
         id: number
         import_batch_id: number | null
         email: string
@@ -139,6 +182,70 @@ export function listLeads(search?: string) {
       data_json: string
       created_at: string
     }[]
+}
+
+export function leadEmailExistsLower(emailLower: string): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 as x FROM leads WHERE LOWER(email) = ? LIMIT 1')
+    .get(emailLower) as { x: number } | undefined
+  return row != null
+}
+
+export function listImportBatchesWithCounts() {
+  return getDb()
+    .prepare(
+      `SELECT b.id, b.filename, b.created_at, COUNT(l.id) AS lead_count
+       FROM import_batches b
+       LEFT JOIN leads l ON l.import_batch_id = b.id
+       GROUP BY b.id
+       ORDER BY b.id DESC`,
+    )
+    .all() as { id: number; filename: string; created_at: string; lead_count: number }[]
+}
+
+export function replaceCampaignTargetBatches(campaignId: number, importBatchIds: number[]) {
+  const db = getDb()
+  const del = db.prepare('DELETE FROM campaign_target_batches WHERE campaign_id = ?')
+  const ins = db.prepare(
+    'INSERT INTO campaign_target_batches (campaign_id, import_batch_id) VALUES (?, ?)',
+  )
+  const run = db.transaction(() => {
+    del.run(campaignId)
+    for (const bid of importBatchIds) {
+      ins.run(campaignId, bid)
+    }
+  })
+  run()
+}
+
+export function getCampaignTargetBatchIds(campaignId: number): number[] {
+  const rows = getDb()
+    .prepare(
+      'SELECT import_batch_id FROM campaign_target_batches WHERE campaign_id = ? ORDER BY import_batch_id',
+    )
+    .all(campaignId) as { import_batch_id: number }[]
+  return rows.map((r) => r.import_batch_id)
+}
+
+/** If campaign has no target rows, all leads; else leads in any of the campaign's import batches. */
+export function listLeadIdsForCampaignTargets(campaignId: number): number[] {
+  const db = getDb()
+  const n = db
+    .prepare('SELECT COUNT(*) as c FROM campaign_target_batches WHERE campaign_id = ?')
+    .get(campaignId) as { c: number }
+  if (n.c === 0) {
+    return (db.prepare('SELECT id FROM leads ORDER BY id').all() as { id: number }[]).map((r) => r.id)
+  }
+  return (
+    db
+      .prepare(
+        `SELECT DISTINCT l.id FROM leads l
+         INNER JOIN campaign_target_batches t ON t.import_batch_id = l.import_batch_id
+         WHERE t.campaign_id = ? AND l.import_batch_id IS NOT NULL
+         ORDER BY l.id`,
+      )
+      .all(campaignId) as { id: number }[]
+  ).map((r) => r.id)
 }
 
 export function deleteLead(id: number) {

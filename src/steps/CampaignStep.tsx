@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { outreach } from '@/lib/outreachApi'
-import type { Campaign, CampaignStep as CampaignStepModel } from '@/shared/types'
+import type { Campaign, CampaignStep as CampaignStepModel, ImportBatchSummary } from '@/shared/types'
 import { defaultPitch, defaultStep } from '@/wizard/constants'
 import { Panel } from '@/components/ui/Panel'
 import { AutosizeTextarea } from '@/components/ui/AutosizeTextarea'
@@ -31,14 +31,18 @@ const PITCH_MERGE_TAGS = [
 ] as const
 
 export function CampaignStep({
+  leadVersion,
   onCampaignSaved,
   onValidityChange,
 }: {
+  leadVersion: number
   onCampaignSaved: (id: number) => void
   onValidityChange: (ok: boolean) => void
 }) {
   const api = outreach()
   const [list, setList] = useState<Campaign[]>([])
+  const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([])
+  const [targetImportBatchIds, setTargetImportBatchIds] = useState<number[]>([])
   const [editId, setEditId] = useState<number | null>(null)
   const [committedId, setCommittedId] = useState<number | null>(null)
   const [name, setName] = useState('My campaign')
@@ -70,6 +74,16 @@ export function CampaignStep({
     void loadList()
   }, [loadList])
 
+  useEffect(() => {
+    void api.importBatchesList().then(setImportBatches)
+  }, [api, leadVersion])
+
+  const toggleTargetBatch = (batchId: number) => {
+    setTargetImportBatchIds((prev) =>
+      prev.includes(batchId) ? prev.filter((x) => x !== batchId) : [...prev, batchId].sort((a, b) => a - b),
+    )
+  }
+
   const loadOne = async (id: number) => {
     const c = await api.campaignGet(id)
     if (!c) return
@@ -90,6 +104,7 @@ export function CampaignStep({
     )
     setActiveStepIdx(0)
     setEditorTab('overview')
+    setTargetImportBatchIds(c.targetImportBatchIds ?? [])
   }
 
   const newCampaign = () => {
@@ -101,6 +116,7 @@ export function CampaignStep({
     setSteps([defaultStep(1), defaultStep(2)])
     setActiveStepIdx(0)
     setEditorTab('overview')
+    setTargetImportBatchIds([])
   }
 
   const save = async () => {
@@ -112,6 +128,7 @@ export function CampaignStep({
         name,
         pitch_block: pitch,
         sender_info: senderInfo,
+        targetImportBatchIds,
         steps: steps.map((s, i) => ({ ...s, step_order: i + 1 })),
       })
       setEditId(id)
@@ -335,6 +352,33 @@ export function CampaignStep({
                 }
               >
                 <div className="mx-auto w-full max-w-[65ch] space-y-4">
+                  <div className="rounded-lg border border-edge bg-canvas/30 p-3">
+                    <p className="mb-2 text-xs leading-relaxed text-ink-muted">
+                      <span className="font-medium text-ink">Target lead groups</span> (optional). Check one or more CSV
+                      imports this campaign may send to. Leave all unchecked to allow any lead in the app. Queue defaults
+                      to leads from these groups when you pick this campaign.
+                    </p>
+                    {importBatches.length === 0 ? (
+                      <p className="text-sm text-ink-muted">No lead groups yet. Import a CSV on the Import step.</p>
+                    ) : (
+                      <ul className="flex max-h-40 flex-col gap-2 overflow-y-auto">
+                        {importBatches.map((b) => (
+                          <li key={b.id}>
+                            <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                              <input
+                                type="checkbox"
+                                checked={targetImportBatchIds.includes(b.id)}
+                                onChange={() => toggleTargetBatch(b.id)}
+                                className="h-4 w-4 shrink-0"
+                              />
+                              <span className="min-w-0 truncate font-medium">{b.filename}</span>
+                              <span className="shrink-0 tabular-nums text-xs text-ink-faint">({b.leadCount})</span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                   <div>
                     <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                       Campaign name

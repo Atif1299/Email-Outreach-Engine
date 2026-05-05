@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { outreach } from '@/lib/outreachApi'
-import type { Campaign, Lead } from '@/shared/types'
+import type { Campaign } from '@/shared/types'
 import type { QueueStatus } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
@@ -19,16 +19,14 @@ export function SendStep({
   const api = outreach()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId, setCampaignId] = useState<number | null>(null)
-  const [leads, setLeads] = useState<Lead[]>([])
   const [due, setDue] = useState(0)
   const [status, setStatus] = useState<QueueStatus | null>(null)
   const [queueActionBusy, setQueueActionBusy] = useState(false)
   const [queueNote, setQueueNote] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [c, l] = await Promise.all([api.campaignsList(), api.leadsList()])
+    const c = await api.campaignsList()
     setCampaigns(c)
-    setLeads(l as Lead[])
     setCampaignId((prev) => {
       if (preferredCampaignId != null && c.some((x) => x.id === preferredCampaignId)) {
         return preferredCampaignId
@@ -41,19 +39,21 @@ export function SendStep({
     void load()
   }, [load, leadVersion])
 
-  /** Drop stale lead ids (e.g. after re-import); if none left, select everyone so Queue stats match DB. */
+  /** Align selection with this campaign’s target lead groups (or all leads if none configured). */
   useEffect(() => {
-    if (leads.length === 0) return
-    const validIds = new Set(leads.map((l) => l.id))
-    setSelectedIds((prev) => {
-      const next = new Set<number>()
-      for (const id of prev) {
-        if (validIds.has(id)) next.add(id)
-      }
-      if (next.size > 0) return next
-      return new Set(validIds)
+    if (campaignId == null) return
+    void api.leadIdsForCampaign(campaignId).then((ids) => {
+      const validIds = new Set(ids)
+      setSelectedIds((prev) => {
+        const next = new Set<number>()
+        for (const id of prev) {
+          if (validIds.has(id)) next.add(id)
+        }
+        if (next.size > 0) return next
+        return new Set(validIds)
+      })
     })
-  }, [leads, setSelectedIds])
+  }, [api, campaignId, leadVersion, setSelectedIds])
 
   useEffect(() => {
     if (preferredCampaignId != null) setCampaignId(preferredCampaignId)

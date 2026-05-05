@@ -15,9 +15,13 @@ import {
   getCampaign,
   getLead,
   getDb,
-  clearAllLeadsData,
   replaceLeadBodyOverrides,
   clearLeadBodyOverridesForStep,
+  leadEmailExistsLower,
+  listImportBatchesWithCounts,
+  replaceCampaignTargetBatches,
+  getCampaignTargetBatchIds,
+  listLeadIdsForCampaignTargets,
 } from './db'
 import {
   parseFileBuffer,
@@ -66,27 +70,49 @@ export function registerIpcHandlers() {
     'outreach:importCommit',
     async (_, payload: { filePath: string; mapping: ColumnMapping }) => {
       stopQueue()
-      clearAllLeadsData()
       const parsed = parseFileBuffer(payload.filePath)
       const mapped = applyMapping(parsed.rows, payload.mapping)
       const filtered = filterLeadsWithEmail(mapped)
       const unique = dedupeLeadsByEmail(filtered)
       const batchId = insertImportBatch(path.basename(payload.filePath))
       const leadIds: number[] = []
+      let skippedExistingInApp = 0
       for (const row of unique) {
+        const email = row.email.trim().toLowerCase()
+        if (leadEmailExistsLower(email)) {
+          skippedExistingInApp += 1
+          continue
+        }
         leadIds.push(insertLead(batchId, row.email.trim(), row))
       }
       return {
-        imported: unique.length,
+        imported: leadIds.length,
         skippedNoEmail: mapped.length - filtered.length,
         duplicatesSkipped: filtered.length - unique.length,
+        skippedExistingInApp,
+        importBatchId: batchId,
         leadIds,
       }
     },
   )
 
-  ipcMain.handle('outreach:leadsList', async (_, search?: string) => {
-    const rows = listLeads(search)
+  ipcMain.handle('outreach:importBatchesList', async () => {
+    return listImportBatchesWithCounts().map((b) => ({
+      id: b.id,
+      filename: b.filename,
+      created_at: b.created_at,
+      leadCount: b.lead_count,
+    }))
+  })
+
+  ipcMain.handle('outreach:leadIdsForCampaign', async (_, campaignId: number) => {
+    return listLeadIdsForCampaignTargets(campaignId)
+  })
+
+  ipcMain.handle('outreach:leadsList', async (_, arg?: string | { search?: string; importBatchId?: number }) => {
+    const opts =
+      typeof arg === 'string' ? { search: arg } : arg && typeof arg === 'object' ? arg : undefined
+    const rows = listLeads(opts)
     return rows.map((r) => ({
       id: r.id,
       import_batch_id: r.import_batch_id,
@@ -112,6 +138,7 @@ export function registerIpcHandlers() {
         name: string
         pitch_block: string
         sender_info?: string
+        targetImportBatchIds?: number[]
         steps: {
           step_order: number
           delay_hours_after_previous: number
@@ -129,6 +156,7 @@ export function registerIpcHandlers() {
         id = createCampaign(payload.name, payload.pitch_block, senderInfo)
       }
       replaceSteps(id, payload.steps)
+      replaceCampaignTargetBatches(id, payload.targetImportBatchIds ?? [])
       return id
     },
   )
@@ -145,7 +173,8 @@ export function registerIpcHandlers() {
       body_template: s.body_template,
       use_ai: !!s.use_ai,
     }))
-    return { ...c, steps }
+    const targetImportBatchIds = getCampaignTargetBatchIds(id)
+    return { ...c, steps, targetImportBatchIds }
   })
 
   ipcMain.handle('outreach:campaignDelete', async (_, id: number) => {

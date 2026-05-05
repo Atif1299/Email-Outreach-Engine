@@ -35,6 +35,7 @@ export default function App() {
   const [leadVersion, setLeadVersion] = useState(0)
   const [selectedIds, setSelectedIds] = useState(loadSelectedIds)
   const [lastCampaignId, setLastCampaignId] = useState<number | null>(null)
+  const [activeImportBatchId, setActiveImportBatchId] = useState<number | null>(null)
   const [gate, setGate] = useState(false)
 
   useEffect(() => {
@@ -53,9 +54,10 @@ export default function App() {
     }
   }, [selectedIds])
 
-  const onImportDone = useCallback((leadIds: number[]) => {
+  const onImportDone = useCallback((payload: { leadIds: number[]; importBatchId: number }) => {
     setLeadVersion((v) => v + 1)
-    setSelectedIds(new Set(leadIds))
+    setSelectedIds(new Set(payload.leadIds))
+    setActiveImportBatchId(payload.importBatchId)
   }, [])
 
   const onNext = () => {
@@ -91,6 +93,8 @@ export default function App() {
       {step === 2 && (
         <LeadsStep
           leadVersion={leadVersion}
+          activeImportBatchId={activeImportBatchId}
+          setActiveImportBatchId={setActiveImportBatchId}
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           onValidityChange={setGate}
@@ -98,6 +102,7 @@ export default function App() {
       )}
       {step === 3 && (
         <CampaignStep
+          leadVersion={leadVersion}
           onCampaignSaved={(id) => setLastCampaignId(id)}
           onValidityChange={setGate}
         />
@@ -105,6 +110,7 @@ export default function App() {
       {step === 4 && (
         <PreviewStep
           leadVersion={leadVersion}
+          activeImportBatchId={activeImportBatchId}
           selectedIds={selectedIds}
           preferredCampaignId={lastCampaignId}
           onValidityChange={setGate}

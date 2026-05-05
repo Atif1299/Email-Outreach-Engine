@@ -3,6 +3,7 @@ import type {
   Campaign,
   CampaignStep,
   ColumnMapping,
+  ImportBatchSummary,
   Lead,
   QueueStatus,
 } from '@/shared/types'
@@ -15,7 +16,10 @@ export type ParsePreviewResult = {
   totalRows: number
 }
 
-export type CampaignWithSteps = Campaign & { steps: CampaignStep[] }
+export type CampaignWithSteps = Campaign & {
+  steps: CampaignStep[]
+  targetImportBatchIds: number[]
+}
 
 export type OutreachApi = {
   openImportDialog: () => Promise<string | null>
@@ -27,9 +31,13 @@ export type OutreachApi = {
     imported: number
     skippedNoEmail: number
     duplicatesSkipped: number
+    skippedExistingInApp: number
+    importBatchId: number
     leadIds: number[]
   }>
-  leadsList: (search?: string) => Promise<Lead[]>
+  importBatchesList: () => Promise<ImportBatchSummary[]>
+  leadIdsForCampaign: (campaignId: number) => Promise<number[]>
+  leadsList: (arg?: string | { search?: string; importBatchId?: number }) => Promise<Lead[]>
   leadDelete: (id: number) => Promise<boolean>
   campaignsList: () => Promise<Campaign[]>
   campaignSave: (payload: {
@@ -37,6 +45,7 @@ export type OutreachApi = {
     name: string
     pitch_block: string
     sender_info: string
+    targetImportBatchIds?: number[]
     steps: {
       step_order: number
       delay_hours_after_previous: number

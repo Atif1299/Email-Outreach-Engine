@@ -10,7 +10,7 @@ export function ImportStep({
   onImported,
   onValidityChange,
 }: {
-  onImported: (leadIds: number[]) => void
+  onImported: (payload: { leadIds: number[]; importBatchId: number }) => void
   onValidityChange: (ok: boolean) => void
 }) {
   const api = outreach()
@@ -54,9 +54,12 @@ export function ImportStep({
       const r = await api.importCommit({ filePath: path, mapping })
       setMsg(
         [
-          `Replaced all leads with this file. Saved ${r.imported} unique email${r.imported === 1 ? '' : 's'}.`,
+          `Created a new lead group. Saved ${r.imported} unique email${r.imported === 1 ? '' : 's'}.`,
           r.duplicatesSkipped > 0
-            ? `Skipped ${r.duplicatesSkipped} duplicate row${r.duplicatesSkipped === 1 ? '' : 's'} (same email).`
+            ? `Skipped ${r.duplicatesSkipped} duplicate row${r.duplicatesSkipped === 1 ? '' : 's'} (same email in file).`
+            : null,
+          r.skippedExistingInApp > 0
+            ? `Skipped ${r.skippedExistingInApp} row${r.skippedExistingInApp === 1 ? '' : 's'} already in the app (same email).`
             : null,
           r.skippedNoEmail > 0
             ? `${r.skippedNoEmail} row${r.skippedNoEmail === 1 ? '' : 's'} had no valid email.`
@@ -66,7 +69,7 @@ export function ImportStep({
           .join(' '),
       )
       setImportDone(true)
-      onImported(r.leadIds)
+      onImported({ leadIds: r.leadIds, importBatchId: r.importBatchId })
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
     } finally {
@@ -80,7 +83,7 @@ export function ImportStep({
     <div className="space-y-8">
       <Panel
         title="Import leads"
-        description="Each import replaces all leads in the app with this file. Map at least the email column before importing."
+        description="Each import creates a new lead group (previous imports stay in the app). Map at least the email column before importing."
       >
         <SecondaryButton disabled={busy} onClick={pickFile}>
           Choose file…

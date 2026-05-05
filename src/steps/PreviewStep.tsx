@@ -9,11 +9,13 @@ import { DangerButton, PrimaryButton, SecondaryButton } from '@/components/ui/bu
 
 export function PreviewStep({
   leadVersion,
+  activeImportBatchId,
   selectedIds,
   preferredCampaignId,
   onValidityChange,
 }: {
   leadVersion: number
+  activeImportBatchId: number | null
   selectedIds: Set<number>
   preferredCampaignId: number | null
   onValidityChange: (ok: boolean) => void
@@ -51,7 +53,9 @@ export function PreviewStep({
   bulkStateRef.current = bulkState
 
   const load = useCallback(async () => {
-    const [c, l] = await Promise.all([api.campaignsList(), api.leadsList()])
+    const leadOpts =
+      activeImportBatchId != null ? { importBatchId: activeImportBatchId } : undefined
+    const [c, l] = await Promise.all([api.campaignsList(), api.leadsList(leadOpts)])
     setCampaigns(c)
     setLeads(l as Lead[])
     setCampaignId((prev) => {
@@ -60,7 +64,7 @@ export function PreviewStep({
       }
       return prev != null ? prev : c[0]?.id ?? null
     })
-  }, [api, preferredCampaignId])
+  }, [api, preferredCampaignId, activeImportBatchId])
 
   useEffect(() => {
     void load()

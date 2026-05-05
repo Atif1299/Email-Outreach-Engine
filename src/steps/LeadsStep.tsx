@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { outreach } from '@/lib/outreachApi'
-import { LEAD_FIELD_KEYS, type Lead } from '@/shared/types'
+import { LEAD_FIELD_KEYS, type ImportBatchSummary, type Lead } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
 import { FieldLabel } from '@/components/ui/FieldLabel'
 import { SecondaryButton } from '@/components/ui/buttons'
@@ -43,28 +43,40 @@ function columnCellClass(key: (typeof LEAD_FIELD_KEYS)[number]): string {
 
 export function LeadsStep({
   leadVersion,
+  activeImportBatchId,
+  setActiveImportBatchId,
   selectedIds,
   setSelectedIds,
   onValidityChange,
 }: {
   leadVersion: number
+  activeImportBatchId: number | null
+  setActiveImportBatchId: Dispatch<SetStateAction<number | null>>
   selectedIds: Set<number>
   setSelectedIds: Dispatch<SetStateAction<Set<number>>>
   onValidityChange: (ok: boolean) => void
 }) {
   const api = outreach()
   const [leads, setLeads] = useState<Lead[]>([])
+  const [batches, setBatches] = useState<ImportBatchSummary[]>([])
   const [q, setQ] = useState('')
   const headerSelectRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
-    const rows = await api.leadsList(q || undefined)
+    const rows = await api.leadsList({
+      ...(q.trim().length > 0 ? { search: q.trim() } : {}),
+      ...(activeImportBatchId != null ? { importBatchId: activeImportBatchId } : {}),
+    })
     setLeads(rows as Lead[])
-  }, [api, q])
+  }, [api, q, activeImportBatchId])
 
   useEffect(() => {
     void load()
   }, [load, leadVersion])
+
+  useEffect(() => {
+    void api.importBatchesList().then(setBatches)
+  }, [api, leadVersion])
 
   const valid = leads.length > 0 && selectedIds.size > 0
 
@@ -109,10 +121,29 @@ export function LeadsStep({
     <div className="flex h-[calc(100dvh-11rem)] min-h-[18rem] flex-col">
       <Panel
         title="Review & select leads"
-        description="Choose who can receive the next send. Use search to narrow the list. At least one lead must be selected to continue."
+        description="Pick a lead group (CSV import), then choose who can receive the next send. Use search to narrow the list. At least one lead must be selected to continue."
         className="flex h-full min-h-0 flex-col overflow-hidden"
       >
-        <div className="mb-4 flex shrink-0 flex-wrap gap-3">
+        <div className="mb-4 flex shrink-0 flex-wrap items-end gap-3">
+          <div className="min-w-[12rem] max-w-full">
+            <FieldLabel htmlFor="lead-group">Lead group</FieldLabel>
+            <select
+              id="lead-group"
+              value={activeImportBatchId ?? ''}
+              onChange={(e) => {
+                const v = e.target.value
+                setActiveImportBatchId(v === '' ? null : +v)
+              }}
+              className="mt-1.5 w-full min-w-0 text-sm"
+            >
+              <option value="">All groups</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.filename} ({b.leadCount})
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="min-w-[200px] flex-1">
             <FieldLabel>Search</FieldLabel>
             <input

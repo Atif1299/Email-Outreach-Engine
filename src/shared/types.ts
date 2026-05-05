@@ -43,6 +43,10 @@ export type ImportBatch = {
   created_at: string
 }
 
+export type ImportBatchSummary = ImportBatch & {
+  leadCount: number
+}
+
 export type Lead = {
   id: number
   import_batch_id: number | null
