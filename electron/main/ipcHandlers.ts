@@ -6,7 +6,7 @@ import {
   insertLead,
   listLeads,
   deleteLead,
-  listCampaigns,
+  listCampaignsWithTargets,
   createCampaign,
   updateCampaign,
   deleteCampaign,
@@ -17,11 +17,16 @@ import {
   getDb,
   replaceLeadBodyOverrides,
   clearLeadBodyOverridesForStep,
+  listStepSavedContent,
+  upsertLeadMergePreview,
   leadEmailExistsLower,
   listImportBatchesWithCounts,
+  deleteImportBatch,
   replaceCampaignTargetBatches,
   getCampaignTargetBatchIds,
   listLeadIdsForCampaignTargets,
+  getCampaignSendProgress,
+  listCampaignsSendProgress,
 } from './db'
 import {
   parseFileBuffer,
@@ -105,6 +110,11 @@ export function registerIpcHandlers() {
     }))
   })
 
+  ipcMain.handle('outreach:importBatchDelete', async (_, batchId: number) => {
+    stopQueue()
+    return deleteImportBatch(batchId)
+  })
+
   ipcMain.handle('outreach:leadIdsForCampaign', async (_, campaignId: number) => {
     return listLeadIdsForCampaignTargets(campaignId)
   })
@@ -127,7 +137,7 @@ export function registerIpcHandlers() {
     return true
   })
 
-  ipcMain.handle('outreach:campaignsList', async () => listCampaigns())
+  ipcMain.handle('outreach:campaignsList', async () => listCampaignsWithTargets())
 
   ipcMain.handle(
     'outreach:campaignSave',
@@ -265,6 +275,34 @@ export function registerIpcHandlers() {
   )
 
   ipcMain.handle(
+    'outreach:listStepSavedContent',
+    async (_, payload: { campaignId: number; stepOrder: number }) => {
+      return listStepSavedContent(payload.campaignId, payload.stepOrder)
+    },
+  )
+
+  ipcMain.handle(
+    'outreach:saveMergePreview',
+    async (
+      _,
+      payload: {
+        leadId: number
+        campaignId: number
+        stepOrder: number
+        previewText: string
+      },
+    ) => {
+      upsertLeadMergePreview(
+        payload.leadId,
+        payload.campaignId,
+        payload.stepOrder,
+        payload.previewText,
+      )
+      return true
+    },
+  )
+
+  ipcMain.handle(
     'outreach:aiGenerate',
     async (
       _,
@@ -333,6 +371,12 @@ export function registerIpcHandlers() {
   })
 
   ipcMain.handle('outreach:queueStatus', async () => getQueueStatus())
+
+  ipcMain.handle('outreach:campaignSendProgress', async (_, campaignId: number) =>
+    getCampaignSendProgress(campaignId),
+  )
+
+  ipcMain.handle('outreach:campaignsSendProgressList', async () => listCampaignsSendProgress())
 
   ipcMain.handle(
     'outreach:computeDue',

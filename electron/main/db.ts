@@ -79,6 +79,16 @@ function migrate(db: Database.Database) {
       FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS lead_merge_previews (
+      lead_id INTEGER NOT NULL,
+      campaign_id INTEGER NOT NULL,
+      step_order INTEGER NOT NULL,
+      preview_text TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (lead_id, campaign_id, step_order),
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS campaign_target_batches (
       campaign_id INTEGER NOT NULL,
       import_batch_id INTEGER NOT NULL,
@@ -203,6 +213,38 @@ export function listImportBatchesWithCounts() {
     .all() as { id: number; filename: string; created_at: string; lead_count: number }[]
 }
 
+export function deleteImportBatch(batchId: number): {
+  deletedLeads: number
+  deletedCampaigns: number
+  deletedCampaignIds: number[]
+} {
+  const db = getDb()
+  const soleTargetCampaigns = db
+    .prepare(
+      `SELECT campaign_id FROM campaign_target_batches
+       WHERE import_batch_id = ?
+       AND campaign_id IN (
+         SELECT campaign_id FROM campaign_target_batches
+         GROUP BY campaign_id HAVING COUNT(*) = 1
+       )`,
+    )
+    .all(batchId) as { campaign_id: number }[]
+  const deletedCampaignIds = soleTargetCampaigns.map((r) => r.campaign_id)
+
+  const run = db.transaction(() => {
+    const delCampaign = db.prepare('DELETE FROM campaigns WHERE id = ?')
+    for (const id of deletedCampaignIds) {
+      delCampaign.run(id)
+    }
+    const leadResult = db.prepare('DELETE FROM leads WHERE import_batch_id = ?').run(batchId)
+    db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId)
+    return { deletedLeads: leadResult.changes, deletedCampaigns: deletedCampaignIds.length }
+  })
+
+  const { deletedLeads, deletedCampaigns } = run()
+  return { deletedLeads, deletedCampaigns, deletedCampaignIds }
+}
+
 export function replaceCampaignTargetBatches(campaignId: number, importBatchIds: number[]) {
   const db = getDb()
   const del = db.prepare('DELETE FROM campaign_target_batches WHERE campaign_id = ?')
@@ -288,6 +330,13 @@ export function listCampaigns() {
     }[]
 }
 
+export function listCampaignsWithTargets() {
+  return listCampaigns().map((c) => ({
+    ...c,
+    targetImportBatchIds: getCampaignTargetBatchIds(c.id),
+  }))
+}
+
 export function getCampaign(id: number) {
   return getDb()
     .prepare(`SELECT id, name, pitch_block, sender_info, created_at FROM campaigns WHERE id = ?`)
@@ -355,6 +404,42 @@ export function clearLeadBodyOverridesForStep(campaignId: number, stepOrder: num
   getDb()
     .prepare(`DELETE FROM lead_body_overrides WHERE campaign_id = ? AND step_order = ?`)
     .run(campaignId, stepOrder)
+}
+
+export function listStepSavedContent(campaignId: number, stepOrder: number) {
+  const db = getDb()
+  const aiRows = db
+    .prepare(
+      `SELECT lead_id, body FROM lead_body_overrides WHERE campaign_id = ? AND step_order = ?`,
+    )
+    .all(campaignId, stepOrder) as { lead_id: number; body: string }[]
+  const mergeRows = db
+    .prepare(
+      `SELECT lead_id, preview_text FROM lead_merge_previews WHERE campaign_id = ? AND step_order = ?`,
+    )
+    .all(campaignId, stepOrder) as { lead_id: number; preview_text: string }[]
+  return {
+    aiBodies: aiRows.map((r) => ({ leadId: r.lead_id, body: r.body })),
+    mergePreviews: mergeRows.map((r) => ({ leadId: r.lead_id, previewText: r.preview_text })),
+  }
+}
+
+export function upsertLeadMergePreview(
+  leadId: number,
+  campaignId: number,
+  stepOrder: number,
+  previewText: string,
+) {
+  const now = new Date().toISOString()
+  getDb()
+    .prepare(
+      `INSERT INTO lead_merge_previews (lead_id, campaign_id, step_order, preview_text, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(lead_id, campaign_id, step_order) DO UPDATE SET
+         preview_text = excluded.preview_text,
+         updated_at = excluded.updated_at`,
+    )
+    .run(leadId, campaignId, stepOrder, previewText, now)
 }
 
 export function listSteps(campaignId: number) {
@@ -476,4 +561,59 @@ export function countSendsToday(): number {
     .prepare(`SELECT COUNT(*) as c FROM lead_sends WHERE error IS NULL AND sent_at >= ?`)
     .get(start.toISOString()) as { c: number }
   return row.c
+}
+
+export function getCampaignSendProgress(campaignId: number) {
+  const db = getDb()
+  const leadCount = listLeadIdsForCampaignTargets(campaignId).length
+  const steps = listSteps(campaignId)
+  const stepCount = steps.length
+  const maxStep =
+    stepCount > 0 ? Math.max(...steps.map((s) => s.step_order)) : 0
+
+  const emailsSent = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c FROM lead_sends WHERE campaign_id = ? AND error IS NULL`,
+      )
+      .get(campaignId) as { c: number }
+  ).c
+
+  const leadsStarted = (
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT lead_id) as c FROM lead_sends WHERE campaign_id = ? AND error IS NULL`,
+      )
+      .get(campaignId) as { c: number }
+  ).c
+
+  let leadsCompleted = 0
+  if (maxStep > 0 && leadCount > 0) {
+    leadsCompleted = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM (
+             SELECT lead_id, MAX(step_order) as mx
+             FROM lead_sends
+             WHERE campaign_id = ? AND error IS NULL
+             GROUP BY lead_id
+             HAVING mx >= ?
+           )`,
+        )
+        .get(campaignId, maxStep) as { c: number }
+    ).c
+  }
+
+  return {
+    campaignId,
+    leadCount,
+    stepCount,
+    emailsSent,
+    leadsStarted,
+    leadsCompleted,
+  }
+}
+
+export function listCampaignsSendProgress() {
+  return listCampaigns().map((c) => getCampaignSendProgress(c.id))
 }

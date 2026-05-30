@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs'
 import { update } from './update'
 import { registerIpcHandlers } from './ipcHandlers'
 import { setMainWindow } from './sendQueue'
@@ -33,8 +34,22 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 // Disable GPU Acceleration for Windows 7
 if (os.release().startsWith('6.1')) app.disableHardwareAcceleration()
 
+app.setName('Email Outreach')
+
+const userDataDir = path.join(app.getPath('appData'), 'Email Outreach')
+const legacyUserDataDir = path.join(app.getPath('appData'), 'email-outreach')
+fs.mkdirSync(userDataDir, { recursive: true })
+for (const file of ['outreach.db', 'outreach.db-wal', 'outreach.db-shm', 'outreach-settings.json']) {
+  const dest = path.join(userDataDir, file)
+  const src = path.join(legacyUserDataDir, file)
+  if (!fs.existsSync(dest) && fs.existsSync(src)) {
+    fs.copyFileSync(src, dest)
+  }
+}
+app.setPath('userData', userDataDir)
+
 // Set application name for Windows 10+ notifications
-if (process.platform === 'win32') app.setAppUserModelId(app.getName())
+if (process.platform === 'win32') app.setAppUserModelId('com.emailoutreach.app')
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -48,9 +63,10 @@ const indexHtml = path.join(RENDERER_DIST, 'index.html')
 registerIpcHandlers()
 
 async function createWindow() {
+  const iconPath = path.join(process.env.VITE_PUBLIC, 'favicon.ico')
   win = new BrowserWindow({
     title: 'Email Outreach',
-    icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
+    icon: iconPath,
     webPreferences: {
       preload,
       // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production

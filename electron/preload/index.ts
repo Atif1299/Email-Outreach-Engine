@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('outreach', {
   importCommit: (payload: { filePath: string; mapping: Record<string, string> }) =>
     ipcRenderer.invoke('outreach:importCommit', payload),
   importBatchesList: () => ipcRenderer.invoke('outreach:importBatchesList'),
+  importBatchDelete: (batchId: number) => ipcRenderer.invoke('outreach:importBatchDelete', batchId),
   leadIdsForCampaign: (campaignId: number) =>
     ipcRenderer.invoke('outreach:leadIdsForCampaign', campaignId),
   leadsList: (arg?: string | { search?: string; importBatchId?: number }) =>
@@ -45,12 +46,23 @@ contextBridge.exposeInMainWorld('outreach', {
     ipcRenderer.invoke('outreach:applyAiBodyOverrides', payload),
   clearStepBodyOverrides: (payload: { campaignId: number; stepOrder: number }) =>
     ipcRenderer.invoke('outreach:clearStepBodyOverrides', payload),
+  listStepSavedContent: (payload: { campaignId: number; stepOrder: number }) =>
+    ipcRenderer.invoke('outreach:listStepSavedContent', payload),
+  saveMergePreview: (payload: {
+    leadId: number
+    campaignId: number
+    stepOrder: number
+    previewText: string
+  }) => ipcRenderer.invoke('outreach:saveMergePreview', payload),
   queueStart: (payload: { campaignId: number; leadIds: number[] }) =>
     ipcRenderer.invoke('outreach:queueStart', payload),
   queuePause: () => ipcRenderer.invoke('outreach:queuePause'),
   queueResume: () => ipcRenderer.invoke('outreach:queueResume'),
   queueStop: () => ipcRenderer.invoke('outreach:queueStop'),
   queueStatus: () => ipcRenderer.invoke('outreach:queueStatus'),
+  campaignSendProgress: (campaignId: number) =>
+    ipcRenderer.invoke('outreach:campaignSendProgress', campaignId),
+  campaignsSendProgressList: () => ipcRenderer.invoke('outreach:campaignsSendProgressList'),
   computeDue: (payload: { campaignId: number; leadIds: number[] }) =>
     ipcRenderer.invoke('outreach:computeDue', payload),
 })

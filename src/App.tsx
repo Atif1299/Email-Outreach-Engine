@@ -60,6 +60,42 @@ export default function App() {
     setActiveImportBatchId(payload.importBatchId)
   }, [])
 
+  const onOpenLeadGroup = useCallback(async (batchId: number) => {
+    const { outreach } = await import('@/lib/outreachApi')
+    const api = outreach()
+    const leads = await api.leadsList({ importBatchId: batchId })
+    setActiveImportBatchId(batchId)
+    setSelectedIds(new Set(leads.map((l) => l.id)))
+    setLeadVersion((v) => v + 1)
+    setStep(2)
+  }, [])
+
+  const onImportBatchDeleted = useCallback(
+    (payload: {
+      batchId: number
+      deletedLeadIds: number[]
+      deletedCampaignIds: number[]
+    }) => {
+      const deletedLeadSet = new Set(payload.deletedLeadIds)
+      const deletedCampaignSet = new Set(payload.deletedCampaignIds)
+      if (activeImportBatchId === payload.batchId) {
+        setActiveImportBatchId(null)
+      }
+      setSelectedIds((prev) => {
+        const next = new Set<number>()
+        for (const id of prev) {
+          if (!deletedLeadSet.has(id)) next.add(id)
+        }
+        return next
+      })
+      setLastCampaignId((prev) =>
+        prev != null && deletedCampaignSet.has(prev) ? null : prev,
+      )
+      setLeadVersion((v) => v + 1)
+    },
+    [activeImportBatchId],
+  )
+
   const onNext = () => {
     if (step >= STEP_COUNT - 1) return
     if (!gate) return
@@ -88,7 +124,12 @@ export default function App() {
     >
       {step === 0 && <ConnectStep onValidityChange={setGate} />}
       {step === 1 && (
-        <ImportStep onImported={onImportDone} onValidityChange={setGate} />
+        <ImportStep
+          onImported={onImportDone}
+          onValidityChange={setGate}
+          onOpenLeadGroup={onOpenLeadGroup}
+          onImportBatchDeleted={onImportBatchDeleted}
+        />
       )}
       {step === 2 && (
         <LeadsStep
@@ -98,22 +139,31 @@ export default function App() {
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           onValidityChange={setGate}
+          onNext={onNext}
+          nextLabel={nextLabel}
         />
       )}
       {step === 3 && (
         <CampaignStep
           leadVersion={leadVersion}
+          activeImportBatchId={activeImportBatchId}
+          setActiveImportBatchId={setActiveImportBatchId}
           onCampaignSaved={(id) => setLastCampaignId(id)}
           onValidityChange={setGate}
+          onNext={onNext}
+          nextLabel={nextLabel}
         />
       )}
       {step === 4 && (
         <PreviewStep
           leadVersion={leadVersion}
-          activeImportBatchId={activeImportBatchId}
           selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
           preferredCampaignId={lastCampaignId}
           onValidityChange={setGate}
+          onNext={onNext}
+          nextLabel={nextLabel}
+          onGoToQueue={(id) => setLastCampaignId(id)}
         />
       )}
       {step === 5 && (

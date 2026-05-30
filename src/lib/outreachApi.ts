@@ -5,6 +5,7 @@ import type {
   ColumnMapping,
   ImportBatchSummary,
   Lead,
+  CampaignSendProgress,
   QueueStatus,
 } from '@/shared/types'
 
@@ -36,6 +37,11 @@ export type OutreachApi = {
     leadIds: number[]
   }>
   importBatchesList: () => Promise<ImportBatchSummary[]>
+  importBatchDelete: (batchId: number) => Promise<{
+    deletedLeads: number
+    deletedCampaigns: number
+    deletedCampaignIds: number[]
+  }>
   leadIdsForCampaign: (campaignId: number) => Promise<number[]>
   leadsList: (arg?: string | { search?: string; importBatchId?: number }) => Promise<Lead[]>
   leadDelete: (id: number) => Promise<boolean>
@@ -84,11 +90,26 @@ export type OutreachApi = {
     campaignId: number
     stepOrder: number
   }) => Promise<boolean>
+  listStepSavedContent: (payload: {
+    campaignId: number
+    stepOrder: number
+  }) => Promise<{
+    aiBodies: { leadId: number; body: string }[]
+    mergePreviews: { leadId: number; previewText: string }[]
+  }>
+  saveMergePreview: (payload: {
+    leadId: number
+    campaignId: number
+    stepOrder: number
+    previewText: string
+  }) => Promise<boolean>
   queueStart: (payload: { campaignId: number; leadIds: number[] }) => Promise<boolean>
   queuePause: () => Promise<boolean>
   queueResume: () => Promise<boolean>
   queueStop: () => Promise<boolean>
   queueStatus: () => Promise<QueueStatus>
+  campaignSendProgress: (campaignId: number) => Promise<CampaignSendProgress>
+  campaignsSendProgressList: () => Promise<CampaignSendProgress[]>
   computeDue: (payload: { campaignId: number; leadIds: number[] }) => Promise<
     { leadId: number; campaignId: number; stepOrder: number }[]
   >

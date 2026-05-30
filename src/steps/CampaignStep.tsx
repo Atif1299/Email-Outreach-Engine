@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Trash2 } from 'lucide-react'
 import { outreach } from '@/lib/outreachApi'
 import type { Campaign, CampaignStep as CampaignStepModel, ImportBatchSummary } from '@/shared/types'
 import { defaultPitch, defaultStep } from '@/wizard/constants'
 import { Panel } from '@/components/ui/Panel'
+import { FieldLabel } from '@/components/ui/FieldLabel'
 import { AutosizeTextarea } from '@/components/ui/AutosizeTextarea'
 import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 import { DangerButton } from '@/components/ui/buttons'
@@ -30,19 +31,32 @@ const PITCH_MERGE_TAGS = [
   '{{unsubscribe_note}}',
 ] as const
 
+function campaignMatchesBatch(c: Campaign, batchId: number | null): boolean {
+  if (batchId == null) return true
+  const targets = c.targetImportBatchIds ?? []
+  return targets.includes(batchId)
+}
+
 export function CampaignStep({
   leadVersion,
+  activeImportBatchId,
+  setActiveImportBatchId,
   onCampaignSaved,
   onValidityChange,
+  onNext,
+  nextLabel,
 }: {
   leadVersion: number
+  activeImportBatchId: number | null
+  setActiveImportBatchId: Dispatch<SetStateAction<number | null>>
   onCampaignSaved: (id: number) => void
   onValidityChange: (ok: boolean) => void
+  onNext: () => void
+  nextLabel: string
 }) {
   const api = outreach()
   const [list, setList] = useState<Campaign[]>([])
   const [importBatches, setImportBatches] = useState<ImportBatchSummary[]>([])
-  const [targetImportBatchIds, setTargetImportBatchIds] = useState<number[]>([])
   const [editId, setEditId] = useState<number | null>(null)
   const [committedId, setCommittedId] = useState<number | null>(null)
   const [name, setName] = useState('My campaign')
@@ -52,7 +66,9 @@ export function CampaignStep({
   const [activeStepIdx, setActiveStepIdx] = useState(0)
   const [editorTab, setEditorTab] = useState<'overview' | 'sequence'>('overview')
   const [saving, setSaving] = useState(false)
-  const [saveNote, setSaveNote] = useState<string | null>(null)
+  const [savedFlash, setSavedFlash] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savedFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pitchRef = useRef<HTMLTextAreaElement>(null)
   const senderRef = useRef<HTMLTextAreaElement>(null)
   const subjectRef = useRef<HTMLInputElement>(null)
@@ -75,12 +91,16 @@ export function CampaignStep({
   }, [loadList])
 
   useEffect(() => {
+    return () => {
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
     void api.importBatchesList().then(setImportBatches)
   }, [api, leadVersion])
 
-  const setTargetBatch = (batchId: number | null) => {
-    setTargetImportBatchIds(batchId == null ? [] : [batchId])
-  }
+  const visibleCampaigns = list.filter((c) => campaignMatchesBatch(c, activeImportBatchId))
 
   const loadOne = async (id: number) => {
     const c = await api.campaignGet(id)
@@ -102,7 +122,6 @@ export function CampaignStep({
     )
     setActiveStepIdx(0)
     setEditorTab('overview')
-    setTargetImportBatchIds(c.targetImportBatchIds ?? [])
   }
 
   const newCampaign = () => {
@@ -114,13 +133,14 @@ export function CampaignStep({
     setSteps([defaultStep(1), defaultStep(2)])
     setActiveStepIdx(0)
     setEditorTab('overview')
-    setTargetImportBatchIds([])
   }
 
   const save = async () => {
     setSaving(true)
-    setSaveNote(null)
+    setSaveError(null)
     try {
+      const targetImportBatchIds =
+        activeImportBatchId != null ? [activeImportBatchId] : []
       const id = await api.campaignSave({
         id: editId ?? undefined,
         name,
@@ -132,11 +152,16 @@ export function CampaignStep({
       setEditId(id)
       setCommittedId(id)
       onCampaignSaved(id)
-      setSaveNote('Saved.')
+      setSavedFlash(true)
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current)
+      savedFlashTimerRef.current = setTimeout(() => {
+        setSavedFlash(false)
+        savedFlashTimerRef.current = null
+      }, 2000)
       void loadList()
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setSaveNote(`Save failed: ${msg}`)
+      setSaveError(msg)
     } finally {
       setSaving(false)
     }
@@ -214,6 +239,12 @@ export function CampaignStep({
   const editingTitle =
     editId === null && committedId === null ? 'New campaign (unsaved)' : `Editing: ${name}`
 
+  const handleNext = () => {
+    if (committedId == null) return
+    onCampaignSaved(committedId)
+    onNext()
+  }
+
   return (
     <div className="space-y-4">
       <p className="text-sm leading-snug text-ink-muted">
@@ -239,9 +270,13 @@ export function CampaignStep({
               <p className="text-sm leading-snug text-ink-muted">
                 No campaigns yet. Click <span className="font-medium text-ink">New campaign</span> to create one.
               </p>
+            ) : visibleCampaigns.length === 0 ? (
+              <p className="text-sm leading-snug text-ink-muted">
+                No campaigns for this lead group yet. Save a new campaign here or pick another group.
+              </p>
             ) : (
               <ul className="space-y-1">
-                {list.map((c) => (
+                {visibleCampaigns.map((c) => (
                   <li key={c.id} className="flex gap-1.5">
                     <button
                       type="button"
@@ -319,18 +354,34 @@ export function CampaignStep({
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <PrimaryButton onClick={() => void save()} disabled={saving}>
-                {saving ? 'Saving…' : 'Save campaign'}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[12rem] max-w-xs">
+                <FieldLabel htmlFor="campaign-lead-group">Lead group</FieldLabel>
+                <select
+                  id="campaign-lead-group"
+                  value={activeImportBatchId ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setActiveImportBatchId(v === '' ? null : +v)
+                  }}
+                  className="mt-1.5 w-full text-sm"
+                >
+                  <option value="">All groups</option>
+                  {importBatches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.filename} ({b.leadCount})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <PrimaryButton onClick={() => void save()} disabled={saving} className="mb-0 md:mb-0">
+                {saving ? 'Saving…' : savedFlash ? 'Saved' : 'Save campaign'}
               </PrimaryButton>
             </div>
           </div>
-          {saveNote && (
-            <p
-              className={`text-sm ${saveNote.startsWith('Save failed:') ? 'text-danger' : 'text-ink-muted'}`}
-              role={saveNote.startsWith('Save failed:') ? 'alert' : undefined}
-            >
-              {saveNote}
+          {saveError && (
+            <p className="text-sm text-danger" role="alert">
+              Save failed: {saveError}
             </p>
           )}
 
@@ -342,28 +393,6 @@ export function CampaignStep({
                   committedId === null
                     ? 'Save this campaign (or load one from the list) before using Next to continue.'
                     : 'Name, pitch, and sender apply to every step in this campaign.'
-                }
-                headerRight={
-                  <label className="block min-w-[16rem]">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-                      Lead group
-                    </span>
-                    <select
-                      value={targetImportBatchIds[0] ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setTargetBatch(v === '' ? null : +v)
-                      }}
-                      className="mt-1.5 w-full text-sm"
-                    >
-                      <option value="">All groups</option>
-                      {importBatches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.filename} ({b.leadCount})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                 }
               >
                 <div className="w-full space-y-4">
@@ -550,21 +579,12 @@ export function CampaignStep({
                 </Panel>
               </>
             )}
+          </div>
 
-            <div className="flex flex-wrap gap-3">
-              {editId != null && (
-                <DangerButton
-                  onClick={async () => {
-                    if (!confirm('Delete this campaign?')) return
-                    await api.campaignDelete(editId)
-                    newCampaign()
-                    void loadList()
-                  }}
-                >
-                  Delete campaign
-                </DangerButton>
-              )}
-            </div>
+          <div className="flex shrink-0 justify-end border-t border-edge pt-3">
+            <PrimaryButton disabled={committedId == null} onClick={handleNext}>
+              {nextLabel}
+            </PrimaryButton>
           </div>
         </div>
       </div>

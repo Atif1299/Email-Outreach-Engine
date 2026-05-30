@@ -61,6 +61,7 @@ export type Campaign = {
   pitch_block: string
   sender_info: string
   created_at: string
+  targetImportBatchIds?: number[]
 }
 
 export type CampaignStep = {
@@ -91,6 +92,15 @@ export type QueueStatus = {
   processedInSession: number
   sendsToday: number
   currentJob: { leadId: number; stepOrder: number; email: string } | null
+}
+
+export type CampaignSendProgress = {
+  campaignId: number
+  leadCount: number
+  stepCount: number
+  emailsSent: number
+  leadsStarted: number
+  leadsCompleted: number
 }
 
 export type PreviewRequest = {

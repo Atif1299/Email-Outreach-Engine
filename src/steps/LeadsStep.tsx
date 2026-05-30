@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { flushSync } from 'react-dom'
 import { outreach } from '@/lib/outreachApi'
 import { LEAD_FIELD_KEYS, type ImportBatchSummary, type Lead } from '@/shared/types'
 import { Panel } from '@/components/ui/Panel'
 import { FieldLabel } from '@/components/ui/FieldLabel'
-import { SecondaryButton } from '@/components/ui/buttons'
+import { PrimaryButton, SecondaryButton } from '@/components/ui/buttons'
 import { DangerButton } from '@/components/ui/buttons'
 
 function columnLabel(key: string) {
@@ -48,6 +49,8 @@ export function LeadsStep({
   selectedIds,
   setSelectedIds,
   onValidityChange,
+  onNext,
+  nextLabel,
 }: {
   leadVersion: number
   activeImportBatchId: number | null
@@ -55,12 +58,16 @@ export function LeadsStep({
   selectedIds: Set<number>
   setSelectedIds: Dispatch<SetStateAction<Set<number>>>
   onValidityChange: (ok: boolean) => void
+  onNext: () => void
+  nextLabel: string
 }) {
   const api = outreach()
   const [leads, setLeads] = useState<Lead[]>([])
   const [batches, setBatches] = useState<ImportBatchSummary[]>([])
   const [q, setQ] = useState('')
   const headerSelectRef = useRef<HTMLInputElement>(null)
+  const prevBatchRef = useRef<number | null | undefined>(undefined)
+  const prevLeadsLenRef = useRef(0)
 
   const load = useCallback(async () => {
     const rows = await api.leadsList({
@@ -78,25 +85,47 @@ export function LeadsStep({
     void api.importBatchesList().then(setBatches)
   }, [api, leadVersion])
 
-  const valid = leads.length > 0 && selectedIds.size > 0
+  const selectedInViewCount = leads.filter((l) => selectedIds.has(l.id)).length
+  /** Specific CSV group → continue with whole group; All groups → need at least one checkbox. */
+  const canContinue =
+    leads.length > 0 && (activeImportBatchId != null || selectedInViewCount > 0)
 
   useEffect(() => {
-    onValidityChange(valid)
-  }, [valid, onValidityChange])
+    onValidityChange(canContinue)
+  }, [canContinue, onValidityChange])
 
   useEffect(() => {
+    const batchChanged = prevBatchRef.current !== activeImportBatchId
+    prevBatchRef.current = activeImportBatchId
+    const leadsJustLoaded = prevLeadsLenRef.current === 0 && leads.length > 0
+    prevLeadsLenRef.current = leads.length
+
     setSelectedIds((prev) => {
-      const ids = new Set(leads.map((l) => l.id))
+      const inView = new Set(leads.map((l) => l.id))
       const next = new Set<number>()
       for (const id of prev) {
-        if (ids.has(id)) next.add(id)
+        if (inView.has(id)) next.add(id)
+      }
+      if (activeImportBatchId != null && leads.length > 0) {
+        if (batchChanged) return inView
+        if (leadsJustLoaded && next.size === 0) return inView
       }
       return next
     })
-  }, [leads, setSelectedIds])
+  }, [leads, activeImportBatchId, setSelectedIds])
 
-  const allSelected = leads.length > 0 && selectedIds.size === leads.length
-  const someSelected = selectedIds.size > 0 && !allSelected
+  const handleNext = () => {
+    if (!canContinue) return
+    if (activeImportBatchId != null && selectedInViewCount === 0) {
+      flushSync(() => {
+        setSelectedIds(new Set(leads.map((l) => l.id)))
+      })
+    }
+    onNext()
+  }
+
+  const allSelected = leads.length > 0 && selectedInViewCount === leads.length
+  const someSelected = selectedInViewCount > 0 && !allSelected
 
   useEffect(() => {
     const el = headerSelectRef.current
@@ -113,16 +142,34 @@ export function LeadsStep({
   }
 
   const selectAll = () => {
-    if (selectedIds.size === leads.length) setSelectedIds(new Set())
-    else setSelectedIds(new Set(leads.map((l) => l.id)))
+    if (allSelected) {
+      setSelectedIds((prev) => {
+        const inView = new Set(leads.map((l) => l.id))
+        const next = new Set<number>()
+        for (const id of prev) {
+          if (!inView.has(id)) next.add(id)
+        }
+        return next
+      })
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        for (const l of leads) next.add(l.id)
+        return next
+      })
+    }
   }
 
   return (
-    <div className="flex h-[calc(100dvh-11rem)] min-h-[18rem] flex-col">
+    <div className="flex h-[calc(100dvh-11rem)] min-h-[18rem] flex-col gap-3">
       <Panel
         title="Review & select leads"
-        description="Pick a lead group (CSV import), then choose who can receive the next send. Use search to narrow the list. At least one lead must be selected to continue."
-        className="flex h-full min-h-0 flex-col overflow-hidden"
+        description={
+          activeImportBatchId != null
+            ? 'Pick a lead group, then continue with the whole group or check specific leads. Use search to narrow the list.'
+            : 'Pick a lead group or select individual leads. At least one lead must be checked when using All groups.'
+        }
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <div className="mb-4 flex shrink-0 flex-wrap items-end gap-3">
           <div className="min-w-[12rem] max-w-full">
@@ -232,6 +279,12 @@ export function LeadsStep({
           </div>
         </div>
       </Panel>
+
+      <div className="flex shrink-0 justify-end border-t border-edge pt-3">
+        <PrimaryButton disabled={!canContinue} onClick={handleNext}>
+          {nextLabel}
+        </PrimaryButton>
+      </div>
     </div>
   )
 }

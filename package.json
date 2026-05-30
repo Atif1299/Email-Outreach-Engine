@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist-electron/main/index.js",
   "description": "Email outreach: CSV/XLSX, campaigns, SMTP",
-  "author": "草鞋没号 <308487730@qq.com>",
+  "author": "Email Outreach",
   "license": "MIT",
   "private": true,
   "debug": {
@@ -15,7 +15,9 @@
   "scripts": {
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "node scripts/generate-icon.mjs && tsc && vite build && electron-builder",
+    "build:win": "node scripts/generate-icon.mjs && tsc && vite build && electron-builder --win",
+    "generate-icon": "node scripts/generate-icon.mjs",
     "preview": "vite preview",
     "pretest": "vite build --mode=test",
     "test": "vitest run"
@@ -42,10 +44,12 @@
     "electron": "^33.2.0",
     "electron-builder": "^24.13.3",
     "electron-rebuild": "^3.2.9",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.4.49",
     "postcss-import": "^16.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.4.2",
     "vite": "^5.4.11",

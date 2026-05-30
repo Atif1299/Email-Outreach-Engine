@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { outreach } from '@/lib/outreachApi'
 import type { Campaign, Lead } from '@/shared/types'
@@ -9,20 +9,27 @@ import { DangerButton, PrimaryButton, SecondaryButton } from '@/components/ui/bu
 
 export function PreviewStep({
   leadVersion,
-  activeImportBatchId,
   selectedIds,
+  setSelectedIds,
   preferredCampaignId,
   onValidityChange,
+  onNext,
+  nextLabel,
+  onGoToQueue,
 }: {
   leadVersion: number
-  activeImportBatchId: number | null
   selectedIds: Set<number>
+  setSelectedIds: Dispatch<SetStateAction<Set<number>>>
   preferredCampaignId: number | null
   onValidityChange: (ok: boolean) => void
+  onNext: () => void
+  nextLabel: string
+  onGoToQueue: (campaignId: number) => void
 }) {
   const api = outreach()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId, setCampaignId] = useState<number | null>(null)
+  const [campaignLeadIds, setCampaignLeadIds] = useState<number[]>([])
   const [leads, setLeads] = useState<Lead[]>([])
   const [cw, setCw] = useState<CampaignWithSteps | null>(null)
   const [previewLead, setPreviewLead] = useState<number | null>(null)
@@ -44,7 +51,9 @@ export function PreviewStep({
   const [bulkBodies, setBulkBodies] = useState<Record<number, string>>({})
   const [bulkErrors, setBulkErrors] = useState<Record<number, string>>({})
   const [bulkOrderIds, setBulkOrderIds] = useState<number[]>([])
+  const [mergeByLead, setMergeByLead] = useState<Record<number, string>>({})
   const [aiBodiesSavedScope, setAiBodiesSavedScope] = useState<string | null>(null)
+  const [nextBusy, setNextBusy] = useState(false)
 
   const bulkIdsRef = useRef<number[]>([])
   const bulkIndexRef = useRef(0)
@@ -53,22 +62,48 @@ export function PreviewStep({
   bulkStateRef.current = bulkState
 
   const load = useCallback(async () => {
-    const leadOpts =
-      activeImportBatchId != null ? { importBatchId: activeImportBatchId } : undefined
-    const [c, l] = await Promise.all([api.campaignsList(), api.leadsList(leadOpts)])
+    const c = await api.campaignsList()
     setCampaigns(c)
-    setLeads(l as Lead[])
     setCampaignId((prev) => {
       if (preferredCampaignId != null && c.some((x) => x.id === preferredCampaignId)) {
         return preferredCampaignId
       }
       return prev != null ? prev : c[0]?.id ?? null
     })
-  }, [api, preferredCampaignId, activeImportBatchId])
+  }, [api, preferredCampaignId])
 
   useEffect(() => {
     void load()
   }, [load, leadVersion])
+
+  /** Leads + count follow the campaign selected in the dropdown (that campaign’s CSV / scope). */
+  useEffect(() => {
+    if (campaignId == null) {
+      setCampaignLeadIds([])
+      setLeads([])
+      return
+    }
+    void (async () => {
+      const ids = await api.leadIdsForCampaign(campaignId)
+      setCampaignLeadIds(ids)
+      const camp = campaigns.find((c) => c.id === campaignId)
+      const batchId = camp?.targetImportBatchIds?.[0] ?? null
+      const rows = await api.leadsList(batchId != null ? { importBatchId: batchId } : undefined)
+      const idSet = new Set(ids)
+      const scoped =
+        batchId != null ? (rows as Lead[]) : (rows as Lead[]).filter((l) => idSet.has(l.id))
+      setLeads(scoped)
+      setSelectedIds((prev) => {
+        const valid = new Set(ids)
+        const next = new Set<number>()
+        for (const id of prev) {
+          if (valid.has(id)) next.add(id)
+        }
+        if (next.size > 0) return next
+        return valid
+      })
+    })()
+  }, [api, campaignId, campaigns, leadVersion, setSelectedIds])
 
   useEffect(() => {
     if (preferredCampaignId != null) setCampaignId(preferredCampaignId)
@@ -88,12 +123,34 @@ export function PreviewStep({
 
   useEffect(() => {
     setAiBodiesSavedScope(null)
-  }, [campaignId, previewStep])
+    if (campaignId == null) {
+      setBulkBodies({})
+      setMergeByLead({})
+      return
+    }
+    setBulkBodies({})
+    setMergeByLead({})
+    void api.listStepSavedContent({ campaignId, stepOrder: previewStep }).then((saved) => {
+      const bodies: Record<number, string> = {}
+      for (const { leadId, body } of saved.aiBodies) bodies[leadId] = body
+      const merges: Record<number, string> = {}
+      for (const { leadId, previewText } of saved.mergePreviews) merges[leadId] = previewText
+      setBulkBodies(bodies)
+      setMergeByLead(merges)
+      if (Object.keys(bodies).length > 0) {
+        setAiBodiesSavedScope(`${campaignId}-${previewStep}`)
+      }
+    })
+  }, [api, campaignId, previewStep])
 
   useEffect(() => {
-    setPreviewText('')
+    if (previewLead == null) {
+      setPreviewText('')
+      return
+    }
+    setPreviewText(mergeByLead[previewLead] ?? '')
     setPreviewNote(null)
-  }, [previewLead, previewStep, campaignId])
+  }, [previewLead, mergeByLead])
 
   /** Default lead + nav order so Preview works before any bulk run. */
   useEffect(() => {
@@ -117,6 +174,17 @@ export function PreviewStep({
 
   const maxStep = cw?.steps.length ?? 1
 
+  const campaignLeadCount = campaignLeadIds.length
+
+  const persistAiBodies = useCallback(
+    async (items: { leadId: number; body: string }[]) => {
+      if (!campaignId || items.length === 0) return
+      await api.applyAiBodyOverrides({ campaignId, stepOrder: previewStep, items })
+      setAiBodiesSavedScope(`${campaignId}-${previewStep}`)
+    },
+    [api, campaignId, previewStep],
+  )
+
   const runPreview = async () => {
     if (!campaignId || !previewLead) return
     setPreviewBusy(true)
@@ -128,7 +196,15 @@ export function PreviewStep({
         stepOrder: previewStep,
         useAiOverride: false,
       })
-      setPreviewText(`${r.subject}\n\n---\n\n${r.body}`)
+      const text = `${r.subject}\n\n---\n\n${r.body}`
+      setPreviewText(text)
+      setMergeByLead((prev) => ({ ...prev, [previewLead]: text }))
+      await api.saveMergePreview({
+        leadId: previewLead,
+        campaignId,
+        stepOrder: previewStep,
+        previewText: text,
+      })
       setPreviewNote('Preview updated.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -156,7 +232,8 @@ export function PreviewStep({
         return next
       })
       setBulkOrderIds((prev) => (prev.includes(previewLead) ? prev : [...prev, previewLead]))
-      setSingleAiNote('AI body generated.')
+      await persistAiBodies([{ leadId: previewLead, body: r.body }])
+      setSingleAiNote('AI body generated and saved.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setSingleAiNote(`AI failed: ${msg}`)
@@ -218,16 +295,17 @@ export function PreviewStep({
       setBulkState('running')
       return
     }
-    if (!campaignId || selectedIds.size === 0) return
+    if (!campaignId || campaignLeadCount === 0) return
     const ids = leads.filter((l) => selectedIds.has(l.id)).map((l) => l.id)
-    if (ids.length === 0) return
-    bulkIdsRef.current = ids
+    const bulkIds = ids.length > 0 ? ids : campaignLeadIds
+    if (bulkIds.length === 0) return
+    bulkIdsRef.current = bulkIds
     bulkIndexRef.current = 0
     setAiBodiesSavedScope(null)
     setBulkBodies({})
     setBulkErrors({})
-    setBulkOrderIds(ids)
-    setBulkTotal(ids.length)
+    setBulkOrderIds(bulkIds)
+    setBulkTotal(bulkIds.length)
     setBulkCurrent(0)
     setBulkState('running')
   }
@@ -274,12 +352,42 @@ export function PreviewStep({
     try {
       await api.clearStepBodyOverrides({ campaignId, stepOrder: previewStep })
       setAiBodiesSavedScope(null)
+      setBulkBodies({})
       setApplyNote('Cleared.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setApplyNote(`Clear failed: ${msg}`)
     } finally {
       setApplyBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (bulkState !== 'idle' || bulkTotal === 0 || !campaignId) return
+    const items = Object.entries(bulkBodies)
+      .filter(([id]) => bulkErrors[+id] === undefined)
+      .map(([id, body]) => ({ leadId: +id, body }))
+    if (items.length === 0) return
+    void persistAiBodies(items)
+  }, [bulkState, bulkTotal, campaignId, bulkBodies, bulkErrors, persistAiBodies])
+
+  const handleNext = async () => {
+    if (!campaignId) return
+    setNextBusy(true)
+    try {
+      const items = Object.entries(bulkBodies)
+        .filter(([id]) => bulkErrors[+id] === undefined)
+        .map(([id, body]) => ({ leadId: +id, body }))
+      if (items.length > 0) {
+        await persistAiBodies(items)
+      }
+      onGoToQueue(campaignId)
+      onNext()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setApplyNote(`Could not save before queue: ${msg}`)
+    } finally {
+      setNextBusy(false)
     }
   }
 
@@ -312,7 +420,7 @@ export function PreviewStep({
             </div>
             <div className="rounded-lg border border-edge bg-canvas/40 px-3 py-2">
               <p className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">Selected leads</p>
-              <p className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{selectedIds.size}</p>
+              <p className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{campaignLeadCount}</p>
             </div>
           </div>
 
@@ -431,7 +539,7 @@ export function PreviewStep({
               >
                 {singleAiBusy ? 'Generating…' : 'Generate body with AI'}
               </SecondaryButton>
-              <PrimaryButton disabled={!campaignId || selectedIds.size === 0} onClick={() => void toggleBulkAi()}>
+              <PrimaryButton disabled={!campaignId || campaignLeadCount === 0} onClick={() => void toggleBulkAi()}>
                 {bulkRunning ? 'Pause generating' : bulkPaused ? 'Resume generating' : 'Generate all (AI)'}
               </PrimaryButton>
               <SecondaryButton
@@ -548,9 +656,18 @@ export function PreviewStep({
                 className={`mt-1.5 min-h-[14rem] font-mono text-xs md:min-h-[min(22rem,calc(45dvh-6rem))] ${previewLead != null && bulkErrors[previewLead] !== undefined ? 'border-danger/60 text-danger-muted' : ''}`}
               />
               <p className="mt-1 text-xs text-ink-muted">
-                Each lead has its own saved output; switch Lead or use ‹ › to review one at a time.
+                Saved outputs reload when you return. Regenerate anytime; Next saves AI bodies for the queue.
               </p>
             </div>
+          </div>
+
+          <div className="flex justify-end border-t border-edge pt-3">
+            <PrimaryButton
+              disabled={!campaignId || campaignLeadCount === 0 || nextBusy || bulkRunning}
+              onClick={() => void handleNext()}
+            >
+              {nextBusy ? 'Saving…' : nextLabel}
+            </PrimaryButton>
           </div>
         </div>
       </Panel>

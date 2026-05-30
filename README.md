@@ -22,6 +22,8 @@
   &nbsp;·&nbsp;
   <a href="#production-build">Build</a>
   &nbsp;·&nbsp;
+  <a href="#installing-on-windows">Install (Windows)</a>
+  &nbsp;·&nbsp;
   <a href="#repository-layout">Layout</a>
   &nbsp;·&nbsp;
   <a href="#compliance-and-deliverability">Compliance</a>
@@ -68,6 +70,39 @@ npm run build
 ```
 
 Outputs bundles and runs **electron-builder**. Artifacts appear under `release/<version>/` (see `electron-builder.json`).
+
+On Windows, the installer is:
+
+```text
+release/<version>/Email Outreach_<version>.exe
+```
+
+Before building, close any running dev or packaged instance of the app (avoids a locked `better-sqlite3` native module during rebuild).
+
+```bash
+npm run build:win
+```
+
+## Installing on Windows
+
+For teammates who only need to run the app (no Node.js required):
+
+1. Copy **`Email Outreach_1.0.0.exe`** from `release/1.0.0/` (or your build version).
+2. Run the installer and follow the wizard. You can change the install folder; the default per-user location is fine.
+3. Launch **Email Outreach** from the Start Menu.
+
+**Windows SmartScreen:** The installer is not code-signed yet. If you see *“Windows protected your PC”*, click **More info → Run anyway**. This is normal for internal team builds.
+
+**Where your data is stored** (separate from the install folder):
+
+| File | Purpose |
+|------|---------|
+| `%APPDATA%\Email Outreach\outreach.db` | Leads, campaigns, send history, AI bodies |
+| `%APPDATA%\Email Outreach\outreach-settings.json` | SMTP/OpenAI settings (secrets encrypted via Windows) |
+
+Uninstalling the app from **Settings → Apps** removes the program but **keeps** the data above, so leads and campaigns are not lost accidentally. Delete that folder manually if you want a full reset.
+
+If you previously used a dev build, data may have lived under `%APPDATA%\email-outreach\`; the installed app migrates that folder to `Email Outreach` on first launch.
 
 ## Repository layout
 
