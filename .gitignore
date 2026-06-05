@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build / packaging output
+dist/
+release/
+out/
+
+# Local env & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# SQLite runtime files (if copied locally for testing)
+*.db
+*.db-wal
+*.db-shm

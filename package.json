@@ -1,0 +1,23 @@
+{
+  "name": "email-outreach-v2",
+  "version": "1.0.0",
+  "description": "Email Outreach - Clean and compact email automation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "electron": "^29.0.0",
+    "nodemailer": "^6.9.0",
+    "openai": "^4.0.0",
+    "papaparse": "^5.4.0",
+    "xlsx": "^0.18.0"
+  },
+  "devDependencies": {
+    "electron-rebuild": "^3.2.9"
+  }
+}
