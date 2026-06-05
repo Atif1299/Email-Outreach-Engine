@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="Email Outreach">
+  <defs>
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="50%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="0%" r="80%">
+      <stop offset="0%" stop-color="#1e3a5f" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#0a0a0e" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="stars" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="5" r="0.6" fill="#fff" opacity="0.04"/>
+      <circle cx="18" cy="14" r="0.45" fill="#fff" opacity="0.07"/>
+      <circle cx="26" cy="24" r="0.35" fill="#60a5fa" opacity="0.1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="300" rx="18" fill="#0a0a0e"/>
+  <rect width="1200" height="300" rx="18" fill="url(#stars)"/>
+  <ellipse cx="600" cy="-40" rx="520" ry="160" fill="url(#glow)"/>
+  <text x="600" y="138" text-anchor="middle" fill="url(#titleGrad)" font-family="Segoe UI, system-ui, -apple-system, sans-serif" font-size="52" font-weight="700" letter-spacing="0.06em">
+    EMAIL OUTREACH
+  </text>
+  <text x="600" y="196" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, system-ui, sans-serif" font-size="14" letter-spacing="0.42em" font-weight="500">
+    IMPORT � SEQUENCES � SMTP
+  </text>
+  <text x="600" y="236" text-anchor="middle" fill="#64748b" font-family="Segoe UI, system-ui, sans-serif" font-size="13">
+    Desktop app � CSV &amp; Excel � AI personalization � Local SQLite
+  </text>
+</svg>
