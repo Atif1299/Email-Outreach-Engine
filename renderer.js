@@ -13,6 +13,8 @@ const state = {
   selectedLeadIds: new Set(),
   leadsSearch: '',
   leadsBatchFilter: null,
+  leadsStatusFilter: '',
+  leadsVerifying: false,
   // Campaigns
   campaigns: [],
   selectedCampaignId: null,
@@ -30,6 +32,7 @@ const state = {
   // Queue
   queueCampaignId: null,
   queueLeadIds: [],
+  queueSendable: 0,
   queueStatus: { running: false, paused: false, lastError: null, processedInSession: 0, failedInSession: 0, sendsToday: 0, currentJob: null },
   dueJobs: []
 }
@@ -41,6 +44,65 @@ const esc = (s) => {
   const d = document.createElement('div')
   d.textContent = s ?? ''
   return d.innerHTML
+}
+
+const STEP1_SUBJECT = '{{first_name}} — quick question for {{current_employer}}'
+const STEP1_BODY = `Hi {{first_name}},
+
+If outbound at {{current_employer}} is leaking replies, you're also leaking meetings. As {{current_title}}, that usually means pipeline and follow-up get messy fast.
+
+{{pitch_block}}
+
+Open to a quick call to see if this fits?
+
+{{sender_info}}`
+
+const STEP2_SUBJECT = '{{first_name}} — still relevant for {{current_employer}}?'
+const STEP2_BODY = `Hi {{first_name}},
+
+One angle for {{current_employer}} — teams in {{industry}} often lose deals when follow-up lives across too many tabs and CRM notes go stale.
+
+{{pitch_block}}
+
+Open to a 15-minute benchmark?
+
+{{sender_info}}`
+
+const AI_BODY_TEMPLATE = STEP1_BODY
+const AI_STEP1_SUBJECT = STEP1_SUBJECT
+const AI_FOLLOWUP_BODY = STEP2_BODY
+const AI_FOLLOWUP_SUBJECT = STEP2_SUBJECT
+const LEGACY_BODY_TEMPLATE = 'Hi {{first_name}},\n\n{{pitch_block}}\n\n{{sender_info}}'
+const LEGACY_STEP1_SUBJECT = 'Quick intro — {{first_name}}'
+const LEGACY_FOLLOWUP_BODY = 'Hi {{first_name}},\n\nJust circling back on my previous email.\n\n{{sender_info}}'
+const LEGACY_FOLLOWUP_SUBJECT = 'Following up — {{first_name}}'
+const OLD_MINIMAL_AI_BODY = 'Hi {{first_name}},\n\n{{sender_info}}'
+
+const DEFAULT_PITCH_BLOCK = `Product: 
+For: 
+Pain: 
+Solution: 
+Integrations/channels: 
+Offer/CTA: 
+Proof (optional): `
+
+const DEFAULT_SENDER_SIGNOFF = `Best,
+Your Name
+Your Company`
+
+function fillCampaignFormFields(c) {
+  $('#campName').value = c?.name ?? 'New Campaign'
+  $('#campPitch').value = (c?.pitch_block || '').trim() || DEFAULT_PITCH_BLOCK
+  $('#campSender').value = (c?.sender_info || '').trim() || DEFAULT_SENDER_SIGNOFF
+  $('#campAiVoice').value = c?.ai_voice || 'founder'
+  $('#campAiInstructions').value = c?.ai_instructions || ''
+  if (c?.targetImportBatchIds?.length) {
+    $('#campTargetBatch').value = c.targetImportBatchIds[0]
+  } else if (state.leadsBatchFilter) {
+    $('#campTargetBatch').value = state.leadsBatchFilter
+  } else {
+    $('#campTargetBatch').value = ''
+  }
 }
 const formatDate = (iso) => {
   if (!iso) return ''
@@ -88,6 +150,7 @@ function renderSettings() {
   $('#delayMax').value = s.sendDelayMaxMs || 45000
   $('#dailyCap').value = s.dailyCap || 50
   $('#openaiModel').value = s.openaiModel || 'gpt-4o-mini'
+  $('#verificationProvider').value = s.verificationProvider || 'none'
 }
 
 async function saveSettings() {
@@ -103,12 +166,14 @@ async function saveSettings() {
     sendDelayMinMs: parseInt($('#delayMin').value) || 15000,
     sendDelayMaxMs: parseInt($('#delayMax').value) || 45000,
     dailyCap: parseInt($('#dailyCap').value) || 50,
-    openaiModel: $('#openaiModel').value
+    openaiModel: $('#openaiModel').value,
+    verificationProvider: $('#verificationProvider').value
   }
   const smtpPassword = $('#smtpPassword').value
   const openaiKey = $('#openaiKey').value
+  const verificationApiKey = $('#verificationApiKey').value
   try {
-    await window.api.settingsSave({ settings, smtpPassword, openaiKey })
+    await window.api.settingsSave({ settings, smtpPassword, openaiKey, verificationApiKey })
     state.settings = settings
     $('#connectStatus').textContent = 'Saved'
     $('#connectStatus').className = 'status-pill status-pill--ok'
@@ -234,7 +299,8 @@ async function commitImport() {
   $('#btnImportCommit').textContent = 'Importing...'
   try {
     const result = await window.api.importCommit({ filePath: state.importFilePath, mapping: state.importPreview.mapping })
-    alert(`Imported ${result.imported} leads.\nSkipped: ${result.skippedNoEmail} (no email), ${result.duplicatesSkipped} (duplicates in file), ${result.skippedExistingInApp} (already in app)`)
+    const v = result.verification || {}
+    alert(`Imported ${result.imported} leads.\nValid: ${v.valid || 0} · Invalid: ${v.invalid || 0} · Risky: ${v.risky || 0}\nSkipped: ${result.skippedNoEmail} (no email), ${result.duplicatesSkipped} (duplicates in file), ${result.skippedExistingInApp} (already in app)`)
     state.importPreview = null
     state.importFilePath = null
     $('#mappingSection').hidden = true
@@ -270,15 +336,38 @@ async function loadLeads() {
   const opts = {}
   if (state.leadsSearch) opts.search = state.leadsSearch
   if (state.leadsBatchFilter) opts.importBatchId = state.leadsBatchFilter
+  if (state.leadsStatusFilter) opts.verificationStatus = state.leadsStatusFilter
   state.leads = await window.api.leadsList(opts)
   if (state.leadsBatchFilter) {
     $('#leadsBatchFilter').value = state.leadsBatchFilter
   }
+  if (state.leadsStatusFilter) {
+    $('#leadsStatusFilter').value = state.leadsStatusFilter
+  }
+  await updateLeadsVerifyStats()
   renderLeads()
+  updateLeadsVerifyButtons()
+}
+
+async function updateLeadsVerifyStats() {
+  const opts = {}
+  if (state.leadsBatchFilter) opts.importBatchId = state.leadsBatchFilter
+  const stats = await window.api.leadsVerificationStats(opts)
+  const parts = [`${stats.total} leads`]
+  if (stats.valid) parts.push(`${stats.valid} valid`)
+  if (stats.invalid) parts.push(`${stats.invalid} invalid`)
+  if (stats.risky) parts.push(`${stats.risky} risky`)
+  if (stats.pending) parts.push(`${stats.pending} pending`)
+  if (stats.unknown) parts.push(`${stats.unknown} unknown`)
+  $('#leadsVerifyStats').textContent = parts.join(' · ')
+}
+
+function statusPillClass(status) {
+  return `verify-pill verify-pill--${status || 'pending'}`
 }
 
 function renderLeads() {
-  const cols = ['', 'Email', 'First Name', 'Last Name', 'Employer', 'Title']
+  const cols = ['', 'Status', 'Email', 'First Name', 'Last Name', 'Employer', 'Title']
   const keys = ['email', 'first_name', 'last_name', 'current_employer', 'current_title']
   $('#leadsHead').innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`
   if (!state.leads.length) {
@@ -289,8 +378,10 @@ function renderLeads() {
   $('#leadsEmpty').hidden = true
   $('#leadsBody').innerHTML = state.leads.map(l => {
     const checked = state.selectedLeadIds.has(l.id) ? 'checked' : ''
+    const status = l.verification_status || 'pending'
     return `<tr class="${checked ? 'is-selected' : ''}" data-id="${l.id}">
       <td><input type="checkbox" ${checked} data-id="${l.id}"></td>
+      <td><span class="${statusPillClass(status)}">${esc(status)}</span></td>
       ${keys.map(k => `<td>${esc(l.data[k] || (k === 'email' ? l.email : ''))}</td>`).join('')}
     </tr>`
   }).join('')
@@ -301,9 +392,58 @@ function renderLeads() {
       else state.selectedLeadIds.delete(id)
       saveSelectedLeadIds()
       renderLeads()
+      updateLeadsVerifyButtons()
     }
   })
   $('#selectedCount').textContent = `${state.selectedLeadIds.size} selected`
+}
+
+function updateLeadsVerifyButtons() {
+  $('#btnVerifyBatch').disabled = state.leadsVerifying || !state.leadsBatchFilter
+  $('#btnVerifySelected').disabled = state.leadsVerifying || !state.selectedLeadIds.size
+}
+
+function updateLeadsVerifyProgress(current, total) {
+  const pct = total ? Math.round(current / total * 100) : 0
+  $('#leadsVerifyProgressCount').textContent = `${current}/${total}`
+  $('#leadsVerifyProgressFill').style.width = `${pct}%`
+}
+
+async function verifyBatchLeads() {
+  if (!state.leadsBatchFilter || state.leadsVerifying) return
+  const useApi = state.settings?.verificationProvider === 'zerobounce'
+  state.leadsVerifying = true
+  $('#leadsVerifyProgress').hidden = false
+  updateLeadsVerifyProgress(0, 1)
+  updateLeadsVerifyButtons()
+  try {
+    const result = await window.api.verifyBatch({ importBatchId: state.leadsBatchFilter, useApi })
+    alert(`Verified ${result.verified} leads.\nValid: ${result.counts.valid || 0} · Invalid: ${result.counts.invalid || 0} · Risky: ${result.counts.risky || 0}`)
+    await loadLeads()
+  } catch (e) {
+    alert('Verification failed: ' + e.message)
+  }
+  state.leadsVerifying = false
+  $('#leadsVerifyProgress').hidden = true
+  updateLeadsVerifyButtons()
+}
+
+async function verifySelectedLeads() {
+  if (!state.selectedLeadIds.size || state.leadsVerifying) return
+  const useApi = state.settings?.verificationProvider === 'zerobounce'
+  state.leadsVerifying = true
+  $('#leadsVerifyProgress').hidden = false
+  updateLeadsVerifyButtons()
+  try {
+    const result = await window.api.verifyLeads({ leadIds: [...state.selectedLeadIds], useApi })
+    alert(`Verified ${result.verified} leads.\nValid: ${result.counts.valid || 0} · Invalid: ${result.counts.invalid || 0} · Risky: ${result.counts.risky || 0}`)
+    await loadLeads()
+  } catch (e) {
+    alert('Verification failed: ' + e.message)
+  }
+  state.leadsVerifying = false
+  $('#leadsVerifyProgress').hidden = true
+  updateLeadsVerifyButtons()
 }
 
 function saveSelectedLeadIds() {
@@ -404,16 +544,7 @@ async function selectCampaign(id) {
   $('#btnSaveCampaign').hidden = false
   $('#campaignTitle').textContent = c.name
   $('#campaignMeta').textContent = formatDate(c.created_at)
-  $('#campName').value = c.name
-  $('#campPitch').value = c.pitch_block
-  $('#campSender').value = c.sender_info
-  if (c.targetImportBatchIds?.length) {
-    $('#campTargetBatch').value = c.targetImportBatchIds[0]
-  } else if (state.leadsBatchFilter) {
-    $('#campTargetBatch').value = state.leadsBatchFilter
-  } else {
-    $('#campTargetBatch').value = ''
-  }
+  fillCampaignFormFields(c)
   renderCampaignSteps(c.steps || [])
   updateCampaignButtons()
   setCampaignTab('overview')
@@ -434,8 +565,45 @@ function setCampaignTab(tab) {
   $('#tabSequences').hidden = tab !== 'sequences'
 }
 
+function applyAiStepDefaults(step, stepIndex) {
+  if (stepIndex === 0) {
+    if (!step.subject_template || step.subject_template === LEGACY_STEP1_SUBJECT) {
+      step.subject_template = STEP1_SUBJECT
+    }
+    if (!step.body_template || step.body_template === LEGACY_BODY_TEMPLATE || step.body_template === OLD_MINIMAL_AI_BODY) {
+      step.body_template = STEP1_BODY
+    }
+  } else {
+    if (!step.subject_template || step.subject_template === LEGACY_FOLLOWUP_SUBJECT) {
+      step.subject_template = STEP2_SUBJECT
+    }
+    if (!step.body_template || step.body_template === LEGACY_FOLLOWUP_BODY || step.body_template === OLD_MINIMAL_AI_BODY) {
+      step.body_template = STEP2_BODY
+    }
+  }
+}
+
+function defaultStep(stepOrder) {
+  if (stepOrder <= 1) {
+    return {
+      step_order: 1,
+      delay_hours_after_previous: 0,
+      subject_template: STEP1_SUBJECT,
+      body_template: STEP1_BODY,
+      use_ai: true
+    }
+  }
+  return {
+    step_order: stepOrder,
+    delay_hours_after_previous: 72,
+    subject_template: STEP2_SUBJECT,
+    body_template: STEP2_BODY,
+    use_ai: true
+  }
+}
+
 function renderCampaignSteps(steps) {
-  if (!steps.length) steps = [{ step_order: 1, delay_hours_after_previous: 0, subject_template: 'Quick intro — {{first_name}}', body_template: 'Hi {{first_name}},\n\n{{pitch_block}}\n\n{{sender_info}}', use_ai: false }]
+  if (!steps.length) steps = [defaultStep(1)]
   state.campaignDraft.steps = steps
   $('#stepsList').innerHTML = steps.map((s, i) => `
     <div class="step-item" data-idx="${i}">
@@ -452,14 +620,18 @@ function renderCampaignSteps(steps) {
         <div class="field"><input type="text" class="input step-subject" value="${esc(s.subject_template)}" placeholder="Subject..."></div>
         <div class="field"><input type="number" class="input step-delay" value="${s.delay_hours_after_previous}" min="0" placeholder="Delay (h)"></div>
       </div>
-      <div class="field"><textarea class="input textarea step-body" placeholder="Body template...">${esc(s.body_template)}</textarea></div>
+      <div class="field"><textarea class="input textarea step-body" placeholder="Body template — use merge tags like {{first_name}}, {{current_employer}}...">${esc(s.body_template)}</textarea></div>
     </div>
   `).join('')
   $$('.step-item').forEach((el, i) => {
     el.querySelector('.step-subject').oninput = (e) => { state.campaignDraft.steps[i].subject_template = e.target.value }
     el.querySelector('.step-body').oninput = (e) => { state.campaignDraft.steps[i].body_template = e.target.value }
     el.querySelector('.step-delay').oninput = (e) => { state.campaignDraft.steps[i].delay_hours_after_previous = parseFloat(e.target.value) || 0 }
-    el.querySelector('.step-ai').onchange = (e) => { state.campaignDraft.steps[i].use_ai = e.target.checked }
+    el.querySelector('.step-ai').onchange = (e) => {
+      state.campaignDraft.steps[i].use_ai = e.target.checked
+      if (e.target.checked) applyAiStepDefaults(state.campaignDraft.steps[i], i)
+      renderCampaignSteps(state.campaignDraft.steps)
+    }
     const rm = el.querySelector('.step-remove')
     if (rm) rm.onclick = () => {
       state.campaignDraft.steps.splice(i, 1)
@@ -472,21 +644,18 @@ function renderCampaignSteps(steps) {
 function addCampaignStep() {
   if (!state.campaignDraft) return
   const n = state.campaignDraft.steps.length + 1
-  state.campaignDraft.steps.push({ step_order: n, delay_hours_after_previous: 72, subject_template: 'Following up — {{first_name}}', body_template: 'Hi {{first_name}},\n\nJust circling back on my previous email.\n\n{{sender_info}}', use_ai: false })
+  state.campaignDraft.steps.push(defaultStep(n))
   renderCampaignSteps(state.campaignDraft.steps)
 }
 
 function newCampaign() {
   state.selectedCampaignId = null
-  state.campaignDraft = { name: 'New Campaign', pitch_block: '', sender_info: '', steps: [], targetImportBatchIds: [] }
+  state.campaignDraft = { name: 'New Campaign', pitch_block: '', sender_info: '', ai_voice: 'founder', ai_instructions: '', steps: [], targetImportBatchIds: [] }
   $('#campaignForm').hidden = false
   $('#btnSaveCampaign').hidden = false
   $('#campaignTitle').textContent = 'New Campaign'
   $('#campaignMeta').textContent = ''
-  $('#campName').value = 'New Campaign'
-  $('#campPitch').value = ''
-  $('#campSender').value = ''
-  $('#campTargetBatch').value = state.leadsBatchFilter || ''
+  fillCampaignFormFields({ name: 'New Campaign', pitch_block: '', sender_info: '', ai_voice: 'founder', ai_instructions: '' })
   renderCampaignSteps([])
   renderCampaigns()
   updateCampaignButtons()
@@ -506,6 +675,8 @@ async function saveCampaign() {
     name: $('#campName').value.trim() || 'Untitled',
     pitch_block: $('#campPitch').value,
     sender_info: $('#campSender').value,
+    ai_voice: $('#campAiVoice').value,
+    ai_instructions: $('#campAiInstructions').value,
     targetImportBatchIds: $('#campTargetBatch').value ? [parseInt($('#campTargetBatch').value)] : [],
     steps: state.campaignDraft.steps.map((s, i) => ({ ...s, step_order: i + 1 }))
   }
@@ -723,13 +894,16 @@ async function updateQueueCampaignStats() {
     $('#queueCampaignStats').innerHTML = ''
     $('#queueLeadCount').textContent = '0 leads in campaign'
     state.queueLeadIds = []
+    state.queueSendable = 0
     return
   }
   state.queueLeadIds = await window.api.leadIdsForCampaign(state.queueCampaignId)
+  const verifyStats = await window.api.campaignLeadVerificationStats(state.queueCampaignId)
+  state.queueSendable = verifyStats.sendable
   const progress = await window.api.campaignSendProgress(state.queueCampaignId)
-  $('#queueLeadCount').textContent = `${state.queueLeadIds.length} leads in campaign`
+  $('#queueLeadCount').textContent = `${verifyStats.sendable} sendable · ${verifyStats.blocked} blocked (not verified)`
   $('#queueCampaignStats').innerHTML = `
-    <div>Leads: ${progress.leadCount} · Steps: ${progress.stepCount} · Sent: ${progress.emailsSent} · Started: ${progress.leadsStarted} · Completed: ${progress.leadsCompleted}</div>
+    <div>Sendable: ${verifyStats.sendable} · Blocked: ${verifyStats.blocked} · Steps: ${progress.stepCount} · Sent: ${progress.emailsSent} · Started: ${progress.leadsStarted} · Completed: ${progress.leadsCompleted}</div>
   `
   state.dueJobs = await window.api.computeDue({ campaignId: state.queueCampaignId, leadIds: state.queueLeadIds })
   $('#statDue').textContent = state.dueJobs.length
@@ -771,14 +945,21 @@ function updateQueueStatus(status) {
 
 function updateQueueButtons() {
   const s = state.queueStatus
-  $('#btnQueueStart').disabled = s.running || !state.queueCampaignId || !state.queueLeadIds.length
+  const noSendable = !state.queueSendable
+  $('#btnQueueStart').disabled = s.running || !state.queueCampaignId || noSendable
+  $('#btnQueueStart').title = noSendable && state.queueCampaignId ? 'No verified (valid) leads to send' : ''
   $('#btnQueuePause').disabled = !s.running || s.paused
   $('#btnQueueResume').disabled = !s.running || !s.paused
   $('#btnQueueStop').disabled = !s.running
 }
 
 async function startQueue() {
-  if (!state.queueCampaignId || !state.queueLeadIds.length) return
+  if (!state.queueCampaignId) return
+  if (!state.queueSendable) {
+    alert('No sendable leads. Only leads with status "valid" can be queued. Verify leads on the Leads page first.')
+    return
+  }
+  if (!state.queueLeadIds.length) return
   try {
     await window.api.queueStart({ campaignId: state.queueCampaignId, leadIds: state.queueLeadIds })
   } catch (e) {
@@ -824,9 +1005,12 @@ function bindEvents() {
   // Step 2: Leads
   $('#leadsSearch').oninput = (e) => { state.leadsSearch = e.target.value; loadLeads() }
   $('#leadsBatchFilter').onchange = (e) => { state.leadsBatchFilter = e.target.value ? parseInt(e.target.value) : null; loadLeads() }
+  $('#leadsStatusFilter').onchange = (e) => { state.leadsStatusFilter = e.target.value; loadLeads() }
   $('#btnSelectAll').onclick = selectAllLeads
   $('#btnClearSelection').onclick = clearLeadSelection
   $('#btnDeleteSelected').onclick = deleteSelectedLeads
+  $('#btnVerifyBatch').onclick = verifyBatchLeads
+  $('#btnVerifySelected').onclick = verifySelectedLeads
   $('#btnLeadsNext').onclick = goToCampaign
   // Step 3: Campaign
   $('#btnNewCampaign').onclick = newCampaign
@@ -853,6 +1037,9 @@ function bindEvents() {
   $('#btnBackToPreview').onclick = goBackToPreview
   // Queue status events
   window.api.onQueueStatus(updateQueueStatus)
+  window.api.onVerifyProgress(({ current, total }) => {
+    updateLeadsVerifyProgress(current, total)
+  })
 }
 
 // === INIT ===

@@ -17,8 +17,12 @@ contextBridge.exposeInMainWorld('api', {
 
   // Leads
   leadsList: (opts) => ipcRenderer.invoke('leadsList', opts),
+  leadsVerificationStats: (opts) => ipcRenderer.invoke('leadsVerificationStats', opts),
   leadDelete: (id) => ipcRenderer.invoke('leadDelete', id),
   leadIdsForCampaign: (campaignId) => ipcRenderer.invoke('leadIdsForCampaign', campaignId),
+  verifyBatch: (payload) => ipcRenderer.invoke('verifyBatch', payload),
+  verifyLeads: (payload) => ipcRenderer.invoke('verifyLeads', payload),
+  campaignLeadVerificationStats: (campaignId) => ipcRenderer.invoke('campaignLeadVerificationStats', campaignId),
 
   // Campaigns
   campaignsList: () => ipcRenderer.invoke('campaignsList'),
@@ -51,5 +55,9 @@ contextBridge.exposeInMainWorld('api', {
   // Queue status events
   onQueueStatus: (callback) => {
     ipcRenderer.on('queue:status', (_, data) => callback(data))
+  },
+
+  onVerifyProgress: (callback) => {
+    ipcRenderer.on('verify:progress', (_, data) => callback(data))
   }
 })

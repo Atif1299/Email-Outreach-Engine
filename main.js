@@ -6,6 +6,8 @@ const nodemailer = require('nodemailer')
 const OpenAI = require('openai')
 const Papa = require('papaparse')
 const XLSX = require('xlsx')
+const { verifyEmail, verifyEmailLocal, verifyMany, isHardBounceError } = require('./verify')
+const { buildBodyMessages, buildSubjectMessages } = require('./aiPrompts')
 
 // === CONFIG ===
 const APP_NAME = 'Email Outreach'
@@ -24,7 +26,8 @@ const DEFAULT_SETTINGS = {
   sendDelayMinMs: 15000,
   sendDelayMaxMs: 45000,
   dailyCap: 50,
-  openaiModel: 'gpt-4o-mini'
+  openaiModel: 'gpt-4o-mini',
+  verificationProvider: 'none'
 }
 
 // === DATABASE ===
@@ -116,6 +119,35 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_leads_import_batch ON leads(import_batch_id);
   `)
+  runLeadVerificationMigrations(db)
+  runCampaignAiMigrations(db)
+}
+
+function runCampaignAiMigrations(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name))
+  if (!cols.has('ai_voice')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN ai_voice TEXT NOT NULL DEFAULT 'founder'`)
+  }
+  if (!cols.has('ai_instructions')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN ai_instructions TEXT NOT NULL DEFAULT ''`)
+  }
+}
+
+function runLeadVerificationMigrations(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(leads)').all().map(c => c.name))
+  if (!cols.has('verification_status')) {
+    db.exec(`ALTER TABLE leads ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending'`)
+  }
+  if (!cols.has('verification_reason')) {
+    db.exec(`ALTER TABLE leads ADD COLUMN verification_reason TEXT`)
+  }
+  if (!cols.has('verified_at')) {
+    db.exec(`ALTER TABLE leads ADD COLUMN verified_at TEXT`)
+  }
+  if (!cols.has('verification_method')) {
+    db.exec(`ALTER TABLE leads ADD COLUMN verification_method TEXT`)
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_leads_verification_status ON leads(verification_status)`)
 }
 
 // DB: Import Batches
@@ -152,32 +184,74 @@ function deleteImportBatch(batchId) {
   return { deletedLeads, deletedCampaigns, deletedCampaignIds }
 }
 
+const LEAD_SELECT = 'id, import_batch_id, email, data_json, created_at, verification_status, verification_reason, verified_at, verification_method'
+
 // DB: Leads
-function insertLead(importBatchId, email, data) {
-  const r = getDb().prepare('INSERT INTO leads (import_batch_id, email, data_json, created_at) VALUES (?, ?, ?, ?)').run(importBatchId, email, JSON.stringify(data), new Date().toISOString())
+function insertLead(importBatchId, email, data, verification) {
+  const status = verification?.status ?? 'pending'
+  const reason = verification?.reason ?? null
+  const verifiedAt = verification?.verifiedAt ?? null
+  const method = verification?.method ?? null
+  const r = getDb().prepare(`
+    INSERT INTO leads (import_batch_id, email, data_json, created_at, verification_status, verification_reason, verified_at, verification_method)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(importBatchId, email, JSON.stringify(data), new Date().toISOString(), status, reason, verifiedAt, method)
   return Number(r.lastInsertRowid)
+}
+
+function updateLeadVerification(id, verification) {
+  getDb().prepare(`
+    UPDATE leads SET verification_status = ?, verification_reason = ?, verified_at = ?, verification_method = ?
+    WHERE id = ?
+  `).run(verification.status, verification.reason ?? null, verification.verifiedAt ?? new Date().toISOString(), verification.method ?? null, id)
 }
 
 function listLeads(opts) {
   const db = getDb()
   const search = opts?.search?.trim()
   const batchId = opts?.importBatchId
-  if (search && batchId != null) {
-    const q = `%${search.toLowerCase()}%`
-    return db.prepare(`SELECT id, import_batch_id, email, data_json, created_at FROM leads WHERE import_batch_id = ? AND (LOWER(email) LIKE ? OR LOWER(data_json) LIKE ?) ORDER BY id DESC`).all(batchId, q, q)
+  const status = opts?.verificationStatus?.trim()
+  const conditions = []
+  const params = []
+  if (batchId != null) {
+    conditions.push('import_batch_id = ?')
+    params.push(batchId)
+  }
+  if (status) {
+    conditions.push('verification_status = ?')
+    params.push(status)
   }
   if (search) {
     const q = `%${search.toLowerCase()}%`
-    return db.prepare(`SELECT id, import_batch_id, email, data_json, created_at FROM leads WHERE LOWER(email) LIKE ? OR LOWER(data_json) LIKE ? ORDER BY id DESC`).all(q, q)
+    conditions.push('(LOWER(email) LIKE ? OR LOWER(data_json) LIKE ?)')
+    params.push(q, q)
   }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return db.prepare(`SELECT ${LEAD_SELECT} FROM leads ${where} ORDER BY id DESC`).all(...params)
+}
+
+function listLeadVerificationStats(opts) {
+  const db = getDb()
+  const batchId = opts?.importBatchId
+  let sql = `SELECT verification_status, COUNT(*) as c FROM leads`
+  const params = []
   if (batchId != null) {
-    return db.prepare(`SELECT id, import_batch_id, email, data_json, created_at FROM leads WHERE import_batch_id = ? ORDER BY id DESC`).all(batchId)
+    sql += ' WHERE import_batch_id = ?'
+    params.push(batchId)
   }
-  return db.prepare(`SELECT id, import_batch_id, email, data_json, created_at FROM leads ORDER BY id DESC`).all()
+  sql += ' GROUP BY verification_status'
+  const rows = db.prepare(sql).all(...params)
+  const stats = { valid: 0, invalid: 0, risky: 0, pending: 0, unknown: 0, total: 0 }
+  for (const r of rows) {
+    const key = r.verification_status || 'pending'
+    if (stats[key] !== undefined) stats[key] = r.c
+    stats.total += r.c
+  }
+  return stats
 }
 
 function getLead(id) {
-  return getDb().prepare('SELECT id, import_batch_id, email, data_json, created_at FROM leads WHERE id = ?').get(id)
+  return getDb().prepare(`SELECT ${LEAD_SELECT} FROM leads WHERE id = ?`).get(id)
 }
 
 function deleteLead(id) {
@@ -190,21 +264,27 @@ function leadEmailExistsLower(emailLower) {
 }
 
 // DB: Campaigns
+const CAMPAIGN_SELECT = 'id, name, pitch_block, sender_info, ai_voice, ai_instructions, created_at'
+
 function listCampaigns() {
-  return getDb().prepare(`SELECT id, name, pitch_block, sender_info, created_at FROM campaigns ORDER BY id DESC`).all()
+  return getDb().prepare(`SELECT ${CAMPAIGN_SELECT} FROM campaigns ORDER BY id DESC`).all()
 }
 
 function getCampaign(id) {
-  return getDb().prepare(`SELECT id, name, pitch_block, sender_info, created_at FROM campaigns WHERE id = ?`).get(id)
+  return getDb().prepare(`SELECT ${CAMPAIGN_SELECT} FROM campaigns WHERE id = ?`).get(id)
 }
 
-function createCampaign(name, pitchBlock, senderInfo) {
-  const r = getDb().prepare('INSERT INTO campaigns (name, pitch_block, sender_info, created_at) VALUES (?, ?, ?, ?)').run(name, pitchBlock, senderInfo, new Date().toISOString())
+function createCampaign(name, pitchBlock, senderInfo, aiVoice, aiInstructions) {
+  const r = getDb().prepare('INSERT INTO campaigns (name, pitch_block, sender_info, ai_voice, ai_instructions, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    name, pitchBlock, senderInfo, aiVoice || 'founder', aiInstructions || '', new Date().toISOString()
+  )
   return Number(r.lastInsertRowid)
 }
 
-function updateCampaign(id, name, pitchBlock, senderInfo) {
-  getDb().prepare('UPDATE campaigns SET name = ?, pitch_block = ?, sender_info = ? WHERE id = ?').run(name, pitchBlock, senderInfo, id)
+function updateCampaign(id, name, pitchBlock, senderInfo, aiVoice, aiInstructions) {
+  getDb().prepare('UPDATE campaigns SET name = ?, pitch_block = ?, sender_info = ?, ai_voice = ?, ai_instructions = ? WHERE id = ?').run(
+    name, pitchBlock, senderInfo, aiVoice || 'founder', aiInstructions || '', id
+  )
 }
 
 function deleteCampaign(id) {
@@ -242,7 +322,7 @@ function replaceCampaignTargetBatches(campaignId, importBatchIds) {
   })()
 }
 
-function listLeadIdsForCampaignTargets(campaignId) {
+function listAllLeadIdsForCampaignTargets(campaignId) {
   const db = getDb()
   const n = db.prepare('SELECT COUNT(*) as c FROM campaign_target_batches WHERE campaign_id = ?').get(campaignId)
   if (n.c === 0) {
@@ -253,6 +333,26 @@ function listLeadIdsForCampaignTargets(campaignId) {
     INNER JOIN campaign_target_batches t ON t.import_batch_id = l.import_batch_id
     WHERE t.campaign_id = ? AND l.import_batch_id IS NOT NULL ORDER BY l.id
   `).all(campaignId).map(r => r.id)
+}
+
+function listLeadIdsForCampaignTargets(campaignId) {
+  const db = getDb()
+  const n = db.prepare('SELECT COUNT(*) as c FROM campaign_target_batches WHERE campaign_id = ?').get(campaignId)
+  if (n.c === 0) {
+    return db.prepare(`SELECT id FROM leads WHERE verification_status = 'valid' ORDER BY id`).all().map(r => r.id)
+  }
+  return db.prepare(`
+    SELECT DISTINCT l.id FROM leads l
+    INNER JOIN campaign_target_batches t ON t.import_batch_id = l.import_batch_id
+    WHERE t.campaign_id = ? AND l.import_batch_id IS NOT NULL AND l.verification_status = 'valid'
+    ORDER BY l.id
+  `).all(campaignId).map(r => r.id)
+}
+
+function getCampaignLeadVerificationStats(campaignId) {
+  const allIds = listAllLeadIdsForCampaignTargets(campaignId)
+  const sendable = listLeadIdsForCampaignTargets(campaignId).length
+  return { total: allIds.length, sendable, blocked: allIds.length - sendable }
 }
 
 // DB: Lead Sends
@@ -335,7 +435,7 @@ function settingsPath() {
 function readSettingsFile() {
   const p = settingsPath()
   if (!fs.existsSync(p)) {
-    return { ...DEFAULT_SETTINGS, smtpPasswordEnc: null, openaiKeyEnc: null }
+    return { ...DEFAULT_SETTINGS, smtpPasswordEnc: null, openaiKeyEnc: null, verificationApiKeyEnc: null }
   }
   try {
     const raw = fs.readFileSync(p, 'utf8')
@@ -355,11 +455,13 @@ function readSettingsFile() {
       sendDelayMaxMs,
       dailyCap: typeof j.dailyCap === 'number' ? j.dailyCap : DEFAULT_SETTINGS.dailyCap,
       openaiModel: typeof j.openaiModel === 'string' ? j.openaiModel : DEFAULT_SETTINGS.openaiModel,
+      verificationProvider: typeof j.verificationProvider === 'string' ? j.verificationProvider : DEFAULT_SETTINGS.verificationProvider,
       smtpPasswordEnc: j.smtpPasswordEnc ?? null,
-      openaiKeyEnc: j.openaiKeyEnc ?? null
+      openaiKeyEnc: j.openaiKeyEnc ?? null,
+      verificationApiKeyEnc: j.verificationApiKeyEnc ?? null
     }
   } catch {
-    return { ...DEFAULT_SETTINGS, smtpPasswordEnc: null, openaiKeyEnc: null }
+    return { ...DEFAULT_SETTINGS, smtpPasswordEnc: null, openaiKeyEnc: null, verificationApiKeyEnc: null }
   }
 }
 
@@ -395,7 +497,8 @@ function loadSettings() {
     sendDelayMinMs: f.sendDelayMinMs,
     sendDelayMaxMs: f.sendDelayMaxMs,
     dailyCap: f.dailyCap,
-    openaiModel: f.openaiModel
+    openaiModel: f.openaiModel,
+    verificationProvider: f.verificationProvider || 'none'
   }
 }
 
@@ -407,8 +510,10 @@ function saveSettings(s) {
     sendDelayMaxMs: s.sendDelayMaxMs,
     dailyCap: s.dailyCap,
     openaiModel: s.openaiModel,
+    verificationProvider: s.verificationProvider || 'none',
     smtpPasswordEnc: f.smtpPasswordEnc,
-    openaiKeyEnc: f.openaiKeyEnc
+    openaiKeyEnc: f.openaiKeyEnc,
+    verificationApiKeyEnc: f.verificationApiKeyEnc
   })
 }
 
@@ -430,6 +535,51 @@ function setOpenaiKey(key) {
   const f = readSettingsFile()
   f.openaiKeyEnc = encrypt(key)
   writeSettingsFile(f)
+}
+
+function getVerificationApiKey() {
+  return decrypt(readSettingsFile().verificationApiKeyEnc)
+}
+
+function setVerificationApiKey(key) {
+  const f = readSettingsFile()
+  f.verificationApiKeyEnc = encrypt(key)
+  writeSettingsFile(f)
+}
+
+function getVerificationOptions(useApi = false) {
+  const f = readSettingsFile()
+  const apiKey = getVerificationApiKey()
+  const provider = f.verificationProvider || 'none'
+  return {
+    useApi: useApi && provider === 'zerobounce' && !!apiKey,
+    apiKey,
+    provider
+  }
+}
+
+function emitVerifyProgress(current, total) {
+  mainWindow?.webContents.send('verify:progress', { current, total })
+}
+
+async function verifyAndSaveLead(leadId, email, useApi) {
+  const result = await verifyEmail(email, getVerificationOptions(useApi))
+  updateLeadVerification(leadId, result)
+  return result
+}
+
+async function verifyLeadIds(leadIds, useApi) {
+  let current = 0
+  const counts = { valid: 0, invalid: 0, risky: 0, pending: 0, unknown: 0 }
+  for (const id of leadIds) {
+    const row = getLead(id)
+    if (!row) continue
+    const result = await verifyAndSaveLead(id, row.email, useApi)
+    counts[result.status] = (counts[result.status] || 0) + 1
+    current++
+    emitVerifyProgress(current, leadIds.length)
+  }
+  return { verified: leadIds.length, counts }
 }
 
 // === SMTP ===
@@ -496,78 +646,50 @@ async function verifySmtp(settings, passwordOverride) {
 }
 
 // === AI ===
-async function generateEmailBody(model, pitchBlock, senderInfo, lead, previous, stepOrder, baseTemplate, customInstructions) {
+async function generateEmailBody(model, pitchBlock, senderInfo, lead, email, previous, stepOrder, baseTemplate, opts = {}) {
   const key = getOpenaiKey()
   if (!key) throw new Error('OpenAI API key is not set in Settings')
   const client = new OpenAI.default({ apiKey: key })
   const ctx = buildContext(lead, pitchBlock, senderInfo, previous, stepOrder)
   const mergedPreview = renderTemplate(baseTemplate, ctx)
-  const signOffInstructions = senderInfo.trim().length > 0
-    ? `End with a professional closing followed by:\n${senderInfo.trim()}`
-    : `End with a professional closing. No placeholders.`
-  const sys = `You write highly personalized cold outreach emails. Plain text only.
-
-RULES:
-1. Identify the lead's PAIN POINTS based on their role, company, and industry
-2. Connect YOUR pitch to THEIR specific challenges
-3. Be concise - 3-5 sentences max for the body
-4. Sound human, not templated
-5. ${signOffInstructions}
-
-${customInstructions ? `Additional instructions: ${customInstructions}` : ''}`
-
-  const user = `LEAD:
-- Name: ${lead.first_name || ''} ${lead.last_name || ''}
-- Email: ${lead.email || ''}
-- Company: ${lead.current_employer || 'Unknown'}
-- Title: ${lead.current_title || 'Unknown'}
-- Industry: ${lead.industry || 'Unknown'}
-
-YOUR PITCH (what you offer):
-${pitchBlock}
-
-SENDER SIGNATURE:
-${senderInfo.trim() || '(none)'}
-
-${stepOrder > 1 ? `This is follow-up #${stepOrder}. Previous subject: ${ctx.previous_subject}` : 'This is the first email.'}
-
-Write a short, personalized email that:
-1. Opens with their name
-2. References something specific about their company/role
-3. Connects your pitch to their likely pain points
-4. Ends with the sender signature`
-
+  const leadFull = { ...lead, email: email || lead.email || '' }
+  const messages = buildBodyMessages({
+    lead: leadFull,
+    pitchBlock,
+    senderInfo,
+    previous,
+    stepOrder,
+    mergedPreview,
+    aiVoice: opts.aiVoice || 'founder',
+    aiInstructions: opts.aiInstructions || opts.customInstructions || ''
+  })
   const res = await client.chat.completions.create({
     model,
-    messages: [
-      { role: 'system', content: sys },
-      { role: 'user', content: user }
-    ],
-    temperature: 0.7,
-    max_tokens: 400
+    messages,
+    temperature: 0.65,
+    max_tokens: 550
   })
   const text = res.choices[0]?.message?.content?.trim()
   if (!text) throw new Error('Empty response from OpenAI')
   return text
 }
 
-async function generateSubjectLine(model, pitchBlock, senderInfo, lead, subjectTemplate, bodySoFar, customInstructions) {
+async function generateSubjectLine(model, pitchBlock, senderInfo, lead, subjectTemplate, bodySoFar, opts = {}) {
   const key = getOpenaiKey()
   if (!key) throw new Error('OpenAI API key is not set in Settings')
   const client = new OpenAI.default({ apiKey: key })
-  const sys = `Write ONE subject line (max 60 chars). No quotes, no emojis. Personal and relevant.
-${customInstructions ? `Note: ${customInstructions}` : ''}`
-  const user = `To: ${lead.first_name || 'there'} at ${lead.current_employer || 'company'} (${lead.current_title || ''})
-Email: ${bodySoFar.slice(0, 300)}
-
-Subject line that makes them want to open:`
+  const messages = buildSubjectMessages({
+    lead,
+    pitchBlock,
+    subjectTemplate,
+    bodySoFar,
+    aiVoice: opts.aiVoice || 'founder',
+    aiInstructions: opts.aiInstructions || opts.customInstructions || ''
+  })
   const res = await client.chat.completions.create({
     model,
-    messages: [
-      { role: 'system', content: sys },
-      { role: 'user', content: user }
-    ],
-    temperature: 0.8,
+    messages,
+    temperature: 0.7,
     max_tokens: 60
   })
   const text = res.choices[0]?.message?.content?.trim().replace(/^["']|["']$/g, '')
@@ -774,6 +896,7 @@ async function renderStepForLead(campaignId, stepOrder, leadId, useAi) {
   const row = getLead(leadId)
   if (!row) throw new Error('Lead not found')
   const lead = JSON.parse(row.data_json)
+  const aiOpts = { aiVoice: campaign.ai_voice || 'founder', aiInstructions: campaign.ai_instructions || '' }
   const prev = getPreviousSendForStep(leadId, campaignId, stepOrder)
   const prevCtx = prev ? { subject: prev.subject, sent_at: prev.sent_at, body_snippet: prev.body_snippet } : undefined
   const ctx = buildContext(lead, campaign.pitch_block, campaign.sender_info, prevCtx, stepOrder)
@@ -784,7 +907,7 @@ async function renderStepForLead(campaignId, stepOrder, leadId, useAi) {
     let subject = storedSubject ?? renderTemplate(step.subject_template, ctx)
     if (!storedSubject && stepUseAi) {
       try {
-        subject = await generateSubjectLine(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, subject, storedBody)
+        subject = await generateSubjectLine(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, subject, storedBody, aiOpts)
       } catch { /* keep merged subject */ }
     }
     return { subject, body: storedBody }
@@ -792,14 +915,14 @@ async function renderStepForLead(campaignId, stepOrder, leadId, useAi) {
   const useAiFinal = useAi ?? stepUseAi
   let body
   if (useAiFinal) {
-    body = await generateEmailBody(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, prevCtx, stepOrder, step.body_template)
+    body = await generateEmailBody(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, row.email, prevCtx, stepOrder, step.body_template, aiOpts)
   } else {
     body = renderTemplate(step.body_template, ctx)
   }
   let subject = renderTemplate(step.subject_template, ctx)
   if (useAiFinal) {
     try {
-      subject = await generateSubjectLine(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, subject, body)
+      subject = await generateSubjectLine(settings.openaiModel, campaign.pitch_block, campaign.sender_info, lead, subject, body, aiOpts)
     } catch { /* keep merged subject */ }
   }
   return { subject, body }
@@ -827,6 +950,10 @@ async function processOne(job) {
   if (!leadRow) {
     queueState.lastError = 'Lead missing'
     throw new Error(queueState.lastError)
+  }
+  if (leadRow.verification_status !== 'valid') {
+    queueState.skippedLeadIds.add(job.leadId)
+    throw new Error(`Lead not verified (${leadRow.verification_status})`)
   }
   const { subject, body } = await renderStepForLead(job.campaignId, job.stepOrder, job.leadId)
   const email = leadRow.email
@@ -908,9 +1035,17 @@ async function runLoop() {
       try {
         renderedSubject = (await renderStepForLead(job.campaignId, job.stepOrder, job.leadId)).subject
       } catch { /* ignore */ }
-      if (isHardDeliverabilityFailure(msg)) {
+      if (isHardDeliverabilityFailure(msg) || isHardBounceError(msg)) {
         queueState.consecutiveFailures += 1
         queueState.skippedLeadIds.add(job.leadId)
+        if (isHardBounceError(msg)) {
+          updateLeadVerification(job.leadId, {
+            status: 'invalid',
+            reason: 'hard_bounce',
+            method: 'send',
+            verifiedAt: new Date().toISOString()
+          })
+        }
         if (queueState.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           queueState.paused = true
           queueState.lastError = 'Paused: 3 delivery failures in a row — check spam score, slow down sends, or verify your lead list.'
@@ -953,6 +1088,7 @@ function registerIpcHandlers() {
     const unique = dedupeLeadsByEmail(filtered)
     const batchId = insertImportBatch(path.basename(payload.filePath))
     const leadIds = []
+    const counts = { valid: 0, invalid: 0, risky: 0, pending: 0, unknown: 0 }
     let skippedExistingInApp = 0
     for (const row of unique) {
       const email = row.email.trim().toLowerCase()
@@ -960,9 +1096,20 @@ function registerIpcHandlers() {
         skippedExistingInApp += 1
         continue
       }
-      leadIds.push(insertLead(batchId, row.email.trim(), row))
+      const verification = await verifyEmailLocal(row.email.trim())
+      const id = insertLead(batchId, row.email.trim(), row, verification)
+      leadIds.push(id)
+      counts[verification.status] = (counts[verification.status] || 0) + 1
     }
-    return { imported: leadIds.length, skippedNoEmail: mapped.length - filtered.length, duplicatesSkipped: filtered.length - unique.length, skippedExistingInApp, importBatchId: batchId, leadIds }
+    return {
+      imported: leadIds.length,
+      skippedNoEmail: mapped.length - filtered.length,
+      duplicatesSkipped: filtered.length - unique.length,
+      skippedExistingInApp,
+      importBatchId: batchId,
+      leadIds,
+      verification: counts
+    }
   })
 
   ipcMain.handle('batchesList', async () => {
@@ -976,8 +1123,35 @@ function registerIpcHandlers() {
 
   ipcMain.handle('leadsList', async (_, opts) => {
     const rows = listLeads(opts)
-    return rows.map(r => ({ id: r.id, import_batch_id: r.import_batch_id, email: r.email, created_at: r.created_at, data: JSON.parse(r.data_json) }))
+    return rows.map(r => ({
+      id: r.id,
+      import_batch_id: r.import_batch_id,
+      email: r.email,
+      created_at: r.created_at,
+      verification_status: r.verification_status || 'pending',
+      verification_reason: r.verification_reason,
+      verified_at: r.verified_at,
+      verification_method: r.verification_method,
+      data: JSON.parse(r.data_json)
+    }))
   })
+
+  ipcMain.handle('leadsVerificationStats', async (_, opts) => listLeadVerificationStats(opts))
+
+  ipcMain.handle('verifyBatch', async (_, payload) => {
+    const useApi = !!payload.useApi
+    const rows = listLeads({ importBatchId: payload.importBatchId })
+    const leadIds = rows
+      .filter(r => ['pending', 'unknown', 'risky'].includes(r.verification_status || 'pending'))
+      .map(r => r.id)
+    return verifyLeadIds(leadIds, useApi)
+  })
+
+  ipcMain.handle('verifyLeads', async (_, payload) => {
+    return verifyLeadIds(payload.leadIds || [], !!payload.useApi)
+  })
+
+  ipcMain.handle('campaignLeadVerificationStats', async (_, campaignId) => getCampaignLeadVerificationStats(campaignId))
 
   ipcMain.handle('leadDelete', async (_, id) => {
     deleteLead(id)
@@ -994,16 +1168,24 @@ function registerIpcHandlers() {
     const c = getCampaign(id)
     if (!c) return null
     const steps = listSteps(id).map(s => ({ ...s, use_ai: !!s.use_ai }))
-    return { ...c, steps, targetImportBatchIds: getCampaignTargetBatchIds(id) }
+    return {
+      ...c,
+      ai_voice: c.ai_voice || 'founder',
+      ai_instructions: c.ai_instructions || '',
+      steps,
+      targetImportBatchIds: getCampaignTargetBatchIds(id)
+    }
   })
 
   ipcMain.handle('campaignSave', async (_, payload) => {
     let id = payload.id
     const senderInfo = payload.sender_info ?? ''
+    const aiVoice = payload.ai_voice || 'founder'
+    const aiInstructions = payload.ai_instructions ?? ''
     if (id) {
-      updateCampaign(id, payload.name, payload.pitch_block, senderInfo)
+      updateCampaign(id, payload.name, payload.pitch_block, senderInfo, aiVoice, aiInstructions)
     } else {
-      id = createCampaign(payload.name, payload.pitch_block, senderInfo)
+      id = createCampaign(payload.name, payload.pitch_block, senderInfo, aiVoice, aiInstructions)
     }
     replaceSteps(id, payload.steps)
     replaceCampaignTargetBatches(id, payload.targetImportBatchIds ?? [])
@@ -1023,6 +1205,7 @@ function registerIpcHandlers() {
     saveSettings(payload.settings)
     if (payload.smtpPassword?.length > 0) setSmtpPassword(payload.smtpPassword)
     if (payload.openaiKey?.length > 0) setOpenaiKey(payload.openaiKey)
+    if (payload.verificationApiKey?.length > 0) setVerificationApiKey(payload.verificationApiKey)
     return true
   })
 
@@ -1056,12 +1239,16 @@ function registerIpcHandlers() {
     const settings = loadSettings()
     const prevRow = getDb().prepare(`SELECT subject, body_snippet, sent_at FROM lead_sends WHERE lead_id = ? AND campaign_id = ? AND step_order = ? AND error IS NULL`).get(req.leadId, req.campaignId, req.stepOrder - 1)
     const prevCtx = prevRow ? { subject: prevRow.subject, sent_at: prevRow.sent_at, body_snippet: prevRow.body_snippet } : undefined
-    const body = await generateEmailBody(settings.openaiModel, camp.pitch_block, camp.sender_info, lead, prevCtx, req.stepOrder, step.body_template, req.customInstructions)
+    const aiOpts = {
+      aiVoice: camp.ai_voice || 'founder',
+      aiInstructions: camp.ai_instructions || req.customInstructions || ''
+    }
+    const body = await generateEmailBody(settings.openaiModel, camp.pitch_block, camp.sender_info, lead, row.email, prevCtx, req.stepOrder, step.body_template, aiOpts)
     const ctx = buildContext(lead, camp.pitch_block, camp.sender_info, prevCtx, req.stepOrder)
     const mergedSubject = renderTemplate(step.subject_template, ctx)
     let subject = mergedSubject
     try {
-      subject = await generateSubjectLine(settings.openaiModel, camp.pitch_block, camp.sender_info, lead, mergedSubject, body, req.customInstructions)
+      subject = await generateSubjectLine(settings.openaiModel, camp.pitch_block, camp.sender_info, lead, mergedSubject, body, aiOpts)
     } catch { /* keep merged subject */ }
     return { body, subject }
   })

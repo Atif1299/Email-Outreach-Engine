@@ -26,6 +26,8 @@
   &nbsp;·&nbsp;
   <a href="#repository-layout">Layout</a>
   &nbsp;·&nbsp;
+  <a href="#email-verification">Verification</a>
+  &nbsp;·&nbsp;
   <a href="#compliance-and-deliverability">Compliance</a>
 </p>
 
@@ -41,8 +43,9 @@ Data lives on disk in **SQLite**. SMTP passwords and API keys use Electron **`sa
 
 ## Capabilities
 
-- **Import** — `.csv`, `.xlsx`, `.xls` with preview and column mapping; rows without a valid email are skipped.
-- **Leads** — Search, filter by batch, select recipients, bulk delete.
+- **Import** — `.csv`, `.xlsx`, `.xls` with preview and column mapping; rows without a valid email are skipped; **local verification runs on import**.
+- **Leads** — Search, filter by batch or verification status, select recipients, bulk delete, **Verify Batch / Verify Selected**.
+- **Email verification** — Syntax, MX, disposable domain, and role-address checks locally; optional **ZeroBounce** deep verify when an API key is configured.
 - **Campaigns** — Pitch block, sender sign-off, target batch, multi-step sequences with Overview and Sequences tabs.
 - **Optional AI** — OpenAI-backed subject and body per lead when configured.
 - **Preview** — Merge preview, per-lead AI generation, bulk AI, saved overrides.
@@ -73,12 +76,51 @@ Configure SMTP (and optionally OpenAI) in the **Connect** step before sending.
 
 | Step | Purpose |
 |------|---------|
-| **Connect** | SMTP settings, send delays, daily cap, OpenAI API key |
-| **Import** | Upload leads, map columns, import batch |
-| **Leads** | Review, search, and filter imported leads |
+| **Connect** | SMTP settings, send delays, daily cap, OpenAI API key, optional verification provider |
+| **Import** | Upload leads, map columns, import batch (local verify on commit) |
+| **Leads** | Review, search, filter by status, verify batch or selected leads |
 | **Campaign** | Create campaign — Overview (pitch, sign-off) + Sequences (email steps) |
 | **Preview** | Merge or AI-generate subject and body per lead |
-| **Queue** | Start, pause, resume, or stop the send queue |
+| **Queue** | Start, pause, resume, or stop the send queue (**valid leads only**) |
+
+## Email verification
+
+Verification runs **before outreach** so bad addresses are filtered out early. Only leads with status **`valid`** appear in Preview lead counts and can be sent from the Queue.
+
+```text
+Import → local verify → Leads (status column) → optional API verify → Queue (valid only)
+```
+
+### Status meanings
+
+| Status | Meaning | Can send? |
+|--------|---------|-----------|
+| **valid** | Passed checks (and API if used) | Yes |
+| **invalid** | Bad syntax, no MX, disposable domain, API reject, or hard bounce after send | No |
+| **risky** | Role address (`info@`, `admin@`, etc.) or catch-all from API | No |
+| **pending** | Imported, not yet re-verified | No |
+| **unknown** | API timeout or inconclusive result | No |
+
+### Local checks (always)
+
+On import and on **Verify Batch / Verify Selected**, the app always runs:
+
+1. Email syntax validation  
+2. MX record lookup  
+3. Disposable domain blocklist  
+4. Role-address detection → marked **risky** (not invalid)
+
+### Optional ZeroBounce API
+
+On **Connect**, set **Provider** to ZeroBounce and paste your API key. **Verify Batch** and **Verify Selected** will then call ZeroBounce for leads that are pending, unknown, or risky (when you choose deep verify).
+
+Without an API key, verification stays local-only — still useful, but cannot detect catch-alls or spam traps.
+
+### Bounce feedback
+
+If SMTP returns a hard bounce (`550`, mailbox not found, etc.), the lead is automatically marked **invalid** and skipped on future steps.
+
+Verification **reduces** bounces but cannot eliminate them entirely. Pair it with conservative daily caps and the hard-bounce auto-suppress loop above.
 
 ## Data storage
 
@@ -117,11 +159,32 @@ Uninstalling the app removes the program but **keeps** the data above. Delete th
 {{pitch_block}}  {{sender_info}}
 ```
 
+### Writing great pitch blocks (for AI)
+
+When AI is enabled on a sequence step, the model uses a **pain-first** framework: hook on their role's problem → tie to title/company → bridge your product → soft CTA. Give it structured input:
+
+```
+Product: Schmoozzer
+For: sales teams on ActiveCampaign
+Pain: replies leak across LinkedIn, email, WhatsApp; CRM notes go stale
+Solution: multi-channel outreach in one flow, synced to CRM
+Integrations/channels: LinkedIn, Instagram, email, WhatsApp, ActiveCampaign
+Offer/CTA: 15-minute benchmark of outbound gaps
+Proof (optional): teams book more meetings with cleaner follow-up
+```
+
+**AI Voice** (Campaign Overview): **Founder** uses "I built…"; **Company** uses "We help…". Add optional **AI Instructions** for tone tweaks.
+
+For best copy quality, set Model to **GPT-4o** on the Connect step.
+
 ## Repository layout
 
 | Path | Role |
 |------|------|
-| `main.js` | Electron main process — IPC, SQLite, SMTP, AI, send queue |
+| `main.js` | Electron main process — IPC, SQLite, SMTP, AI, send queue, verification |
+| `aiPrompts.js` | Pain-first AI prompt builder and pitch parser |
+| `prompts/cold_outreach/` | Editable system prompts and few-shot example |
+| `verify.js` | Email verification — local checks + ZeroBounce adapter |
 | `preload.js` | Context bridge exposing `window.api` to the UI |
 | `renderer.js` | UI logic and wizard flow |
 | `index.html` | App layout |

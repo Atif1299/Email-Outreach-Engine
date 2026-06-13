@@ -132,6 +132,24 @@
                       <option value="gpt-4o">GPT-4o</option>
                       <option value="gpt-4-turbo">GPT-4 Turbo</option>
                     </select>
+                    <p class="field-hint">For best copy quality, use GPT-4o. GPT-4o Mini is faster but more generic.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <div class="section-title">Email Verification (Optional)</div>
+                <div class="settings-grid">
+                  <div class="field field-mini">
+                    <label class="mini-label" for="verificationProvider">Provider</label>
+                    <select id="verificationProvider" class="input">
+                      <option value="none">Local only</option>
+                      <option value="zerobounce">ZeroBounce</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label class="mini-label" for="verificationApiKey">API Key</label>
+                    <input id="verificationApiKey" type="password" class="input" placeholder="ZeroBounce API key..." />
                   </div>
                 </div>
               </div>
@@ -214,6 +232,26 @@
                 <option value="">All batches</option>
               </select>
             </div>
+            <div class="field field-mini">
+              <label class="mini-label" for="leadsStatusFilter">Status</label>
+              <select id="leadsStatusFilter" class="input">
+                <option value="">All statuses</option>
+                <option value="valid">Valid</option>
+                <option value="invalid">Invalid</option>
+                <option value="risky">Risky</option>
+                <option value="pending">Pending</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+          </div>
+          <div id="leadsVerifyProgress" class="bulk-progress" hidden>
+            <div class="progress-head">
+              <span class="progress-label">Verifying emails...</span>
+              <span id="leadsVerifyProgressCount" class="progress-count">0/0</span>
+            </div>
+            <div class="progress-bar">
+              <div id="leadsVerifyProgressFill" class="progress-fill"></div>
+            </div>
           </div>
           <div class="step-body">
             <div class="leads-table-wrap">
@@ -229,7 +267,11 @@
               <button id="btnSelectAll" type="button" class="btn btn-outline btn-sm">Select All</button>
               <button id="btnClearSelection" type="button" class="btn btn-outline btn-sm">Clear</button>
               <button id="btnDeleteSelected" type="button" class="btn btn-outline btn-sm">Delete</button>
+              <button id="btnVerifyBatch" type="button" class="btn btn-outline btn-sm" disabled>Verify Batch</button>
+              <button id="btnVerifySelected" type="button" class="btn btn-outline btn-sm" disabled>Verify
+                Selected</button>
               <span id="selectedCount" class="footer-text">0 selected</span>
+              <span id="leadsVerifyStats" class="footer-text"></span>
             </div>
             <div class="footer-right">
               <button id="btnLeadsNext" type="button" class="btn primary">Next: Campaign →</button>
@@ -271,33 +313,55 @@
                   </div>
                 </div>
                 <div id="tabOverview" class="tab-content">
-                  <div class="field">
-                    <label class="mini-label" for="campTargetBatch">Target Batch</label>
-                    <select id="campTargetBatch" class="input">
-                      <option value="">All leads</option>
-                    </select>
+                  <div class="campaign-overview-row">
+                    <div class="field">
+                      <label class="mini-label" for="campTargetBatch">Target Batch</label>
+                      <select id="campTargetBatch" class="input">
+                        <option value="">All leads</option>
+                      </select>
+                    </div>
+                    <div class="field field-mini">
+                      <label class="mini-label" for="campAiVoice">AI Voice</label>
+                      <select id="campAiVoice" class="input">
+                        <option value="founder">Founder (I built…)</option>
+                        <option value="company">Company (We help…)</option>
+                      </select>
+                    </div>
                   </div>
                   <div class="field field-grow">
                     <label class="mini-label" for="campPitch">Pitch Block</label>
-                    <textarea id="campPitch" class="input textarea" placeholder="Your value proposition..."></textarea>
+                    <textarea id="campPitch" class="input textarea"
+                      placeholder="Describe product, ICP, pain, solution, offer..."></textarea>
+                    <p class="field-hint">The AI extracts these blocks — write in plain labeled lines, not marketing
+                      fluff.</p>
+                  </div>
+                  <div class="field field-grow">
+                    <label class="mini-label" for="campAiInstructions">AI Instructions (optional)</label>
+                    <textarea id="campAiInstructions" class="input textarea" rows="3"
+                      placeholder="Extra tone notes, words to avoid, CTA preference..."></textarea>
                   </div>
                   <div class="field field-grow">
                     <label class="mini-label" for="campSender">Sender Sign-off</label>
                     <textarea id="campSender" class="input textarea"
-                      placeholder="Best,\nJohn Doe\nCompany Inc."></textarea>
+                      placeholder="Best,&#10;Your Name&#10;Your Company"></textarea>
                   </div>
                   <div class="merge-tags">
                     <div class="mini-label">Available Merge Tags</div>
                     <div class="tags-list">
                       <code>{{first_name}}</code> <code>{{last_name}}</code> <code>{{email}}</code>
                       <code>{{current_employer}}</code> <code>{{current_title}}</code>
+                      <code>{{industry}}</code> <code>{{location}}</code>
                       <code>{{pitch_block}}</code> <code>{{sender_info}}</code>
                     </div>
                   </div>
                 </div>
                 <div id="tabSequences" class="tab-content" hidden>
                   <div class="sequences-header">
-                    <div class="mini-label">Email Sequence</div>
+                    <div>
+                      <div class="mini-label">Email Sequence</div>
+                      <p class="field-hint">Templates use merge tags — AI rewrites from this structure; Merge-only sends
+                        as-is.</p>
+                    </div>
                     <button id="btnAddStep" type="button" class="btn btn-outline btn-sm">+ Add Step</button>
                   </div>
                   <div id="stepsList" class="steps-list"></div>
