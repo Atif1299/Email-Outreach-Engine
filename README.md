@@ -61,8 +61,8 @@ For Gmail SMTP, use an [App Password](https://support.google.com/accounts/answer
 ## Quick start
 
 ```bash
-git clone <your-repository-url>
-cd email-outreach-v2
+git clone https://github.com/Atif1299/Email-Outreach-Engine.git
+cd Email-Outreach-Engine
 npm install
 npm run rebuild
 npm start
