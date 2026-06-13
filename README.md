@@ -66,6 +66,8 @@ cd Email-Outreach-Engine
 npm install
 npm run rebuild
 npm start
+
+
 ```
 
 `npm run rebuild` compiles `better-sqlite3` for your Electron version. Run it again after upgrading Electron or Node.
