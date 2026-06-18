@@ -177,7 +177,7 @@ Proof (optional): teams book more meetings with cleaner follow-up
 
 **AI Voice** (Campaign Overview): **Founder** uses "I built…"; **Company** uses "We help…". Add optional **AI Instructions** for tone tweaks.
 
-For best copy quality, set Model to **GPT-4o** on the Connect step.
+Default AI model is **GPT-4o Mini** on the Connect step. You can switch to **GPT-4.1 Mini** in the Model dropdown.
 
 ## Repository layout
 

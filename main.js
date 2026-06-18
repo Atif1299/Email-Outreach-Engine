@@ -14,6 +14,13 @@ const APP_NAME = 'Email Outreach'
 let mainWindow = null
 let db = null
 
+const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
+const ALLOWED_OPENAI_MODELS = new Set(['gpt-4o-mini', 'gpt-4.1-mini'])
+
+function normalizeOpenaiModel(model) {
+  return typeof model === 'string' && ALLOWED_OPENAI_MODELS.has(model) ? model : DEFAULT_OPENAI_MODEL
+}
+
 const DEFAULT_SETTINGS = {
   smtp: {
     host: 'smtp.gmail.com',
@@ -26,7 +33,7 @@ const DEFAULT_SETTINGS = {
   sendDelayMinMs: 15000,
   sendDelayMaxMs: 45000,
   dailyCap: 50,
-  openaiModel: 'gpt-4o-mini',
+  openaiModel: DEFAULT_OPENAI_MODEL,
   verificationProvider: 'none'
 }
 
@@ -454,7 +461,7 @@ function readSettingsFile() {
       sendDelayMinMs,
       sendDelayMaxMs,
       dailyCap: typeof j.dailyCap === 'number' ? j.dailyCap : DEFAULT_SETTINGS.dailyCap,
-      openaiModel: typeof j.openaiModel === 'string' ? j.openaiModel : DEFAULT_SETTINGS.openaiModel,
+      openaiModel: normalizeOpenaiModel(j.openaiModel),
       verificationProvider: typeof j.verificationProvider === 'string' ? j.verificationProvider : DEFAULT_SETTINGS.verificationProvider,
       smtpPasswordEnc: j.smtpPasswordEnc ?? null,
       openaiKeyEnc: j.openaiKeyEnc ?? null,
@@ -509,7 +516,7 @@ function saveSettings(s) {
     sendDelayMinMs: s.sendDelayMinMs,
     sendDelayMaxMs: s.sendDelayMaxMs,
     dailyCap: s.dailyCap,
-    openaiModel: s.openaiModel,
+    openaiModel: normalizeOpenaiModel(s.openaiModel),
     verificationProvider: s.verificationProvider || 'none',
     smtpPasswordEnc: f.smtpPasswordEnc,
     openaiKeyEnc: f.openaiKeyEnc,

@@ -149,7 +149,8 @@ function renderSettings() {
   $('#delayMin').value = s.sendDelayMinMs || 15000
   $('#delayMax').value = s.sendDelayMaxMs || 45000
   $('#dailyCap').value = s.dailyCap || 50
-  $('#openaiModel').value = s.openaiModel || 'gpt-4o-mini'
+  const model = s.openaiModel || 'gpt-4o-mini'
+  $('#openaiModel').value = ['gpt-4o-mini', 'gpt-4.1-mini'].includes(model) ? model : 'gpt-4o-mini'
   $('#verificationProvider').value = s.verificationProvider || 'none'
 }
 
