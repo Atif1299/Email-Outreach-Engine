@@ -161,9 +161,52 @@ Write one subject line:`
   ]
 }
 
+function buildPitchFromLeadsMessages(opts) {
+  const { sampleLeads, existingPitch, aiVoice } = opts
+  const systemTpl = loadPromptFile('pitch_from_leads_system.md')
+  const userTpl = loadPromptFile('pitch_from_leads_user.md')
+
+  const system = fillTemplate(systemTpl, {
+    VOICE_RULES: voiceRules(aiVoice)
+  })
+
+  const trimmedExisting = (existingPitch || '').trim()
+  const existingSection = trimmedExisting
+    ? `Existing pitch (refine for this audience — keep product truth):\n${trimmedExisting}`
+    : 'No existing pitch — generate a fresh pitch block for this audience.'
+
+  const user = fillTemplate(userTpl, {
+    SAMPLE_LEADS_JSON: JSON.stringify(sampleLeads, null, 2),
+    EXISTING_PITCH_SECTION: existingSection
+  })
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user }
+  ]
+}
+
+function summarizeSampleLeads(sampleLeads) {
+  const industries = new Set()
+  const titles = new Set()
+  const employers = new Set()
+  for (const l of sampleLeads) {
+    if (l.industry) industries.add(l.industry)
+    if (l.current_title) titles.add(l.current_title)
+    if (l.current_employer) employers.add(l.current_employer)
+  }
+  const parts = []
+  if (industries.size) parts.push(`Industries: ${[...industries].slice(0, 4).join(', ')}`)
+  if (titles.size) parts.push(`Titles: ${[...titles].slice(0, 4).join(', ')}`)
+  if (employers.size) parts.push(`Companies: ${[...employers].slice(0, 4).join(', ')}`)
+  return parts.length ? parts.join(' · ') : `Analyzed ${sampleLeads.length} sample leads`
+}
+
 module.exports = {
   parsePitchBlock,
   buildBodyMessages,
   buildSubjectMessages,
+  buildPitchFromLeadsMessages,
+  summarizeSampleLeads,
   voiceRules
 }

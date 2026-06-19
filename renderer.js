@@ -19,6 +19,7 @@ const state = {
   campaigns: [],
   selectedCampaignId: null,
   campaignDraft: null,
+  pitchSuggesting: false,
   // Preview
   previewCampaignId: null,
   previewStepOrder: 1,
@@ -90,10 +91,16 @@ const DEFAULT_SENDER_SIGNOFF = `Best,
 Your Name
 Your Company`
 
-function fillCampaignFormFields(c) {
+function fillCampaignFormFields(c, opts = {}) {
+  const isNew = opts.isNew ?? !c?.id
   $('#campName').value = c?.name ?? 'New Campaign'
-  $('#campPitch').value = (c?.pitch_block || '').trim() || DEFAULT_PITCH_BLOCK
-  $('#campSender').value = (c?.sender_info || '').trim() || DEFAULT_SENDER_SIGNOFF
+  if (isNew) {
+    $('#campPitch').value = (c?.pitch_block || '').trim() || DEFAULT_PITCH_BLOCK
+    $('#campSender').value = (c?.sender_info || '').trim() || DEFAULT_SENDER_SIGNOFF
+  } else {
+    $('#campPitch').value = c?.pitch_block ?? ''
+    $('#campSender').value = c?.sender_info ?? ''
+  }
   $('#campAiVoice').value = c?.ai_voice || 'founder'
   $('#campAiInstructions').value = c?.ai_instructions || ''
   if (c?.targetImportBatchIds?.length) {
@@ -103,6 +110,7 @@ function fillCampaignFormFields(c) {
   } else {
     $('#campTargetBatch').value = ''
   }
+  updatePitchSuggestButton()
 }
 const formatDate = (iso) => {
   if (!iso) return ''
@@ -245,9 +253,15 @@ function updateBatchButtons() {
 function updateBatchFilters() {
   const sel = $('#leadsBatchFilter')
   const campSel = $('#campTargetBatch')
+  const prevCampBatch = campSel?.value ?? ''
   const opts = '<option value="">All batches</option>' + state.batches.map(b => `<option value="${b.id}">${esc(b.filename)} (${b.leadCount})</option>`).join('')
   if (sel) sel.innerHTML = opts
-  if (campSel) campSel.innerHTML = '<option value="">All leads</option>' + state.batches.map(b => `<option value="${b.id}">${esc(b.filename)}</option>`).join('')
+  if (campSel) {
+    campSel.innerHTML = '<option value="">All leads</option>' + state.batches.map(b => `<option value="${b.id}">${esc(b.filename)}</option>`).join('')
+    if (prevCampBatch && [...campSel.options].some(o => o.value === prevCampBatch)) {
+      campSel.value = prevCampBatch
+    }
+  }
 }
 
 async function openImportDialog() {
@@ -656,11 +670,50 @@ function newCampaign() {
   $('#btnSaveCampaign').hidden = false
   $('#campaignTitle').textContent = 'New Campaign'
   $('#campaignMeta').textContent = ''
-  fillCampaignFormFields({ name: 'New Campaign', pitch_block: '', sender_info: '', ai_voice: 'founder', ai_instructions: '' })
+  fillCampaignFormFields({ name: 'New Campaign', pitch_block: '', sender_info: '', ai_voice: 'founder', ai_instructions: '' }, { isNew: true })
   renderCampaignSteps([])
   renderCampaigns()
   updateCampaignButtons()
   setCampaignTab('overview')
+}
+
+function updatePitchSuggestButton() {
+  const btn = $('#btnSuggestPitch')
+  if (!btn) return
+  const hasBatch = !!$('#campTargetBatch')?.value
+  btn.disabled = !hasBatch || state.pitchSuggesting
+}
+
+async function suggestPitchFromLeads() {
+  const batchId = parseInt($('#campTargetBatch').value)
+  if (!batchId) return
+  const btn = $('#btnSuggestPitch')
+  const statusEl = $('#pitchSuggestStatus')
+  state.pitchSuggesting = true
+  updatePitchSuggestButton()
+  btn.textContent = 'Analyzing...'
+  if (statusEl) {
+    statusEl.hidden = true
+    statusEl.textContent = ''
+  }
+  try {
+    const result = await window.api.generatePitchBlock({
+      importBatchId: batchId,
+      sampleSize: 5,
+      existingPitch: $('#campPitch').value,
+      aiVoice: $('#campAiVoice').value
+    })
+    $('#campPitch').value = result.pitchBlock
+    if (statusEl && result.sampleSummary) {
+      statusEl.textContent = result.sampleSummary
+      statusEl.hidden = false
+    }
+  } catch (e) {
+    alert('Failed to suggest pitch: ' + e.message)
+  }
+  state.pitchSuggesting = false
+  btn.textContent = 'Suggest from leads'
+  updatePitchSuggestButton()
 }
 
 function goToPreview() {
@@ -669,9 +722,8 @@ function goToPreview() {
   setStep(4)
 }
 
-async function saveCampaign() {
-  if (!state.campaignDraft) return
-  const payload = {
+function readCampaignPayloadFromForm() {
+  return {
     id: state.selectedCampaignId || undefined,
     name: $('#campName').value.trim() || 'Untitled',
     pitch_block: $('#campPitch').value,
@@ -681,12 +733,54 @@ async function saveCampaign() {
     targetImportBatchIds: $('#campTargetBatch').value ? [parseInt($('#campTargetBatch').value)] : [],
     steps: state.campaignDraft.steps.map((s, i) => ({ ...s, step_order: i + 1 }))
   }
+}
+
+let campaignSaveStatusTimer = null
+
+function showCampaignSaveStatus() {
+  const btn = $('#btnSaveCampaign')
+  if (!btn) return
+  const orig = 'Save'
+  btn.textContent = 'Saved'
+  clearTimeout(campaignSaveStatusTimer)
+  campaignSaveStatusTimer = setTimeout(() => {
+    btn.textContent = orig
+  }, 2000)
+}
+
+function applyCampaignSaveResult(id, payload, wasNew) {
+  state.selectedCampaignId = id
+  const prevCreated = state.campaignDraft?.created_at || state.campaigns.find(c => c.id === id)?.created_at
+  const created_at = wasNew ? new Date().toISOString() : prevCreated
+  state.campaignDraft = {
+    ...state.campaignDraft,
+    id,
+    name: payload.name,
+    pitch_block: payload.pitch_block,
+    sender_info: payload.sender_info,
+    ai_voice: payload.ai_voice,
+    ai_instructions: payload.ai_instructions,
+    targetImportBatchIds: payload.targetImportBatchIds,
+    steps: payload.steps,
+    created_at
+  }
+  $('#campaignTitle').textContent = payload.name
+  $('#campaignMeta').textContent = formatDate(created_at)
+  updateCampaignButtons()
+  showCampaignSaveStatus()
+}
+
+async function saveCampaign() {
+  if (!state.campaignDraft) return
+  const wasNew = !state.selectedCampaignId
+  const payload = readCampaignPayloadFromForm()
   try {
     const id = await window.api.campaignSave(payload)
-    state.selectedCampaignId = id
+    applyCampaignSaveResult(id, payload, wasNew)
     await loadCampaigns()
-    selectCampaign(id)
-    alert('Campaign saved!')
+    state.selectedCampaignId = id
+    renderCampaigns()
+    updateCampaignButtons()
   } catch (e) {
     alert('Failed to save: ' + e.message)
   }
@@ -1017,6 +1111,8 @@ function bindEvents() {
   $('#btnNewCampaign').onclick = newCampaign
   $('#btnAddStep').onclick = addCampaignStep
   $('#btnSaveCampaign').onclick = saveCampaign
+  $('#btnSuggestPitch').onclick = suggestPitchFromLeads
+  $('#campTargetBatch').onchange = updatePitchSuggestButton
   $('#btnCampaignNext').onclick = goToPreview
   $$('.campaign-tabs .tab-btn').forEach(btn => {
     btn.onclick = () => setCampaignTab(btn.dataset.tab)

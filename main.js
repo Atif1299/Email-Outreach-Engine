@@ -7,7 +7,7 @@ const OpenAI = require('openai')
 const Papa = require('papaparse')
 const XLSX = require('xlsx')
 const { verifyEmail, verifyEmailLocal, verifyMany, isHardBounceError } = require('./verify')
-const { buildBodyMessages, buildSubjectMessages } = require('./aiPrompts')
+const { buildBodyMessages, buildSubjectMessages, buildPitchFromLeadsMessages, summarizeSampleLeads } = require('./aiPrompts')
 
 // === CONFIG ===
 const APP_NAME = 'Email Outreach'
@@ -218,6 +218,8 @@ function listLeads(opts) {
   const search = opts?.search?.trim()
   const batchId = opts?.importBatchId
   const status = opts?.verificationStatus?.trim()
+  const limit = opts?.limit
+  const order = opts?.order === 'asc' ? 'ASC' : 'DESC'
   const conditions = []
   const params = []
   if (batchId != null) {
@@ -234,7 +236,28 @@ function listLeads(opts) {
     params.push(q, q)
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-  return db.prepare(`SELECT ${LEAD_SELECT} FROM leads ${where} ORDER BY id DESC`).all(...params)
+  const limitSql = typeof limit === 'number' && limit > 0 ? ` LIMIT ${Math.floor(limit)}` : ''
+  return db.prepare(`SELECT ${LEAD_SELECT} FROM leads ${where} ORDER BY id ${order}${limitSql}`).all(...params)
+}
+
+function sampleLeadsForBatch(importBatchId, limit = 5) {
+  return listLeads({ importBatchId, limit, order: 'asc' })
+}
+
+function mapLeadRow(r) {
+  const data = JSON.parse(r.data_json)
+  return {
+    id: r.id,
+    import_batch_id: r.import_batch_id,
+    email: r.email,
+    created_at: r.created_at,
+    verification_status: r.verification_status || 'pending',
+    verification_reason: r.verification_reason,
+    verified_at: r.verified_at,
+    verification_method: r.verification_method,
+    data,
+    ...data
+  }
 }
 
 function listLeadVerificationStats(opts) {
@@ -704,6 +727,41 @@ async function generateSubjectLine(model, pitchBlock, senderInfo, lead, subjectT
   return text.slice(0, 100)
 }
 
+async function generatePitchBlockFromLeads(model, sampleLeads, opts = {}) {
+  const key = getOpenaiKey()
+  if (!key) throw new Error('OpenAI API key is not set in Settings')
+  const client = new OpenAI.default({ apiKey: key })
+  const leadSummaries = sampleLeads.map(l => {
+    const d = l.data || l
+    return {
+      email: l.email,
+      first_name: d.first_name || '',
+      last_name: d.last_name || '',
+      current_employer: d.current_employer || '',
+      current_title: d.current_title || '',
+      industry: d.industry || '',
+      location: d.location || ''
+    }
+  })
+  const messages = buildPitchFromLeadsMessages({
+    sampleLeads: leadSummaries,
+    existingPitch: opts.existingPitch || '',
+    aiVoice: opts.aiVoice || 'founder'
+  })
+  const res = await client.chat.completions.create({
+    model,
+    messages,
+    temperature: 0.55,
+    max_tokens: 450
+  })
+  const text = res.choices[0]?.message?.content?.trim()
+  if (!text) throw new Error('Empty pitch block from OpenAI')
+  return {
+    pitchBlock: text,
+    sampleSummary: summarizeSampleLeads(leadSummaries)
+  }
+}
+
 // === TEMPLATE ===
 function buildContext(lead, pitchBlock, senderInfo, previous, stepOrder) {
   return {
@@ -1130,17 +1188,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('leadsList', async (_, opts) => {
     const rows = listLeads(opts)
-    return rows.map(r => ({
-      id: r.id,
-      import_batch_id: r.import_batch_id,
-      email: r.email,
-      created_at: r.created_at,
-      verification_status: r.verification_status || 'pending',
-      verification_reason: r.verification_reason,
-      verified_at: r.verified_at,
-      verification_method: r.verification_method,
-      data: JSON.parse(r.data_json)
-    }))
+    return rows.map(r => mapLeadRow(r))
   })
 
   ipcMain.handle('leadsVerificationStats', async (_, opts) => listLeadVerificationStats(opts))
@@ -1197,6 +1245,20 @@ function registerIpcHandlers() {
     replaceSteps(id, payload.steps)
     replaceCampaignTargetBatches(id, payload.targetImportBatchIds ?? [])
     return id
+  })
+
+  ipcMain.handle('generatePitchBlock', async (_, payload) => {
+    const importBatchId = payload?.importBatchId
+    if (!importBatchId) throw new Error('Select a Target Batch first')
+    const sampleSize = Math.min(Math.max(payload?.sampleSize ?? 5, 1), 10)
+    const rows = sampleLeadsForBatch(importBatchId, sampleSize)
+    if (!rows.length) throw new Error('No leads in the selected batch')
+    const mapped = rows.map(r => mapLeadRow(r))
+    const settings = loadSettings()
+    return generatePitchBlockFromLeads(settings.openaiModel, mapped, {
+      existingPitch: payload?.existingPitch || '',
+      aiVoice: payload?.aiVoice || 'founder'
+    })
   })
 
   ipcMain.handle('campaignDelete', async (_, id) => {

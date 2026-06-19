@@ -1,7 +1,10 @@
-[hidden]
-{
-  display: none !important;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ========================================
+   DASHBOARD STYLES (from Electron app)
+   ======================================== */
 
 :root
 {
@@ -22,48 +25,41 @@
   --mono: "Cascadia Code", "Consolas", ui-monospace, monospace;
 }
 
-*,
-*::before,
-*::after
+/* Dashboard-specific styles */
+.dashboard-page
 {
-  box-sizing: border-box;
-}
-
-*
-{
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-}
-
-*::-webkit-scrollbar
-{
-  width: 6px;
-  height: 6px;
-}
-
-*::-webkit-scrollbar-thumb
-{
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-html
-{
-  height: 100%;
-  overflow: hidden;
-  -webkit-font-smoothing: antialiased;
-}
-
-body
-{
-  margin: 0;
-  height: 100%;
+  height: 100vh;
   overflow: hidden;
   font-family: var(--font);
   font-size: 14px;
   color: var(--text);
   background: var(--page);
   line-height: 1.45;
+}
+
+.dashboard-page *,
+.dashboard-page *::before,
+.dashboard-page *::after
+{
+  box-sizing: border-box;
+}
+
+.dashboard-page *
+{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.dashboard-page *::-webkit-scrollbar
+{
+  width: 6px;
+  height: 6px;
+}
+
+.dashboard-page *::-webkit-scrollbar-thumb
+{
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
 }
 
 .shell
@@ -86,7 +82,6 @@ body
   padding: 0.5rem 1rem;
   background: var(--chrome);
   border-bottom: 1px solid var(--chrome-line);
-  -webkit-app-region: drag;
 }
 
 .titlebar-left
@@ -134,40 +129,6 @@ body
   align-items: center;
   flex-shrink: 0;
   gap: 0.5rem;
-  -webkit-app-region: no-drag;
-}
-
-.window-controls
-{
-  display: flex;
-  gap: 0.25rem;
-}
-
-.win-btn
-{
-  width: 36px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--dim);
-  font-size: 0.9rem;
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.win-btn:hover
-{
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
-}
-
-.win-close:hover
-{
-  background: var(--err);
-  color: #fff;
 }
 
 .workarea
@@ -211,6 +172,7 @@ body
   color: var(--dim);
   cursor: pointer;
   font: inherit;
+  transition: all 0.15s;
 }
 
 .step:hover
@@ -297,10 +259,39 @@ body
   align-items: center;
 }
 
+.footer-action
+{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
 .footer-text
 {
   font-size: 0.78rem;
   color: var(--dim);
+}
+
+.inline-hint
+{
+  margin-left: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.inline-hint--ok
+{
+  color: var(--ok);
+}
+
+.inline-hint--err
+{
+  color: var(--err);
+}
+
+.inline-hint--warn
+{
+  color: var(--warn);
 }
 
 .queue,
@@ -635,6 +626,14 @@ body
   margin-bottom: 0.6rem;
 }
 
+.section-hint
+{
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: -0.25rem 0 0.65rem;
+  line-height: 1.4;
+}
+
 .settings-grid
 {
   display: flex;
@@ -659,6 +658,20 @@ body
   border: 2px dashed rgba(255, 255, 255, 0.15);
   border-radius: var(--r2);
   background: rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.import-zone:hover
+{
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.import-zone.drag-over
+{
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
 }
 
 .zone-text
@@ -850,22 +863,6 @@ body
   overflow: hidden;
 }
 
-.campaign-form .input,
-.campaign-form .textarea,
-.campaign-form select
-{
-  -webkit-app-region: no-drag;
-  pointer-events: auto;
-}
-
-.tab-content .input,
-.tab-content .textarea,
-.tab-content select
-{
-  position: relative;
-  z-index: 1;
-}
-
 .campaign-top-row
 {
   display: flex;
@@ -981,7 +978,6 @@ body
   flex-direction: column;
   gap: 0.6rem;
   padding: 0.5rem 0;
-  -webkit-overflow-scrolling: touch;
 }
 
 .tab-content .field
@@ -1019,11 +1015,6 @@ body
   resize: vertical;
 }
 
-#campPitch
-{
-  min-height: 120px;
-}
-
 .pitch-block-head
 {
   display: flex;
@@ -1036,21 +1027,6 @@ body
 .pitch-block-head .mini-label
 {
   margin-bottom: 0;
-}
-
-#pitchSuggestStatus
-{
-  color: var(--accent-bright);
-}
-
-#campAiInstructions
-{
-  min-height: 72px;
-}
-
-#campSender
-{
-  min-height: 72px;
 }
 
 .sequences-header
@@ -1075,14 +1051,6 @@ body
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--r);
   background: rgba(0, 0, 0, 0.15);
-}
-
-.step-item .step-body
-{
-  min-height: 160px;
-  resize: vertical;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .step-item-head
@@ -1115,7 +1083,6 @@ body
   gap: 0.4rem;
   margin-bottom: 0.4rem;
 }
-
 
 .merge-tags
 {
@@ -1167,6 +1134,14 @@ body
 {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.step-body.split>.editor.preview-editor
+{
+  overflow: hidden;
 }
 
 .preview-head-actions
@@ -1187,15 +1162,21 @@ body
 
 .preview-subject-field
 {
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .preview-body-field
 {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.preview-body-field .preview-box
+{
+  flex: 1;
+  min-height: 0;
 }
 
 .preview-box
@@ -1210,8 +1191,6 @@ body
 
 .preview-body
 {
-  flex: 1;
-  min-height: 120px;
   overflow: auto;
   white-space: pre-wrap;
   font-family: var(--font);
@@ -1231,6 +1210,11 @@ body
   padding: 0.5rem;
   background: rgba(0, 0, 0, 0.15);
   border-radius: var(--r);
+}
+
+.bulk-stop-btn
+{
+  margin-top: 0.45rem;
 }
 
 .progress-head
@@ -1383,6 +1367,13 @@ body
   border-radius: var(--r);
   color: #fca5a5;
   font-size: 0.8rem;
+}
+
+.queue-cron-hint
+{
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 .queue-campaign-select

@@ -328,11 +328,16 @@
                     </div>
                   </div>
                   <div class="field field-grow">
-                    <label class="mini-label" for="campPitch">Pitch Block</label>
+                    <div class="pitch-block-head">
+                      <label class="mini-label" for="campPitch">Pitch Block</label>
+                      <button id="btnSuggestPitch" type="button" class="btn btn-outline btn-sm" disabled>Suggest from
+                        leads</button>
+                    </div>
                     <textarea id="campPitch" class="input textarea"
                       placeholder="Describe product, ICP, pain, solution, offer..."></textarea>
+                    <p id="pitchSuggestStatus" class="field-hint" hidden></p>
                     <p class="field-hint">The AI extracts these blocks — write in plain labeled lines, not marketing
-                      fluff.</p>
+                      fluff. Select a Target Batch to enable Suggest from leads.</p>
                   </div>
                   <div class="field field-grow">
                     <label class="mini-label" for="campAiInstructions">AI Instructions (optional)</label>

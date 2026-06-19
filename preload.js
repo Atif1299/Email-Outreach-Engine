@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
   campaignsList: () => ipcRenderer.invoke('campaignsList'),
   campaignGet: (id) => ipcRenderer.invoke('campaignGet', id),
   campaignSave: (payload) => ipcRenderer.invoke('campaignSave', payload),
+  generatePitchBlock: (payload) => ipcRenderer.invoke('generatePitchBlock', payload),
   campaignDelete: (id) => ipcRenderer.invoke('campaignDelete', id),
   campaignSendProgress: (campaignId) => ipcRenderer.invoke('campaignSendProgress', campaignId),
 
