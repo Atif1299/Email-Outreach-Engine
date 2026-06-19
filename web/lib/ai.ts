@@ -50,6 +50,9 @@ const PITCH_LABELS: Array<[string, RegExp]> = [
   ['proof', /^proof(?:\s*\(optional\))?\s*:/i],
 ]
 
+const PITCH_STUB_FOR_AI =
+  '[Write one industry-specific bridge sentence from PITCH_PARSED — do not copy this placeholder or pitch raw text]'
+
 function loadPromptFile(name: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'prompts', 'cold_outreach', name), 'utf8').trim()
 }
@@ -98,9 +101,99 @@ export function parsePitchBlock(text: string) {
   return { raw, structured, fields }
 }
 
+function inferLeadIndustry(lead: LeadData): string {
+  const industry = lead.industry?.trim()
+  if (industry) return industry
+
+  const company = (lead.current_employer || '').toLowerCase()
+  const title = (lead.current_title || '').toLowerCase()
+
+  if (/marketing|agency|communications|media|advertising|mc\b/.test(company)) return 'marketing / agency'
+  if (/legal|law|attorney|docq/.test(company)) return 'legal tech'
+  if (/health|medical|clinic|pharma|care/.test(company)) return 'healthcare'
+  if (/tech|software|saas|ai\b|data|platform/.test(company)) return 'technology / SaaS'
+  if (/consult|advisory/.test(company)) return 'consulting'
+  if (/finance|bank|capital|invest|fintech/.test(company)) return 'financial services'
+  if (/coach|training|education/.test(company)) return 'coaching / education'
+  if (title.includes('marketing') || title.includes('brand')) return 'marketing'
+  if (title.includes('sales') || title.includes('revenue') || title.includes('bd')) return 'sales / revenue'
+  if (title.includes('operations') || title.includes(' ops')) return 'operations'
+  if (title.includes('strategy') || title.includes('planning')) return 'strategy / planning'
+
+  return 'infer from company name and title'
+}
+
+function pitchField(fields: Record<string, string>, key: string, fallback: string): string {
+  const v = fields[key]?.trim()
+  return v || fallback
+}
+
+function buildPersonalizationBrief(lead: LeadData, pitch: ReturnType<typeof parsePitchBlock>): string {
+  const company = lead.current_employer?.trim() || 'their company'
+  const title = lead.current_title?.trim() || 'their role'
+  const industry = inferLeadIndustry(lead)
+  const f = pitch.fields
+
+  const pain = pitch.structured
+    ? pitchField(f, 'pain', 'manual repetitive work and tool sprawl')
+    : 'extract the core pain from PITCH_RAW'
+  const solution = pitch.structured
+    ? pitchField(f, 'solution', pitchField(f, 'product', 'your specific solution from PITCH_RAW'))
+    : 'extract the solution from PITCH_RAW'
+  const offer = pitch.structured
+    ? pitchField(f, 'offer', 'use the exact CTA from PITCH_RAW')
+    : 'extract the offer/CTA from PITCH_RAW'
+  const product = pitch.structured ? pitchField(f, 'product', solution) : solution
+  const integrations = pitch.structured ? pitchField(f, 'integrations', '') : ''
+
+  const integrationNote = integrations ? ` Mention tools/channels: ${integrations}.` : ''
+
+  return `## Mandatory personalization (follow exactly)
+
+Lead context:
+- Company: ${company}
+- Title: ${title}
+- Industry: ${industry}
+
+Pain for THIS lead (from pitch, adapted): ${pain} — as experienced by a ${title} at ${company} in ${industry}.
+
+Bridge sentence (ONE sentence only): Connect "${product}" / "${solution}" to ${company}'s ${industry} workflow.${integrationNote} Name ${company} or a ${industry}-specific task (campaign planning, client reporting, pipeline ops, etc.). No generic "we help businesses" language.
+
+CTA (ONE short question): Use this exact offer — "${offer}". Do not invent "book a free consultation" or "discover automation opportunities".
+
+## BAD output (never write anything like this)
+
+"We design and deploy AI agents and intelligent automations that streamline marketing operations, allowing your team to focus on high-value activities and enhance campaign effectiveness."
+
+"Let's discuss how AI can transform your operations — book a free consultation to discover automation opportunities in your business."
+
+## GOOD bridge examples (match this specificity, not wording)
+
+"For planning directors at agencies like Wave Marketing, manual reporting across client campaigns eats strategy time — we automate intake and status sync across your project stack so you ship plans faster."
+
+"At Docq.AI, doc-review bottlenecks slow product cycles — we build agents on your existing doc pipeline so founders ship features instead of chasing manual triage."`
+}
+
+const BANNED_BODY_PATTERNS = [
+  /design and deploy ai agents/i,
+  /intelligent automations/i,
+  /streamline (?:marketing |business )?operations/i,
+  /focus on high-value activities/i,
+  /enhance campaign effectiveness/i,
+  /transform your operations/i,
+  /book a free consultation/i,
+  /discover automation opportunities/i,
+  /we help businesses like yours/i,
+  /let'?s discuss how ai can/i,
+]
+
+function hasBannedBodyFiller(text: string): boolean {
+  return BANNED_BODY_PATTERNS.some((re) => re.test(text))
+}
+
 function voiceRules(aiVoice: string): string {
   if (aiVoice === 'company') {
-    return 'Use company voice — we/our/us. Example: "We help teams...", "We run outreach for...", "We can show you...". Never use "I built" unless quoting the lead. Do not default to "our platform" — use service/agency language unless the pitch is explicitly product-based.'
+    return 'Use company voice — we/our/us. Name the lead\'s company or industry in the bridge sentence. Never write a generic capabilities paragraph — one specific bridge sentence only.'
   }
   return 'Use founder/builder voice — first person I/me/my. Example: "I built...", "I can show you...", "I saw you\'re...". Sound like the person who delivers the work.'
 }
@@ -138,7 +231,13 @@ function buildBodyMessages(opts: {
   })
 
   const leadWithEmail = { ...opts.lead, email: opts.lead.email ?? '' }
+  const industry = inferLeadIndustry(leadWithEmail)
   const user = fillTemplate(userTpl, {
+    LEAD_NAME: [leadWithEmail.first_name, leadWithEmail.last_name].filter(Boolean).join(' ') || '(unknown)',
+    LEAD_COMPANY: leadWithEmail.current_employer?.trim() || '(unknown)',
+    LEAD_TITLE: leadWithEmail.current_title?.trim() || '(unknown)',
+    LEAD_INDUSTRY: industry,
+    PERSONALIZATION_BRIEF: buildPersonalizationBrief(leadWithEmail, pitch),
     LEAD_JSON: JSON.stringify(leadWithEmail, null, 2),
     PITCH_PARSED: JSON.stringify(
       pitch.structured ? pitch.fields : { note: 'Unstructured pitch — extract from raw text' },
@@ -243,29 +342,44 @@ export function normalizePitchBlock(text: string): string {
 
 export async function generateEmailBody(opts: GenerateEmailOptions): Promise<string> {
   const openai = new OpenAI({ apiKey: opts.apiKey })
-  const mergedPreview = mergeTags(opts.bodyTemplate, opts.leadData, opts.pitchBlock, opts.senderInfo)
   const leadFull = { ...opts.leadData, email: opts.leadData.email ?? '' }
 
-  const messages = buildBodyMessages({
+  const baseMessages = buildBodyMessages({
     lead: leadFull,
     pitchBlock: opts.pitchBlock,
     senderInfo: opts.senderInfo,
     previous: opts.previous,
     stepOrder: opts.stepOrder ?? 1,
-    mergedPreview,
+    mergedPreview: mergeTags(opts.bodyTemplate, leadFull, PITCH_STUB_FOR_AI, opts.senderInfo),
     aiVoice: opts.aiVoice || 'founder',
     aiInstructions: opts.aiInstructions || '',
   })
 
-  const response = await openai.chat.completions.create({
-    model: opts.model,
-    messages,
-    temperature: 0.65,
-    max_tokens: 550,
-  })
+  const request = async (messages: typeof baseMessages) => {
+    const response = await openai.chat.completions.create({
+      model: opts.model,
+      messages,
+      temperature: 0.45,
+      max_tokens: 350,
+    })
+    const text = response.choices[0]?.message?.content?.trim()
+    if (!text) throw new Error('Empty response from OpenAI')
+    return text
+  }
 
-  const text = response.choices[0]?.message?.content?.trim()
-  if (!text) throw new Error('Empty response from OpenAI')
+  let text = await request(baseMessages)
+  if (hasBannedBodyFiller(text)) {
+    text = await request([
+      ...baseMessages,
+      { role: 'assistant', content: text },
+      {
+        role: 'user',
+        content:
+          'REJECTED: bridge/CTA is generic agency filler. Rewrite the entire body. Bridge must name the lead company and industry-specific workflow. CTA must use pitch Offer only. One bridge sentence + one CTA sentence. No "design and deploy AI agents", no "streamline operations", no "free consultation".',
+      },
+    ])
+  }
+
   return text
 }
 

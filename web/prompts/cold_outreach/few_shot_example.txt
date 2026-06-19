@@ -1,11 +1,9 @@
-Hi Alex,
+Hi Sarah,
 
-If your outbound is leaking replies, you are also leaking meetings. For a VP Sales, that turns into slow pipeline and messy follow-up fast.
+If campaign reporting at Brightside Agency still lives in spreadsheets and Slack threads, client strategy work gets squeezed. As Director of Planning, that means slower decks and reactive firefighting.
 
-Acme helps revenue teams run LinkedIn, email, and WhatsApp outreach in one flow, with all activity synced back to their CRM.
+We plug AI agents into your existing project stack so status rolls up automatically — planning leads at agencies like yours reclaim hours for client strategy instead of manual updates.
 
-I can show you a cleaner follow-up setup in 15 minutes and map where reply rates usually get stuck. If it is not useful, you will still leave with a tighter next-step process.
-
-Open to that?
+Open to a 15-minute walkthrough on one campaign workflow?
 
 Best
