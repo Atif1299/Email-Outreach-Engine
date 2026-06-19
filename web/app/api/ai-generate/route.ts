@@ -33,6 +33,17 @@ export async function POST(request: NextRequest) {
 
     const leadData = JSON.parse(lead.dataJson)
 
+    let previous
+    if ((stepOrder || 1) > 1) {
+      const prevSend = await prisma.leadSend.findFirst({
+        where: { leadId, campaignId, stepOrder: (stepOrder || 1) - 1, error: null },
+        orderBy: { sentAt: 'desc' },
+      })
+      if (prevSend) {
+        previous = { subject: prevSend.subject, body_snippet: prevSend.bodySnippet }
+      }
+    }
+
     const result = await renderEmailForLead({
       leadData: { ...leadData, email: lead.email },
       pitchBlock: campaign.pitchBlock,
@@ -42,6 +53,7 @@ export async function POST(request: NextRequest) {
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
       stepOrder: stepOrder || 1,
+      previous,
       model: settings.openaiModel,
       apiKey: settings.openaiKey || '',
       useAi: true,

@@ -30,6 +30,8 @@ type OverrideItem = { leadId: number; subject: string; body: string }
 const BATCH_ACTIVE_MS = 90_000
 /** Break between batches — keeps each Vercel call short and avoids rate limits. */
 const BATCH_PAUSE_MS = 60_000
+/** Parallel AI requests per tick (same batch window, faster throughput). */
+const BULK_CONCURRENCY = 3
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
@@ -229,34 +231,49 @@ export default function StepPreview({
       let workInBatch = false
 
       while (Date.now() - batchStart < BATCH_ACTIVE_MS && !bulkAbortRef.current) {
-        const lead = targets.find((l) => !sessionDone.has(l.id))
-        if (!lead) break
-
-        sessionDone.add(lead.id)
-
-        if (!regenerateAll && lead.hasSaved) {
-          skipped++
-          updateProgress()
-          continue
+        const pending: PreviewLead[] = []
+        for (const lead of targets) {
+          if (sessionDone.has(lead.id)) continue
+          pending.push(lead)
+          if (pending.length >= BULK_CONCURRENCY) break
         }
+        if (pending.length === 0) break
 
+        for (const lead of pending) sessionDone.add(lead.id)
         workInBatch = true
-        try {
-          const res = await fetch('/api/ai-generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
+
+        const results = await Promise.all(
+          pending.map(async (lead) => {
+            if (!regenerateAll && lead.hasSaved) {
+              return { type: 'skipped' as const }
+            }
+            try {
+              const res = await fetch('/api/ai-generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
+              })
+              if (res.ok) {
+                const data = await res.json()
+                return {
+                  type: 'generated' as const,
+                  item: { leadId: lead.id, subject: data.subject, body: data.body },
+                }
+              }
+              return { type: 'failed' as const }
+            } catch (e) {
+              console.error('Bulk AI error for lead', lead.id, e)
+              return { type: 'failed' as const }
+            }
           })
-          if (res.ok) {
-            const data = await res.json()
-            batchBuffer.push({ leadId: lead.id, subject: data.subject, body: data.body })
+        )
+
+        for (const result of results) {
+          if (result.type === 'skipped') skipped++
+          else if (result.type === 'generated') {
             generated++
-          } else {
-            failed++
-          }
-        } catch (e) {
-          console.error('Bulk AI error for lead', lead.id, e)
-          failed++
+            batchBuffer.push(result.item)
+          } else failed++
         }
         updateProgress()
       }
