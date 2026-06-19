@@ -1,5 +1,7 @@
 import prisma from '@/lib/db'
 
+export const ENGAGED_STATUSES = ['replied', 'unsubscribed'] as const
+
 export interface CampaignStepLike {
   stepOrder: number
   delayHoursAfterPrevious: number
@@ -40,6 +42,7 @@ export function computeDueJobs(
   steps: CampaignStepLike[],
   lastSendsByLead: Map<number, { stepOrder: number; sentAt: Date }>,
   skippedLeadIds: Set<number>,
+  engagedLeadIds: Set<number> = new Set(),
   now = Date.now()
 ): DueJob[] {
   if (steps.length === 0) return []
@@ -49,7 +52,7 @@ export function computeDueJobs(
   const jobs: DueJob[] = []
 
   for (const leadId of leadIds) {
-    if (skippedLeadIds.has(leadId)) continue
+    if (skippedLeadIds.has(leadId) || engagedLeadIds.has(leadId)) continue
 
     const last = lastSendsByLead.get(leadId)
     const nextStepOrder = getNextStepOrder(last ?? null)
@@ -91,9 +94,10 @@ export function getLeadQueueStatus(
   steps: CampaignStepLike[],
   lastSend: { stepOrder: number; sentAt: Date } | null,
   skippedLeadIds: Set<number>,
+  engagedLeadIds: Set<number> = new Set(),
   now = Date.now()
 ): 'completing' | 'waiting_delay' | 'sending' | 'skipped' {
-  if (skippedLeadIds.has(leadId)) return 'skipped'
+  if (skippedLeadIds.has(leadId) || engagedLeadIds.has(leadId)) return 'skipped'
 
   const nextStepOrder = getNextStepOrder(lastSend)
   const nextStep = steps.find((s) => s.stepOrder === nextStepOrder)
@@ -104,6 +108,26 @@ export function getLeadQueueStatus(
   return 'sending'
 }
 
+export async function loadEngagedLeadIds(
+  campaignId: number,
+  leadIds: number[]
+): Promise<Set<number>> {
+  const engaged = new Set<number>()
+  if (leadIds.length === 0) return engaged
+
+  const rows = await prisma.leadCampaignEngagement.findMany({
+    where: {
+      campaignId,
+      leadId: { in: leadIds },
+      status: { in: [...ENGAGED_STATUSES] },
+    },
+    select: { leadId: true },
+  })
+
+  for (const row of rows) engaged.add(row.leadId)
+  return engaged
+}
+
 export async function getIncompleteLeadIds(
   campaignId: number,
   validLeadIds: number[],
@@ -111,8 +135,13 @@ export async function getIncompleteLeadIds(
 ): Promise<number[]> {
   if (validLeadIds.length === 0) return []
 
-  const lastSends = await loadLastSuccessfulSends(campaignId, validLeadIds)
+  const [lastSends, engaged] = await Promise.all([
+    loadLastSuccessfulSends(campaignId, validLeadIds),
+    loadEngagedLeadIds(campaignId, validLeadIds),
+  ])
+
   return validLeadIds.filter((leadId) => {
+    if (engaged.has(leadId)) return false
     const last = lastSends.get(leadId)
     return getNextStepOrder(last ?? null) <= maxStepOrder
   })

@@ -24,6 +24,12 @@ function VerifyPill({ status }: { status: string }) {
   return <span className={cls}>{status || 'pending'}</span>
 }
 
+function EngagementPill({ status }: { status: string | null | undefined }) {
+  if (!status) return null
+  const cls = `engagement-pill engagement-pill--${status}`
+  return <span className={cls}>{status}</span>
+}
+
 export default function StepLeads({
   leads,
   batches,
@@ -220,6 +226,7 @@ export default function StepLeads({
                 <tr>
                   <th></th>
                   <th>Status</th>
+                  <th>Engagement</th>
                   <th>Email</th>
                   <th>First Name</th>
                   <th>Last Name</th>
@@ -241,6 +248,7 @@ export default function StepLeads({
                       />
                     </td>
                     <td><VerifyPill status={lead.verificationStatus} /></td>
+                    <td><EngagementPill status={lead.engagementStatus} /></td>
                     <td>{lead.email}</td>
                     <td>{lead.data.first_name || ''}</td>
                     <td>{lead.data.last_name || ''}</td>

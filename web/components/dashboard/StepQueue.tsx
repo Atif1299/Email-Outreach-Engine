@@ -21,6 +21,15 @@ interface CampaignStats {
   leadsStarted: number
   leadsCompleted: number
   dueNow: number
+  repliedCount?: number
+  unsubscribedCount?: number
+}
+
+interface InboxStatus {
+  lastCheckedAt: string | null
+  lastError: string | null
+  repliedCount: number
+  unsubscribedCount: number
 }
 
 const USE_CRON_WORKER = process.env.NEXT_PUBLIC_USE_CRON_WORKER === 'true'
@@ -34,6 +43,7 @@ export default function StepQueue({
   onBackToPreview,
 }: Props) {
   const [stats, setStats] = useState<CampaignStats | null>(null)
+  const [inboxStatus, setInboxStatus] = useState<InboxStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const startFlash = useButtonFlash()
   const { hint: queueHint, showHint: showQueueHint } = useInlineHint()
@@ -41,13 +51,18 @@ export default function StepQueue({
   useEffect(() => {
     if (queueCampaignId) {
       loadCampaignStats()
+      loadInboxStatus()
     }
   }, [queueCampaignId])
 
   // Status only — fast, no sending
   useEffect(() => {
     loadQueueStatus()
-    const interval = setInterval(loadQueueStatus, 5000)
+    loadInboxStatus()
+    const interval = setInterval(() => {
+      loadQueueStatus()
+      loadInboxStatus()
+    }, 5000)
     return () => clearInterval(interval)
   }, [])
 
@@ -102,6 +117,19 @@ export default function StepQueue({
       }
     } catch (e) {
       console.error('Failed to load queue status:', e)
+    }
+  }
+
+  async function loadInboxStatus() {
+    try {
+      const q = queueCampaignId ? `?campaignId=${queueCampaignId}` : ''
+      const res = await fetch(`/api/inbox/status${q}`)
+      if (res.ok) {
+        const data = await res.json()
+        setInboxStatus(data)
+      }
+    } catch (e) {
+      console.error('Failed to load inbox status:', e)
     }
   }
 
@@ -221,6 +249,14 @@ export default function StepQueue({
               <div className="stat-value">{stats?.dueNow || 0}</div>
               <div className="stat-label">Due Now</div>
             </div>
+            <div className="stat-card">
+              <div className="stat-value">{stats?.repliedCount ?? inboxStatus?.repliedCount ?? 0}</div>
+              <div className="stat-label">Replied</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{stats?.unsubscribedCount ?? inboxStatus?.unsubscribedCount ?? 0}</div>
+              <div className="stat-label">Unsubscribed</div>
+            </div>
           </div>
 
           {/* Queue Status Panel */}
@@ -274,6 +310,16 @@ export default function StepQueue({
               </p>
             )}
 
+            {inboxStatus && (
+              <p className="queue-cron-hint">
+                Inbox sync:{' '}
+                {inboxStatus.lastCheckedAt
+                  ? `last checked ${new Date(inboxStatus.lastCheckedAt).toLocaleString()}`
+                  : 'not run yet'}
+                {inboxStatus.lastError ? ` · Error: ${inboxStatus.lastError}` : ''}
+              </p>
+            )}
+
             {queueStatus.currentJob && (
               <div className="current-job">
                 <span className="job-label">Current:</span>
@@ -312,6 +358,8 @@ export default function StepQueue({
               <div className="campaign-stats">
                 Sendable: {stats.sendable} · Blocked: {stats.blocked} · Steps: {stats.stepCount} ·
                 Sent: {stats.emailsSent} · Started: {stats.leadsStarted} · Completed: {stats.leadsCompleted}
+                {(stats.repliedCount ?? 0) > 0 ? ` · Replied: ${stats.repliedCount}` : ''}
+                {(stats.unsubscribedCount ?? 0) > 0 ? ` · Unsubscribed: ${stats.unsubscribedCount}` : ''}
               </div>
             )}
           </div>

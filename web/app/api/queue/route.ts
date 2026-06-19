@@ -4,6 +4,7 @@ import { ensureSettings } from '@/lib/settings'
 import {
   getLeadQueueStatus,
   getNextStepOrder,
+  loadEngagedLeadIds,
   loadLastSuccessfulSends,
 } from '@/lib/queue-schedule'
 import {
@@ -59,9 +60,18 @@ export async function GET() {
       ])
 
       if (lead && campaign) {
-        const lastSends = await loadLastSuccessfulSends(state.activeCampaignId, [leadId])
+        const [lastSends, engagedLeadIds] = await Promise.all([
+          loadLastSuccessfulSends(state.activeCampaignId, [leadId]),
+          loadEngagedLeadIds(state.activeCampaignId, [leadId]),
+        ])
         const lastSend = lastSends.get(leadId) ?? null
-        const queueStatus = getLeadQueueStatus(leadId, campaign.steps, lastSend, skippedLeadIds)
+        const queueStatus = getLeadQueueStatus(
+          leadId,
+          campaign.steps,
+          lastSend,
+          skippedLeadIds,
+          engagedLeadIds
+        )
         const nextStepOrder = getNextStepOrder(lastSend)
 
         if (queueStatus === 'completing') {

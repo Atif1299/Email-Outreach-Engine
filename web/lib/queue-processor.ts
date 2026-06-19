@@ -1,12 +1,12 @@
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/db'
 import nodemailer from 'nodemailer'
-import { mergeTags, generateEmailWithAI } from '@/lib/ai'
+import { mergeTags, renderEmailForLead } from '@/lib/ai'
 import { isHardBounceError } from '@/lib/verify'
 import { ensureSettings } from '@/lib/settings'
 import { assertGmailSmtpUsername, resolveSmtpUser } from '@/lib/smtp'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
-import { getMaxStepOrder, getNextStepOrder, isDelayElapsed } from '@/lib/queue-schedule'
+import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadEngagedLeadIds } from '@/lib/queue-schedule'
 import {
   computeSendDelayMs,
   countSuccessfulSendsSince,
@@ -18,6 +18,15 @@ import {
 const FAILURE_BACKOFF_MS = 60_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const STALE_SENDING_MS = 5 * 60 * 1000
+
+function addToSkipped(skippedIds: number[], leadId: number): number[] {
+  return skippedIds.includes(leadId) ? skippedIds : [...skippedIds, leadId]
+}
+
+function formatMessageId(id: string): string {
+  const trimmed = id.trim()
+  return trimmed.startsWith('<') ? trimmed : `<${trimmed}>`
+}
 
 export async function processQueueBatch(maxEmails = 1) {
   const acquired = await acquireQueueLock()
@@ -141,6 +150,7 @@ async function processQueueBatchInner(maxEmails = 1) {
   }
 
   const activeLeadIds: number[] = JSON.parse(state.activeLeadIdsJson || '[]')
+  let skippedLeadIds: number[] = JSON.parse(state.skippedLeadIdsJson || '[]')
   if (activeLeadIds.length === 0) {
     await prisma.queueState.update({
       where: { id: 1 },
@@ -162,6 +172,7 @@ async function processQueueBatchInner(maxEmails = 1) {
   })
 
   const maxStepOrder = getMaxStepOrder(campaign.steps)
+  const engagedLeadIds = await loadEngagedLeadIds(campaign.id, activeLeadIds)
   let processed = 0
   let failed = 0
   let consecutiveFailures = state.consecutiveFailures
@@ -185,8 +196,15 @@ async function processQueueBatchInner(maxEmails = 1) {
       continue
     }
 
+    if (engagedLeadIds.has(leadId)) {
+      activeLeadIds.shift()
+      skippedLeadIds = addToSkipped(skippedLeadIds, leadId)
+      continue
+    }
+
     if (lead.verificationStatus !== 'valid') {
       activeLeadIds.shift()
+      skippedLeadIds = addToSkipped(skippedLeadIds, leadId)
       continue
     }
 
@@ -229,26 +247,31 @@ async function processQueueBatchInner(maxEmails = 1) {
       let subject: string
       let body: string
 
+      const previous =
+        lastSend && nextStepOrder > 1
+          ? { subject: lastSend.subject, body_snippet: lastSend.bodySnippet || '' }
+          : undefined
+
       if (override) {
         subject = override.subject || mergeTags(nextStep.subjectTemplate, leadData, campaign.pitchBlock, campaign.senderInfo)
         body = override.body
-      } else if (nextStep.useAi && settings.openaiKey) {
-        const generated = await generateEmailWithAI({
-          leadData,
+      } else {
+        const rendered = await renderEmailForLead({
+          leadData: { ...leadData, email: lead.email },
           pitchBlock: campaign.pitchBlock,
           senderInfo: campaign.senderInfo,
           aiVoice: campaign.aiVoice,
           aiInstructions: campaign.aiInstructions,
           subjectTemplate: nextStep.subjectTemplate,
           bodyTemplate: nextStep.bodyTemplate,
+          stepOrder: nextStepOrder,
+          previous,
           model: settings.openaiModel,
-          apiKey: settings.openaiKey,
+          apiKey: settings.openaiKey || '',
+          useAi: nextStep.useAi,
         })
-        subject = generated.subject
-        body = generated.body
-      } else {
-        subject = mergeTags(nextStep.subjectTemplate, leadData, campaign.pitchBlock, campaign.senderInfo)
-        body = mergeTags(nextStep.bodyTemplate, leadData, campaign.pitchBlock, campaign.senderInfo)
+        subject = rendered.subject
+        body = rendered.body
       }
 
       const from =
@@ -256,7 +279,31 @@ async function processQueueBatchInner(maxEmails = 1) {
           ? `${settings.smtpFromName} <${settings.smtpFromEmail}>`
           : settings.smtpFromEmail || settings.smtpUser
 
-      await transporter.sendMail({ from, to: lead.email, subject, text: body })
+      const mailOptions: nodemailer.SendMailOptions = { from, to: lead.email, subject, text: body }
+
+      if (nextStepOrder > 1) {
+        const priorSend = await prisma.leadSend.findFirst({
+          where: {
+            leadId,
+            campaignId: campaign.id,
+            stepOrder: nextStepOrder - 1,
+            error: null,
+            subject: { notIn: ['SENDING', 'FAILED'] },
+            smtpMessageId: { not: null },
+          },
+          orderBy: { sentAt: 'desc' },
+        })
+        if (priorSend?.smtpMessageId) {
+          const refId = formatMessageId(priorSend.smtpMessageId)
+          mailOptions.headers = {
+            'In-Reply-To': refId,
+            References: refId,
+          }
+        }
+      }
+
+      const info = await transporter.sendMail(mailOptions)
+      const smtpMessageId = info.messageId || null
 
       await prisma.leadSend.updateMany({
         where: {
@@ -269,6 +316,7 @@ async function processQueueBatchInner(maxEmails = 1) {
         data: {
           subject,
           bodySnippet: body.slice(0, 200),
+          smtpMessageId,
         },
       })
 
@@ -308,6 +356,7 @@ async function processQueueBatchInner(maxEmails = 1) {
           data: { verificationStatus: 'invalid', verificationReason: 'hard_bounce' },
         })
         activeLeadIds.shift()
+        skippedLeadIds = addToSkipped(skippedLeadIds, leadId)
         consecutiveFailures = 0
       } else {
         consecutiveFailures += 1
@@ -324,6 +373,7 @@ async function processQueueBatchInner(maxEmails = 1) {
                 'Paused: 3 delivery failures in a row — check spam score, slow down sends, or verify your lead list.',
               consecutiveFailures,
               activeLeadIdsJson: JSON.stringify(activeLeadIds),
+              skippedLeadIdsJson: JSON.stringify(skippedLeadIds),
               nextSendAllowedAt,
               failedInSession: { increment: failed },
               processedInSession: { increment: processed },
@@ -348,6 +398,7 @@ async function processQueueBatchInner(maxEmails = 1) {
     where: { id: 1 },
     data: {
       activeLeadIdsJson: JSON.stringify(activeLeadIds),
+      skippedLeadIdsJson: JSON.stringify(skippedLeadIds),
       processedInSession: { increment: processed },
       failedInSession: { increment: failed },
       consecutiveFailures,

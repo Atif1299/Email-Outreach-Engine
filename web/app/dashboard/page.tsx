@@ -43,6 +43,7 @@ export interface Lead {
   createdAt: string
   verificationStatus: string
   verificationReason: string | null
+  engagementStatus?: string | null
 }
 
 export interface Campaign {

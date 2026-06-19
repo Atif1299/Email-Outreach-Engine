@@ -29,10 +29,11 @@ model Lead {
   verifiedAt         DateTime? @map("verified_at")
   verificationMethod String?  @map("verification_method")
 
-  importBatch       ImportBatch?       @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importBatch       ImportBatch?              @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
   sends             LeadSend[]
   bodyOverrides     LeadBodyOverride[]
   mergePreviews     LeadMergePreview[]
+  engagements       LeadCampaignEngagement[]
 
   @@index([email])
   @@index([importBatchId])
@@ -54,6 +55,7 @@ model Campaign {
   sends         LeadSend[]
   bodyOverrides LeadBodyOverride[]
   mergePreviews LeadMergePreview[]
+  engagements   LeadCampaignEngagement[]
 
   @@map("campaigns")
 }
@@ -85,20 +87,49 @@ model CampaignTargetBatch {
 }
 
 model LeadSend {
-  id          Int      @id @default(autoincrement())
-  leadId      Int      @map("lead_id")
-  campaignId  Int      @map("campaign_id")
-  stepOrder   Int      @map("step_order")
-  subject     String
-  bodySnippet String?  @map("body_snippet")
-  sentAt      DateTime @default(now()) @map("sent_at")
-  error       String?
+  id            Int      @id @default(autoincrement())
+  leadId        Int      @map("lead_id")
+  campaignId    Int      @map("campaign_id")
+  stepOrder     Int      @map("step_order")
+  subject       String
+  bodySnippet   String?  @map("body_snippet")
+  smtpMessageId String?  @map("smtp_message_id")
+  sentAt        DateTime @default(now()) @map("sent_at")
+  error         String?
 
   lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([leadId, campaignId])
   @@map("lead_sends")
+}
+
+model LeadCampaignEngagement {
+  leadId         Int       @map("lead_id")
+  campaignId     Int       @map("campaign_id")
+  status         String    @default("active")
+  repliedAt      DateTime? @map("replied_at")
+  unsubscribedAt DateTime? @map("unsubscribed_at")
+  replySubject   String?   @map("reply_subject")
+  replySnippet   String?   @map("reply_snippet")
+  detectedVia    String?   @map("detected_via")
+  updatedAt      DateTime  @default(now()) @map("updated_at")
+
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, campaignId])
+  @@index([campaignId, status])
+  @@map("lead_campaign_engagements")
+}
+
+model InboxSyncState {
+  id            Int       @id @default(1)
+  lastCheckedAt DateTime? @map("last_checked_at")
+  lastError     String?   @map("last_error")
+  updatedAt     DateTime  @default(now()) @map("updated_at")
+
+  @@map("inbox_sync_state")
 }
 
 model LeadBodyOverride {

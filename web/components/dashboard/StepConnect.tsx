@@ -157,6 +157,10 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 />
               </div>
             </div>
+            <p className="settings-hint">
+              Reply detection uses the same Gmail App Password via IMAP. Enable IMAP in Gmail
+              (Settings → See all settings → Forwarding and POP/IMAP).
+            </p>
             <div className="settings-grid" style={{ marginTop: '0.75rem' }}>
               <div className="field">
                 <label className="mini-label">From Name</label>

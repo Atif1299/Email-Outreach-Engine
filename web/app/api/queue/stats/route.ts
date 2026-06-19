@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { computeDueJobs, getMaxStepOrder, loadLastSuccessfulSends } from '@/lib/queue-schedule'
+import { computeDueJobs, getMaxStepOrder, loadEngagedLeadIds, loadLastSuccessfulSends } from '@/lib/queue-schedule'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
 
     const lastSendsByLead = await loadLastSuccessfulSends(campaignId, validLeadIds)
     const skippedLeadIds = new Set<number>()
+    const engagedLeadIds = await loadEngagedLeadIds(campaignId, validLeadIds)
 
     const queueState = await prisma.queueState.findUnique({ where: { id: 1 } })
     if (queueState?.activeCampaignId === campaignId) {
@@ -51,9 +52,24 @@ export async function GET(request: NextRequest) {
       skipped.forEach((id) => skippedLeadIds.add(id))
     }
 
-    const dueJobs = computeDueJobs(validLeadIds, campaign.steps, lastSendsByLead, skippedLeadIds)
+    const dueJobs = computeDueJobs(
+      validLeadIds,
+      campaign.steps,
+      lastSendsByLead,
+      skippedLeadIds,
+      engagedLeadIds
+    )
     const leadsStarted = lastSendsByLead.size
     const leadsCompleted = [...lastSendsByLead.values()].filter((s) => s.stepOrder >= maxStepOrder).length
+
+    const [repliedCount, unsubscribedCount] = await Promise.all([
+      prisma.leadCampaignEngagement.count({
+        where: { campaignId, status: 'replied' },
+      }),
+      prisma.leadCampaignEngagement.count({
+        where: { campaignId, status: 'unsubscribed' },
+      }),
+    ])
 
     return NextResponse.json({
       sendable,
@@ -63,6 +79,8 @@ export async function GET(request: NextRequest) {
       leadsStarted,
       leadsCompleted,
       dueNow: dueJobs.length,
+      repliedCount,
+      unsubscribedCount,
     })
   } catch (error) {
     console.error('Failed to get campaign stats:', error)
