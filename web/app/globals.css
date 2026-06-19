@@ -502,6 +502,12 @@
   min-height: 60px;
 }
 
+.textarea--fit
+{
+  resize: none;
+  overflow: hidden;
+}
+
 .btn
 {
   display: inline-flex;

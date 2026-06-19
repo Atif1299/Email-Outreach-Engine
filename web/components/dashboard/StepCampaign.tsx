@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Campaign, CampaignStep, Batch } from '@/app/dashboard/page'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
@@ -28,6 +28,7 @@ Open to a quick call to see if this fits?
 const DEFAULT_STEP2_SUBJECT = '{{first_name}} — still relevant for {{current_employer}}?'
 const DEFAULT_STEP2_BODY = `Hi {{first_name}},
 
+
 One angle for {{current_employer}} — teams in {{industry}} often lose deals when follow-up lives across too many tabs and CRM notes go stale.
 
 {{pitch_block}}
@@ -51,6 +52,44 @@ Your Company`
 function formatDate(iso: string) {
   const d = new Date(iso)
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function AutoResizeTextarea({
+  value,
+  onChange,
+  className = 'input textarea textarea--fit',
+  placeholder,
+}: {
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  className?: string
+  placeholder?: string
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  const resize = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.max(el.scrollHeight, 60)}px`
+  }, [])
+
+  useEffect(() => {
+    resize()
+  }, [value, resize])
+
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => {
+        onChange(e)
+        requestAnimationFrame(resize)
+      }}
+    />
+  )
 }
 
 function defaultStep(stepOrder: number): CampaignStep {
@@ -487,8 +526,7 @@ export default function StepCampaign({
                           </div>
                         </div>
                         <div className="field">
-                          <textarea
-                            className="input textarea"
+                          <AutoResizeTextarea
                             placeholder="Body template — use merge tags like {{first_name}}, {{current_employer}}..."
                             value={step.bodyTemplate}
                             onChange={(e) => updateStep(i, 'bodyTemplate', e.target.value)}
