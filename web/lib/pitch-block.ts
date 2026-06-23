@@ -34,18 +34,21 @@ export function parsePitchBlock(text: string) {
 
   const flush = () => {
     if (currentKey && currentLines.length) {
-      fields[currentKey] = currentLines.join('\n').trim()
+      fields[currentKey] = currentLines.join('\n')
     }
   }
 
   for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim()
+    const trimmedStart = line.trimStart()
     let matched = false
     for (const [key, re] of PITCH_LABELS) {
-      if (re.test(trimmed)) {
+      const m = trimmedStart.match(re)
+      if (m && m.index === 0) {
         flush()
         currentKey = key
-        currentLines = [trimmed.replace(re, '').trim()]
+        const labelEnd = line.length - trimmedStart.length + m[0].length
+        // Keep trailing/mid-text spaces — only strip the single gap after "Label:"
+        currentLines = [line.slice(labelEnd).replace(/^\s/, '')]
         matched = true
         break
       }
@@ -72,7 +75,7 @@ export function fieldsFromPitchBlock(text: string): Record<PitchFieldKey, string
 }
 
 export function serializePitchBlock(fields: Record<string, string>): string {
-  return PITCH_FIELDS.map(({ key, label }) => `${label}: ${(fields[key] || '').trim()}`).join('\n')
+  return PITCH_FIELDS.map(({ key, label }) => `${label}: ${fields[key] || ''}`).join('\n')
 }
 
 export function countFilledPitchFields(text: string): number {

@@ -33,13 +33,12 @@ Open to a quick call to see if this fits?
 
 {{sender_info}}`
 
-const DEFAULT_STEP2_SUBJECT = '{{first_name}} — still relevant for {{current_employer}}?'
+const DEFAULT_STEP2_SUBJECT = 'Re: {{first_name}} — {{current_employer}}'
 const DEFAULT_STEP2_BODY = `Hi {{first_name}},
 
+Following up on my note to {{current_employer}} — one additional angle for {{current_title}} teams:
 
-One angle for {{current_employer}} — teams in {{industry}} often lose deals when follow-up lives across too many tabs and CRM notes go stale.
-
-{{pitch_block}}
+[Reference the prior email topic — add one new proof point or consequence; do not re-introduce the company]
 
 Open to a 15-minute benchmark?
 

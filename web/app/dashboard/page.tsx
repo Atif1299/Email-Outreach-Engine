@@ -13,6 +13,7 @@ export interface SmtpAccountStatus {
   email: string
   label: string
   enabled: boolean
+  hasPassword?: boolean
   sendsToday: number
   sendsThisHour: number
   exhaustedUntil: string | null
@@ -38,8 +39,11 @@ export interface Settings {
   sendTimezone: string
   sendStartHour: number
   openaiModel: string
+  aiProvider: string
+  geminiModel: string
   verificationProvider: string
   hasOpenaiKey: boolean
+  hasGeminiApiKey: boolean
   hasVerificationApiKey: boolean
   smtpAccounts: SmtpAccountStatus[]
   /** @deprecated legacy fields */

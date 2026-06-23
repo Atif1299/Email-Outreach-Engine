@@ -13,8 +13,13 @@ export async function POST(request: NextRequest) {
     }
 
     const settings = await ensureSettings()
-    if (!settings.openaiKey) {
-      return NextResponse.json({ error: 'OpenAI API key not configured in Connect settings' }, { status: 400 })
+    const provider = (settings.aiProvider || 'openai') as 'openai' | 'gemini'
+    const apiKey = provider === 'gemini' ? settings.geminiApiKey : settings.openaiKey
+    const hasValidKey = !!apiKey?.trim()
+
+    if (!hasValidKey) {
+      const providerName = provider === 'gemini' ? 'Gemini' : 'OpenAI'
+      return NextResponse.json({ error: `${providerName} API key not configured in Connect settings` }, { status: 400 })
     }
 
     const leads = await prisma.lead.findMany({
@@ -27,13 +32,15 @@ export async function POST(request: NextRequest) {
     }
 
     const leadsData = leads.map((l) => JSON.parse(l.dataJson))
+    const model = provider === 'gemini' ? settings.geminiModel : settings.openaiModel
 
     const pitchBlock = await suggestPitchFromLeads({
       leadsData,
       existingPitch,
       aiVoice,
-      model: settings.openaiModel,
-      apiKey: settings.openaiKey,
+      model,
+      apiKey: apiKey || '',
+      provider,
     })
 
     return NextResponse.json({ pitchBlock })

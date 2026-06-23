@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client'
 import {
   ensureSmtpAccounts,
   saveSmtpAccounts,
-  toPublicSmtpAccount,
+  toPublicSmtpAccounts,
 } from '@/lib/smtp-accounts'
 import { toSendLimitSettings } from '@/lib/send-limits'
 
@@ -28,9 +28,7 @@ export async function GET() {
     const settings = await ensureSettings()
     const accounts = await ensureSmtpAccounts()
     const limitSettings = toSendLimitSettings(settings)
-    const publicAccounts = await Promise.all(
-      accounts.map((account) => toPublicSmtpAccount(account, limitSettings))
-    )
+    const publicAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
     return NextResponse.json(toPublicSettings(settings, publicAccounts))
   } catch (error) {
     return dbErrorResponse(error, 'get settings')
@@ -86,10 +84,13 @@ export async function POST(request: NextRequest) {
       sendTimezone: body.sendTimezone || 'Asia/Karachi',
       sendStartHour: body.sendStartHour ?? 12,
       openaiModel: body.openaiModel || 'gpt-4o-mini',
+      aiProvider: body.aiProvider || 'openai',
+      geminiModel: body.geminiModel || 'gemini-1.5-flash',
       verificationProvider: body.verificationProvider || 'none',
     }
 
     if (body.openaiKey) updateData.openaiKey = body.openaiKey
+    if (body.geminiApiKey) updateData.geminiApiKey = body.geminiApiKey
     if (body.verificationApiKey) updateData.verificationApiKey = body.verificationApiKey
 
     const settings = await prisma.settings.upsert({
@@ -110,9 +111,7 @@ export async function POST(request: NextRequest) {
 
     const accounts = await ensureSmtpAccounts()
     const limitSettings = toSendLimitSettings(settings)
-    const publicAccounts = await Promise.all(
-      accounts.map((account) => toPublicSmtpAccount(account, limitSettings))
-    )
+    const publicAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
     return NextResponse.json({ success: true, ...toPublicSettings(settings, publicAccounts) })
   } catch (error) {

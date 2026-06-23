@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
 import { toSendLimitSettings } from '@/lib/send-limits'
-import { ensureSmtpAccounts, toPublicSmtpAccount } from '@/lib/smtp-accounts'
+import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,9 +15,7 @@ export async function GET(request: NextRequest) {
     const settings = await ensureSettings()
     const limitSettings = toSendLimitSettings(settings)
     const accounts = await ensureSmtpAccounts()
-    const smtpAccounts = await Promise.all(
-      accounts.map((account) => toPublicSmtpAccount(account, limitSettings))
-    )
+    const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
     let repliedCount = 0
     let unsubscribedCount = 0

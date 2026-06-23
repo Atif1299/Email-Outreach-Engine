@@ -14,8 +14,11 @@ export interface PublicSettings {
   sendTimezone: string
   sendStartHour: number
   openaiModel: string
+  aiProvider: string
+  geminiModel: string
   verificationProvider: string
   hasOpenaiKey: boolean
+  hasGeminiApiKey: boolean
   hasVerificationApiKey: boolean
   smtpAccounts: import('@/lib/smtp-accounts').PublicSmtpAccount[]
   /** @deprecated Legacy single-account fields kept for backward compatibility */
@@ -51,6 +54,9 @@ export function toPublicSettings(
     sendTimezone: string
     sendStartHour: number
     openaiModel: string
+    aiProvider: string
+    geminiApiKey: string
+    geminiModel: string
     verificationProvider: string
     smtpPassword: string
     openaiKey: string
@@ -72,8 +78,11 @@ export function toPublicSettings(
     sendTimezone: settings.sendTimezone,
     sendStartHour: settings.sendStartHour,
     openaiModel: settings.openaiModel,
+    aiProvider: settings.aiProvider,
+    geminiModel: settings.geminiModel,
     verificationProvider: settings.verificationProvider,
     hasOpenaiKey: !!settings.openaiKey,
+    hasGeminiApiKey: !!settings.geminiApiKey,
     hasVerificationApiKey: !!settings.verificationApiKey,
     smtpAccounts,
     smtpUser: settings.smtpUser,

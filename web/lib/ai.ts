@@ -24,6 +24,7 @@ interface LeadData {
 
 interface PreviousSend {
   subject?: string
+  body?: string
   body_snippet?: string
 }
 
@@ -41,8 +42,31 @@ interface GenerateEmailOptions {
   previous?: PreviousSend
   model: string
   apiKey: string
+  provider?: 'openai' | 'gemini'
   fewShotStep1Json?: string
   fewShotStep2Json?: string
+}
+
+function createAiClient(opts: { apiKey: string; provider?: string }) {
+  if (opts.provider === 'gemini') {
+    return new OpenAI({
+      apiKey: opts.apiKey,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    })
+  }
+  return new OpenAI({ apiKey: opts.apiKey })
+}
+
+/** Gemini 2.5 counts internal thinking tokens against max_tokens; OpenAI counts output only. */
+function completionTokenLimit(provider: string | undefined, kind: 'body' | 'subject' | 'pitch'): number {
+  if (provider === 'gemini') {
+    if (kind === 'body') return 4096
+    if (kind === 'subject') return 512
+    return 2048
+  }
+  if (kind === 'body') return 800
+  if (kind === 'subject') return 60
+  return 500
 }
 
 interface PitchSuggestOptions {
@@ -51,6 +75,7 @@ interface PitchSuggestOptions {
   aiVoice?: string
   model: string
   apiKey: string
+  provider?: 'openai' | 'gemini'
 }
 
 const PITCH_STUB_FOR_AI =
@@ -213,8 +238,9 @@ function buildBodyMessages(opts: {
     email: opts.lead.email,
     stepOrder: opts.stepOrder,
   })
-  const systemTpl = loadPromptFile('body_system.md')
-  const userTpl = loadPromptFile('body_user.md')
+  const isFollowUp = opts.stepOrder > 1
+  const systemTpl = loadPromptFile(isFollowUp ? 'body_system_step2.md' : 'body_system.md')
+  const userTpl = loadPromptFile(isFollowUp ? 'body_user_step2.md' : 'body_user.md')
 
   const pitch = parsePitchBlock(opts.pitchBlock)
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
@@ -230,12 +256,17 @@ function buildBodyMessages(opts: {
 
   const leadWithEmail = { ...opts.lead, email: opts.lead.email ?? '' }
   const industry = inferLeadIndustry(leadWithEmail)
-  const user = fillTemplate(userTpl, {
+
+  const previousBody =
+    opts.previous?.body?.trim() ||
+    opts.previous?.body_snippet?.trim() ||
+    '(none — save or generate step 1 preview for this lead first)'
+
+  const userVars: Record<string, string> = {
     LEAD_NAME: [leadWithEmail.first_name, leadWithEmail.last_name].filter(Boolean).join(' ') || '(unknown)',
     LEAD_COMPANY: leadWithEmail.current_employer?.trim() || '(unknown)',
     LEAD_TITLE: leadWithEmail.current_title?.trim() || '(unknown)',
     LEAD_INDUSTRY: industry,
-    PERSONALIZATION_BRIEF: buildPersonalizationBrief(leadWithEmail, pitch),
     LEAD_JSON: JSON.stringify(leadWithEmail, null, 2),
     PITCH_PARSED: JSON.stringify(
       pitch.structured ? pitch.fields : { note: 'Unstructured pitch — extract from raw text' },
@@ -246,9 +277,16 @@ function buildBodyMessages(opts: {
     SENDER_INFO: opts.senderInfo?.trim() || '(none — use "Best" only)',
     STEP_ORDER: String(opts.stepOrder),
     PREVIOUS_SUBJECT: opts.previous?.subject?.trim() || '(none — first email)',
-    PREVIOUS_SNIPPET: opts.previous?.body_snippet?.trim() || '(none)',
+    PREVIOUS_SNIPPET: opts.previous?.body_snippet?.trim() || previousBody,
+    PREVIOUS_BODY: previousBody,
     MERGED_PREVIEW: opts.mergedPreview?.trim() || '(empty template)',
-  })
+  }
+
+  if (!isFollowUp) {
+    userVars.PERSONALIZATION_BRIEF = buildPersonalizationBrief(leadWithEmail, pitch)
+  }
+
+  const user = fillTemplate(userTpl, userVars)
 
   return [
     { role: 'system' as const, content: system },
@@ -264,8 +302,11 @@ function buildSubjectMessages(opts: {
   aiVoice: string
   aiInstructions: string
   outputLanguage?: string
+  stepOrder?: number
+  previous?: PreviousSend
 }) {
-  const systemTpl = loadPromptFile('subject_system.md')
+  const isFollowUp = (opts.stepOrder ?? 1) > 1
+  const systemTpl = loadPromptFile(isFollowUp ? 'subject_system_step2.md' : 'subject_system.md')
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
   const lang = normalizeOutputLanguage(opts.outputLanguage)
 
@@ -275,9 +316,14 @@ function buildSubjectMessages(opts: {
     OUTPUT_LANGUAGE_RULE: buildSubjectOutputLanguageRule(lang),
   })
 
+  const previousBlock =
+    isFollowUp && opts.previous?.subject
+      ? `\nPrevious email subject (follow-up thread — relate to this):\n${opts.previous.subject}\n`
+      : ''
+
   const user = `Merged subject template (starting point only — rewrite substantially):
 ${opts.subjectTemplate}
-
+${previousBlock}
 Email body (subject must match this hook):
 ${opts.bodySoFar.slice(0, 800)}
 
@@ -342,7 +388,7 @@ export function normalizePitchBlock(text: string): string {
 }
 
 export async function generateEmailBody(opts: GenerateEmailOptions): Promise<string> {
-  const openai = new OpenAI({ apiKey: opts.apiKey })
+  const openai = createAiClient(opts)
   const leadFull = { ...opts.leadData, email: opts.leadData.email ?? '' }
 
   const baseMessages = buildBodyMessages({
@@ -365,7 +411,7 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
       model: opts.model,
       messages,
       temperature: 0.45,
-      max_tokens: 350,
+      max_tokens: completionTokenLimit(opts.provider, 'body'),
     })
     const text = response.choices[0]?.message?.content?.trim()
     if (!text) throw new Error('Empty response from OpenAI')
@@ -390,7 +436,7 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
 
 
 export async function generateSubjectLine(opts: GenerateEmailOptions & { bodySoFar: string; mergedSubject: string }): Promise<string> {
-  const openai = new OpenAI({ apiKey: opts.apiKey })
+  const openai = createAiClient(opts)
 
   const messages = buildSubjectMessages({
     lead: opts.leadData,
@@ -400,13 +446,15 @@ export async function generateSubjectLine(opts: GenerateEmailOptions & { bodySoF
     aiVoice: opts.aiVoice || 'founder',
     aiInstructions: opts.aiInstructions || '',
     outputLanguage: opts.outputLanguage,
+    stepOrder: opts.stepOrder,
+    previous: opts.previous,
   })
 
   const response = await openai.chat.completions.create({
     model: opts.model,
     messages,
     temperature: 0.7,
-    max_tokens: 60,
+    max_tokens: completionTokenLimit(opts.provider, 'subject'),
   })
 
   const text = response.choices[0]?.message?.content?.trim().replace(/^["']|["']$/g, '')
@@ -443,15 +491,18 @@ export async function renderEmailForLead(opts: {
   previous?: PreviousSend
   model: string
   apiKey: string
+  provider?: 'openai' | 'gemini'
   useAi: boolean
   storedBody?: string
   storedSubject?: string | null
   fewShotStep1Json?: string
   fewShotStep2Json?: string
 }): Promise<{ subject: string; body: string }> {
+  const hasValidApiKey = !!opts.apiKey?.trim()
+
   if (opts.storedBody !== undefined) {
     let subject = opts.storedSubject ?? mergeTags(opts.subjectTemplate, opts.leadData, opts.pitchBlock, opts.senderInfo)
-    if (!opts.storedSubject && opts.useAi && opts.apiKey) {
+    if (!opts.storedSubject && opts.useAi && hasValidApiKey) {
       try {
         subject = await generateSubjectLine({
           leadData: opts.leadData,
@@ -466,6 +517,7 @@ export async function renderEmailForLead(opts: {
           previous: opts.previous,
           model: opts.model,
           apiKey: opts.apiKey,
+          provider: opts.provider,
           bodySoFar: opts.storedBody,
           mergedSubject: subject,
         })
@@ -476,7 +528,12 @@ export async function renderEmailForLead(opts: {
     return { subject, body: opts.storedBody }
   }
 
-  if (opts.useAi && opts.apiKey) {
+  if (opts.useAi && !hasValidApiKey) {
+    const providerName = opts.provider === 'gemini' ? 'Gemini' : 'OpenAI'
+    throw new Error(`${providerName} API key is required for AI generation`)
+  }
+
+  if (opts.useAi && hasValidApiKey) {
     const result = await generateEmailWithAI({
       leadData: opts.leadData,
       leadId: opts.leadId,
@@ -491,6 +548,7 @@ export async function renderEmailForLead(opts: {
       previous: opts.previous,
       model: opts.model,
       apiKey: opts.apiKey,
+      provider: opts.provider,
       fewShotStep1Json: opts.fewShotStep1Json,
       fewShotStep2Json: opts.fewShotStep2Json,
     })
@@ -504,7 +562,7 @@ export async function renderEmailForLead(opts: {
 }
 
 export async function suggestPitchFromLeads(opts: PitchSuggestOptions): Promise<string> {
-  const openai = new OpenAI({ apiKey: opts.apiKey })
+  const openai = createAiClient(opts)
 
   const systemTpl = loadPromptFile('pitch_from_leads_system.md')
   const userTpl = loadPromptFile('pitch_from_leads_user.md')
@@ -530,7 +588,7 @@ export async function suggestPitchFromLeads(opts: PitchSuggestOptions): Promise<
       { role: 'user', content: user },
     ],
     temperature: 0.7,
-    max_tokens: 500,
+    max_tokens: completionTokenLimit(opts.provider, 'pitch'),
   })
 
   const raw = response.choices[0]?.message?.content || opts.existingPitch || ''

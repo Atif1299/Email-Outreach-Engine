@@ -229,6 +229,9 @@ model Settings {
   sendStartHour        Int     @default(12) @map("send_start_hour")
   openaiKey            String  @default("") @map("openai_key")
   openaiModel          String  @default("gpt-4o-mini") @map("openai_model")
+  aiProvider           String  @default("openai") @map("ai_provider")
+  geminiApiKey         String  @default("") @map("gemini_api_key")
+  geminiModel          String  @default("gemini-2.5-flash") @map("gemini_model")
   verificationProvider String  @default("none") @map("verification_provider")
   verificationApiKey   String  @default("") @map("verification_api_key")
 

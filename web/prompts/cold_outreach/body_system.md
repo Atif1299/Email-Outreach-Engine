@@ -31,6 +31,7 @@ Total: 5–6 short paragraphs, 90–130 words max. Never add a second "solution"
 - Briefly reference the prior email topic — do NOT say "just circling back" or "following up on my last email" as the opener.
 - Add a new angle, proof point, or sharper pain hook tied to their industry.
 - Same structure: pain → bridge → outcome → soft CTA. Shorter than step 1.
+- CRITICAL: "Follow-up" means THIS email is a follow-up TO the lead — it does NOT mean you are selling follow-up software or email tools. Pitch the SAME product from the pitch block with a fresh angle. Never add "follow-up automation" or "email sequence" language unless the pitch block explicitly sells that.
 
 ## Hard bans (never use)
 

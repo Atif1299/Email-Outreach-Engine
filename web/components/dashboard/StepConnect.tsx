@@ -38,7 +38,7 @@ function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
   }
   if (settings.smtpUser || settings.smtpFromEmail) {
     return [{
-      email: settings.smtpFromEmail || settings.smtpUser,
+      email: settings.smtpFromEmail || settings.smtpUser || '',
       password: '',
       label: 'Primary',
       enabled: true,
@@ -65,6 +65,9 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
     sendStartHour: settings?.sendStartHour ?? 10,
     openaiKey: '',
     openaiModel: settings?.openaiModel || 'gpt-4o-mini',
+    aiProvider: settings?.aiProvider || 'openai',
+    geminiApiKey: '',
+    geminiModel: settings?.geminiModel || 'gemini-2.5-flash',
     verificationProvider: settings?.verificationProvider || 'none',
     verificationApiKey: '',
   })
@@ -119,6 +122,8 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
       sendTimezone: settings.sendTimezone,
       sendStartHour: settings.sendStartHour,
       openaiModel: settings.openaiModel,
+      aiProvider: settings.aiProvider || 'openai',
+      geminiModel: settings.geminiModel || 'gemini-2.5-flash',
       verificationProvider: settings.verificationProvider,
     }))
     setSmtpAccounts(accountsFromSettings(settings))
@@ -168,7 +173,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
       if (res.ok) {
         saveFlash.flashDone()
         setSaveError(null)
-        setFormData((prev) => ({ ...prev, openaiKey: '', verificationApiKey: '' }))
+        setFormData((prev) => ({ ...prev, openaiKey: '', geminiApiKey: '', verificationApiKey: '' }))
         setSmtpAccounts((prev) => prev.map((a) => ({ ...a, password: '' })))
         onSettingsSaved()
       } else {
@@ -541,30 +546,78 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
           </div>
 
           <div className="settings-section">
-            <div className="section-title">OpenAI (Optional)</div>
+            <div className="section-title">AI Provider (Optional)</div>
             <div className="settings-grid">
-              <div className="field">
-                <label className="mini-label">API Key</label>
-                <input
-                  type="password"
-                  className="input"
-                  placeholder={settings?.hasOpenaiKey ? 'sk-... (saved — leave blank to keep)' : 'sk-...'}
-                  value={formData.openaiKey}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, openaiKey: e.target.value }))}
-                />
-              </div>
               <div className="field field-mini">
-                <label className="mini-label">Model</label>
+                <label className="mini-label">Provider</label>
                 <select
                   className="input"
-                  value={formData.openaiModel}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, openaiModel: e.target.value }))}
+                  value={formData.aiProvider}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, aiProvider: e.target.value }))}
                 >
-                  <option value="gpt-4o-mini">GPT-4o Mini</option>
-                  <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="gemini">Google Gemini</option>
                 </select>
               </div>
             </div>
+
+            {formData.aiProvider === 'openai' && (
+              <div className="settings-grid" style={{ marginTop: '0.75rem' }}>
+                <div className="field">
+                  <label className="mini-label">API Key</label>
+                  <input
+                    type="password"
+                    className="input"
+                    placeholder={settings?.hasOpenaiKey ? 'sk-... (saved — leave blank to keep)' : 'sk-...'}
+                    value={formData.openaiKey}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, openaiKey: e.target.value }))}
+                  />
+                </div>
+                <div className="field field-mini">
+                  <label className="mini-label">Model</label>
+                  <select
+                    className="input"
+                    value={formData.openaiModel}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, openaiModel: e.target.value }))}
+                  >
+                    <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {formData.aiProvider === 'gemini' && (
+              <div className="settings-grid" style={{ marginTop: '0.75rem' }}>
+                <div className="field">
+                  <label className="mini-label">API Key</label>
+                  <input
+                    type="password"
+                    className="input"
+                    placeholder={settings?.hasGeminiApiKey ? 'AIza... (saved — leave blank to keep)' : 'AIza...'}
+                    value={formData.geminiApiKey}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, geminiApiKey: e.target.value }))}
+                  />
+                </div>
+                <div className="field field-mini">
+                  <label className="mini-label">Model</label>
+                  <select
+                    className="input"
+                    value={formData.geminiModel}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, geminiModel: e.target.value }))}
+                  >
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (recommended)</option>
+                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (budget)</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash (latest)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            <p className="settings-hint" style={{ marginTop: '0.5rem' }}>
+              {formData.aiProvider === 'gemini'
+                ? 'Get API key from aistudio.google.com/apikey'
+                : 'OpenAI requires an API key from platform.openai.com.'}
+            </p>
           </div>
 
           <div className="settings-section">

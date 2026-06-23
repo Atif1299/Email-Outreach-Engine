@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Campaign } from '@/app/dashboard/page'
 import { getOutputLanguageLabel } from '@/lib/output-languages'
+import { looksLikeRawPitchMerge } from '@/lib/preview-utils'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -62,12 +63,28 @@ export default function StepPreview({
   })
   const [savedCount, setSavedCount] = useState(0)
   const [generatedOverrides, setGeneratedOverrides] = useState<OverrideItem[]>([])
+  const [failedLeadIds, setFailedLeadIds] = useState<Set<number>>(new Set())
   const [confirmBulk, setConfirmBulk] = useState(false)
   const [confirmRegenerateAll, setConfirmRegenerateAll] = useState(false)
+  const [aiProvider, setAiProvider] = useState<{ provider: string; model: string; hasKey: boolean } | null>(null)
   const bulkAbortRef = useRef(false)
   const saveFlash = useButtonFlash()
   const bulkFlash = useButtonFlash()
   const { hint: previewHint, showHint: showPreviewHint } = useInlineHint()
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then((res) => res.json())
+      .then((settings) => {
+        const isGemini = settings.aiProvider === 'gemini'
+        setAiProvider({
+          provider: isGemini ? 'Gemini' : 'OpenAI',
+          model: isGemini ? settings.geminiModel : settings.openaiModel,
+          hasKey: isGemini ? settings.hasGeminiApiKey : settings.hasOpenaiKey,
+        })
+      })
+      .catch(() => { })
+  }, [])
 
   const selectedCampaign = campaigns.find((c) => c.id === previewCampaignId)
   const steps = selectedCampaign?.steps || []
@@ -110,6 +127,9 @@ export default function StepPreview({
       if (res.ok) {
         const data = await res.json()
         setPreview(data)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        showPreviewHint(err.error || 'Preview failed', 'err')
       }
     } catch (e) {
       console.error('Failed to load preview:', e)
@@ -148,7 +168,8 @@ export default function StepPreview({
         setPreview(data)
         setGeneratedOverrides((prev) => [...prev, { leadId: selectedLeadId, ...data }])
       } else {
-        showPreviewHint('AI failed', 'err')
+        const err = await res.json().catch(() => ({}))
+        showPreviewHint(err.error || 'AI failed', 'err')
       }
     } catch (e) {
       showPreviewHint('AI failed', 'err')
@@ -198,9 +219,27 @@ export default function StepPreview({
   async function runBulkGenerate(regenerateAll: boolean) {
     if (!previewCampaignId || leads.length === 0) return
 
+    try {
+      const settingsRes = await fetch('/api/settings')
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json()
+        const isGemini = settings.aiProvider === 'gemini'
+        const hasKey = isGemini ? settings.hasGeminiApiKey : settings.hasOpenaiKey
+        if (!hasKey) {
+          const provider = isGemini ? 'Gemini' : 'OpenAI'
+          showPreviewHint(`${provider} API key required — add it in Connect first`, 'err')
+          return
+        }
+      }
+    } catch {
+      showPreviewHint('Could not verify AI provider settings', 'err')
+      return
+    }
+
     bulkAbortRef.current = false
     setBulkGenerating(true)
     setBulkPhase('generating')
+    setFailedLeadIds(new Set())
 
     const targets = regenerateAll ? leads : leads.filter((l) => !l.hasSaved)
     const sessionDone = new Set<number>()
@@ -243,38 +282,59 @@ export default function StepPreview({
         for (const lead of pending) sessionDone.add(lead.id)
         workInBatch = true
 
-        const results = await Promise.all(
-          pending.map(async (lead) => {
-            if (!regenerateAll && lead.hasSaved) {
-              return { type: 'skipped' as const }
-            }
-            try {
-              const res = await fetch('/api/ai-generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
+        const results: Array<
+          | { type: 'skipped' }
+          | { type: 'generated'; leadId: number; item: { leadId: number; subject: string; body: string } }
+          | { type: 'failed'; leadId: number }
+        > = []
+        for (const lead of pending) {
+          if (!regenerateAll && lead.hasSaved) {
+            results.push({ type: 'skipped' as const })
+            continue
+          }
+          try {
+            const res = await fetch('/api/ai-generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
+            })
+            if (res.ok) {
+              const data = await res.json()
+              results.push({
+                type: 'generated' as const,
+                leadId: lead.id,
+                item: { leadId: lead.id, subject: data.subject, body: data.body },
               })
-              if (res.ok) {
-                const data = await res.json()
-                return {
-                  type: 'generated' as const,
-                  item: { leadId: lead.id, subject: data.subject, body: data.body },
-                }
-              }
-              return { type: 'failed' as const }
-            } catch (e) {
-              console.error('Bulk AI error for lead', lead.id, e)
-              return { type: 'failed' as const }
+            } else {
+              const err = await res.json().catch(() => ({}))
+              console.error('Bulk AI error for lead', lead.id, err.error || res.status)
+              results.push({ type: 'failed' as const, leadId: lead.id })
             }
-          })
-        )
+          } catch (e) {
+            console.error('Bulk AI error for lead', lead.id, e)
+            results.push({ type: 'failed' as const, leadId: lead.id })
+          }
+          // Small delay between requests to avoid rate limiting
+          await new Promise((r) => setTimeout(r, 500))
+        }
 
+        const newFailedIds: number[] = []
         for (const result of results) {
           if (result.type === 'skipped') skipped++
           else if (result.type === 'generated') {
             generated++
             batchBuffer.push(result.item)
-          } else failed++
+          } else {
+            failed++
+            if (result.leadId) newFailedIds.push(result.leadId)
+          }
+        }
+        if (newFailedIds.length > 0) {
+          setFailedLeadIds((prev) => {
+            const next = new Set(prev)
+            newFailedIds.forEach((id) => next.add(id))
+            return next
+          })
         }
         updateProgress()
       }
@@ -304,18 +364,7 @@ export default function StepPreview({
   }
 
   function bulkGenerateAI() {
-    if (!previewCampaignId || leads.length === 0) return
-
-    if (unsavedCount === 0) {
-      if (!confirmRegenerateAll) {
-        setConfirmRegenerateAll(true)
-        setConfirmBulk(false)
-        return
-      }
-      setConfirmRegenerateAll(false)
-      runBulkGenerate(true)
-      return
-    }
+    if (!previewCampaignId || leads.length === 0 || unsavedCount === 0) return
 
     if (!confirmBulk) {
       setConfirmBulk(true)
@@ -324,6 +373,63 @@ export default function StepPreview({
     }
     setConfirmBulk(false)
     runBulkGenerate(false)
+  }
+
+  async function retryFailed() {
+    if (!previewCampaignId || failedLeadIds.size === 0) return
+
+    const failedLeads = leads.filter((l) => failedLeadIds.has(l.id))
+    if (failedLeads.length === 0) return
+
+    bulkAbortRef.current = false
+    setBulkGenerating(true)
+    setBulkPhase('generating')
+
+    let generated = 0
+    let failed = 0
+    const newFailedIds: number[] = []
+    let batchBuffer: OverrideItem[] = []
+
+    setBulkProgress({ processed: 0, total: failedLeads.length, generated: 0, failed: 0, skipped: 0 })
+
+    for (const lead of failedLeads) {
+      if (bulkAbortRef.current) break
+      try {
+        const res = await fetch('/api/ai-generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          generated++
+          batchBuffer.push({ leadId: lead.id, subject: data.subject, body: data.body })
+        } else {
+          failed++
+          newFailedIds.push(lead.id)
+        }
+      } catch {
+        failed++
+        newFailedIds.push(lead.id)
+      }
+      setBulkProgress({ processed: generated + failed, total: failedLeads.length, generated, failed, skipped: 0 })
+
+      if (batchBuffer.length >= 10) {
+        await saveOverrideBatch(batchBuffer, true)
+        batchBuffer = []
+      }
+      // Small delay to avoid rate limiting
+      await new Promise((r) => setTimeout(r, 500))
+    }
+
+    if (batchBuffer.length > 0) {
+      await saveOverrideBatch(batchBuffer, true)
+    }
+
+    setFailedLeadIds(new Set(newFailedIds))
+    setBulkGenerating(false)
+    bulkFlash.flashDone()
+    showPreviewHint(`Retry done: ${generated} generated, ${failed} still failed`, failed > 0 ? 'warn' : 'ok')
   }
 
   function cancelBulkConfirm() {
@@ -373,7 +479,11 @@ export default function StepPreview({
           </div>
           {selectedCampaign && (
             <p className="field-hint" style={{ padding: '0 0.5rem 0.35rem' }}>
-              AI emails generate in <strong>{getOutputLanguageLabel(selectedCampaign.outputLanguage)}</strong> — set in Campaign → Overview.
+              AI: <strong>{aiProvider?.provider || '...'}</strong> ({aiProvider?.model || '...'}){' '}
+              {aiProvider && !aiProvider.hasKey && <span style={{ color: 'var(--err)' }}>— no API key!</span>}
+              {aiProvider?.hasKey && <span style={{ color: 'var(--ok)' }}>✓</span>}
+              {' · '}Language: <strong>{getOutputLanguageLabel(selectedCampaign.outputLanguage)}</strong>
+              {' · '}✓ = saved preview (use <strong>Regenerate all AI</strong> if body shows raw pitch labels)
             </p>
           )}
           <div className="queue-list">
@@ -431,6 +541,12 @@ export default function StepPreview({
 
           {preview && (
             <div className="preview-content">
+              {looksLikeRawPitchMerge(preview.body) && (
+                <p className="field-hint inline-hint inline-hint--warn" style={{ marginBottom: '0.65rem' }}>
+                  This looks like a template merge (raw pitch block), not AI. Click <strong>AI</strong> or run{' '}
+                  <strong>Regenerate all AI</strong> for Step {stepOrder}.
+                </p>
+              )}
               <div className="field preview-subject-field">
                 <label className="mini-label">Subject</label>
                 <div className="preview-box">{preview.subject}</div>
@@ -474,24 +590,51 @@ export default function StepPreview({
         <div className="footer-left">
           <span className="footer-text">{savedCount} saved · {unsavedCount} remaining</span>
           <span className="footer-action">
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              onClick={bulkGenerateAI}
-              disabled={bulkGenerating || leads.length === 0}
-            >
-              {bulkGenerating
-                ? `${bulkProgress.generated}/${bulkProgress.total}…`
-                : confirmRegenerateAll
-                  ? `Confirm regenerate all (${leads.length})`
+            {unsavedCount > 0 && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={bulkGenerateAI}
+                disabled={bulkGenerating || leads.length === 0}
+              >
+                {bulkGenerating
+                  ? `${bulkProgress.generated}/${bulkProgress.total}…`
                   : confirmBulk
-                    ? `Confirm bulk (${unsavedCount})`
+                    ? `Confirm (${unsavedCount})`
                     : bulkFlash.flash === 'done'
                       ? 'Generated'
-                      : unsavedCount === 0
-                        ? 'Regenerate all AI'
-                        : 'Bulk Generate AI'}
-            </button>
+                      : 'Bulk Generate AI'}
+              </button>
+            )}
+            {savedCount > 0 && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  if (confirmRegenerateAll) {
+                    setConfirmRegenerateAll(false)
+                    setConfirmBulk(false)
+                    runBulkGenerate(true)
+                  } else {
+                    setConfirmRegenerateAll(true)
+                    setConfirmBulk(false)
+                  }
+                }}
+                disabled={bulkGenerating || leads.length === 0}
+              >
+                {confirmRegenerateAll ? `Confirm regenerate (${savedCount})` : 'Regenerate All'}
+              </button>
+            )}
+            {failedLeadIds.size > 0 && !bulkGenerating && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={retryFailed}
+                style={{ color: 'var(--err)' }}
+              >
+                Retry Failed ({failedLeadIds.size})
+              </button>
+            )}
           </span>
           {(confirmBulk || confirmRegenerateAll) && (
             <button type="button" className="btn btn-outline btn-sm" onClick={cancelBulkConfirm}>

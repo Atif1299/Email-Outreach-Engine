@@ -17,7 +17,7 @@ import {
   isWithinSendWindow,
   toSendLimitSettings,
 } from '@/lib/send-limits'
-import { ensureSmtpAccounts, toPublicSmtpAccount } from '@/lib/smtp-accounts'
+import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,9 +54,7 @@ export async function GET() {
     const hourCapReached = sendsThisHour >= effectiveHourlyCap
     const outsideWindow = state.running && !isWithinSendWindow(limitSettings)
 
-    const smtpAccounts = await Promise.all(
-      accounts.map((account) => toPublicSmtpAccount(account, limitSettings))
-    )
+    const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
     const activeLeadIds = JSON.parse(state.activeLeadIdsJson || '[]') as number[]
     const skippedLeadIds = new Set<number>(JSON.parse(state.skippedLeadIdsJson || '[]'))

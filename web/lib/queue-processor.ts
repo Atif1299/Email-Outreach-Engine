@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
 import { getDeliveryHaltError, isHardBounceError } from '@/lib/verify'
 import { suppressLeadForBounce } from '@/lib/lead-suppression'
+import { loadPreviousStepContext } from '@/lib/preview-context'
 import { ensureSettings } from '@/lib/settings'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
 import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds } from '@/lib/queue-schedule'
@@ -533,10 +534,7 @@ async function processQueueBatchInner(maxEmails = 1) {
         let subject: string
         let body: string
 
-        const previous =
-          lastSend && nextStepOrder > 1
-            ? { subject: lastSend.subject, body_snippet: lastSend.bodySnippet || '' }
-            : undefined
+        const previous = await loadPreviousStepContext(leadId, campaign.id, nextStepOrder)
 
         if (override) {
           subject =
@@ -544,6 +542,9 @@ async function processQueueBatchInner(maxEmails = 1) {
             mergeTags(nextStep.subjectTemplate, leadData, campaign.pitchBlock, campaign.senderInfo)
           body = override.body
         } else {
+          const provider = (settings.aiProvider || 'openai') as 'openai' | 'gemini'
+          const apiKey = provider === 'gemini' ? settings.geminiApiKey : settings.openaiKey
+          const model = provider === 'gemini' ? settings.geminiModel : settings.openaiModel
           const rendered = await renderEmailForLead({
             leadData: { ...leadData, email: lead.email },
             leadId: lead.id,
@@ -556,8 +557,9 @@ async function processQueueBatchInner(maxEmails = 1) {
             bodyTemplate: nextStep.bodyTemplate,
             stepOrder: nextStepOrder,
             previous,
-            model: settings.openaiModel,
-            apiKey: settings.openaiKey || '',
+            model,
+            apiKey: apiKey || '',
+            provider,
             useAi: nextStep.useAi,
             fewShotStep1Json: campaign.fewShotStep1Json,
             fewShotStep2Json: campaign.fewShotStep2Json,
@@ -608,7 +610,7 @@ async function processQueueBatchInner(maxEmails = 1) {
           },
           data: {
             subject,
-            bodySnippet: body.slice(0, 200),
+            bodySnippet: body.slice(0, 1500),
             smtpMessageId,
             smtpAccountId: account.id,
           },

@@ -151,43 +151,90 @@ export async function evaluateAccountSendGate(
   return { allowed: true }
 }
 
-async function getAccountSendCounts(accountId: number, limitSettings: SendLimitSettings) {
+async function getBatchAccountSendCounts(
+  accountIds: number[],
+  limitSettings: SendLimitSettings
+): Promise<Map<number, { sendsToday: number; sendsThisHour: number }>> {
+  if (accountIds.length === 0) return new Map()
+
   const now = new Date()
   const dayStart = getDayStartInTimezone(limitSettings.sendTimezone, now)
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000)
-  const [sendsToday, sendsThisHour] = await Promise.all([
-    countSuccessfulSendsForAccountSince(accountId, dayStart),
-    countSuccessfulSendsForAccountSince(accountId, hourAgo),
+
+  const [todayCounts, hourCounts] = await Promise.all([
+    prisma.leadSend.groupBy({
+      by: ['smtpAccountId'],
+      where: {
+        smtpAccountId: { in: accountIds },
+        sentAt: { gte: dayStart },
+        error: null,
+      },
+      _count: true,
+    }),
+    prisma.leadSend.groupBy({
+      by: ['smtpAccountId'],
+      where: {
+        smtpAccountId: { in: accountIds },
+        sentAt: { gte: hourAgo },
+        error: null,
+      },
+      _count: true,
+    }),
   ])
-  return { sendsToday, sendsThisHour }
+
+  const result = new Map<number, { sendsToday: number; sendsThisHour: number }>()
+  for (const id of accountIds) {
+    result.set(id, { sendsToday: 0, sendsThisHour: 0 })
+  }
+  for (const row of todayCounts) {
+    const entry = result.get(row.smtpAccountId)
+    if (entry) entry.sendsToday = row._count
+  }
+  for (const row of hourCounts) {
+    const entry = result.get(row.smtpAccountId)
+    if (entry) entry.sendsThisHour = row._count
+  }
+  return result
+}
+
+export async function toPublicSmtpAccounts(
+  accounts: SmtpAccount[],
+  limitSettings: SendLimitSettings
+): Promise<PublicSmtpAccount[]> {
+  if (accounts.length === 0) return []
+  const sendCountsMap = await getBatchAccountSendCounts(accounts.map(a => a.id), limitSettings)
+  return accounts.map(account => {
+    const { sendsToday, sendsThisHour } = sendCountsMap.get(account.id) ?? { sendsToday: 0, sendsThisHour: 0 }
+    const warmupDay = getWarmupDay(account)
+    const warmupDailyCap = account.warmupEnabled && warmupDay
+      ? getWarmupDailyCap(account, limitSettings.dailyCap)
+      : null
+    return {
+      id: account.id,
+      email: account.email,
+      label: account.label,
+      enabled: account.enabled,
+      sortOrder: account.sortOrder,
+      hasPassword: !!account.password,
+      exhaustedUntil: account.exhaustedUntil?.toISOString() ?? null,
+      exhaustReason: account.exhaustReason,
+      sendsToday,
+      sendsThisHour,
+      warmupDay,
+      warmupDailyCap,
+      warmupEnabled: account.warmupEnabled,
+      lastInboxCheckedAt: account.lastInboxCheckedAt?.toISOString() ?? null,
+      lastInboxError: account.lastInboxError,
+    }
+  })
 }
 
 export async function toPublicSmtpAccount(
   account: SmtpAccount,
   limitSettings: SendLimitSettings
 ): Promise<PublicSmtpAccount> {
-  const { sendsToday, sendsThisHour } = await getAccountSendCounts(account.id, limitSettings)
-  const warmupDay = getWarmupDay(account)
-  const warmupDailyCap = account.warmupEnabled && warmupDay
-    ? getWarmupDailyCap(account, limitSettings.dailyCap)
-    : null
-  return {
-    id: account.id,
-    email: account.email,
-    label: account.label,
-    enabled: account.enabled,
-    sortOrder: account.sortOrder,
-    hasPassword: !!account.password,
-    exhaustedUntil: account.exhaustedUntil?.toISOString() ?? null,
-    exhaustReason: account.exhaustReason,
-    sendsToday,
-    sendsThisHour,
-    warmupDay,
-    warmupDailyCap,
-    warmupEnabled: account.warmupEnabled,
-    lastInboxCheckedAt: account.lastInboxCheckedAt?.toISOString() ?? null,
-    lastInboxError: account.lastInboxError,
-  }
+  const results = await toPublicSmtpAccounts([account], limitSettings)
+  return results[0]
 }
 
 export async function pickBestAvailableAccount(

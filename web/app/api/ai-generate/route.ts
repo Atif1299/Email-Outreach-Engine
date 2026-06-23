@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { renderEmailForLead } from '@/lib/ai'
 import { ensureSettings } from '@/lib/settings'
+import { loadPreviousStepContext } from '@/lib/preview-context'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -26,23 +27,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Lead or campaign not found' }, { status: 404 })
     }
 
+    const provider = (settings.aiProvider || 'openai') as 'openai' | 'gemini'
+    const apiKey = provider === 'gemini' ? settings.geminiApiKey : settings.openaiKey
+    const hasValidKey = !!apiKey?.trim()
+
+    if (!hasValidKey) {
+      const providerName = provider === 'gemini' ? 'Gemini' : 'OpenAI'
+      return NextResponse.json(
+        { error: `${providerName} API key required — add it in Connect before bulk AI generate` },
+        { status: 400 }
+      )
+    }
+
     const step = campaign.steps.find((s) => s.stepOrder === (stepOrder || 1))
     if (!step) {
       return NextResponse.json({ error: 'Step not found' }, { status: 404 })
     }
 
     const leadData = JSON.parse(lead.dataJson)
-
-    let previous
-    if ((stepOrder || 1) > 1) {
-      const prevSend = await prisma.leadSend.findFirst({
-        where: { leadId, campaignId, stepOrder: (stepOrder || 1) - 1, error: null },
-        orderBy: { sentAt: 'desc' },
-      })
-      if (prevSend) {
-        previous = { subject: prevSend.subject, body_snippet: prevSend.bodySnippet }
-      }
-    }
+    const previous = await loadPreviousStepContext(leadId, campaignId, stepOrder || 1)
+    const model = provider === 'gemini' ? settings.geminiModel : settings.openaiModel
 
     const result = await renderEmailForLead({
       leadData: { ...leadData, email: lead.email },
@@ -56,8 +60,9 @@ export async function POST(request: NextRequest) {
       bodyTemplate: step.bodyTemplate,
       stepOrder: stepOrder || 1,
       previous,
-      model: settings.openaiModel,
-      apiKey: settings.openaiKey || '',
+      model,
+      apiKey: apiKey || '',
+      provider,
       useAi: true,
       fewShotStep1Json: campaign.fewShotStep1Json,
       fewShotStep2Json: campaign.fewShotStep2Json,
@@ -66,6 +71,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result)
   } catch (error) {
     console.error('AI generation failed:', error)
-    return NextResponse.json({ error: 'AI generation failed' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'AI generation failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
