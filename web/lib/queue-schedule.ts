@@ -1,4 +1,5 @@
 import prisma from '@/lib/db'
+import { loadDoNotContactLeadIds } from '@/lib/lead-suppression'
 
 export const ENGAGED_STATUSES = ['replied', 'unsubscribed'] as const
 
@@ -42,17 +43,16 @@ export function computeDueJobs(
   steps: CampaignStepLike[],
   lastSendsByLead: Map<number, { stepOrder: number; sentAt: Date }>,
   skippedLeadIds: Set<number>,
-  engagedLeadIds: Set<number> = new Set(),
+  blockedLeadIds: Set<number> = new Set(),
   now = Date.now()
 ): DueJob[] {
   if (steps.length === 0) return []
 
   const sorted = [...steps].sort((a, b) => a.stepOrder - b.stepOrder)
-  const maxStep = getMaxStepOrder(sorted)
   const jobs: DueJob[] = []
 
   for (const leadId of leadIds) {
-    if (skippedLeadIds.has(leadId) || engagedLeadIds.has(leadId)) continue
+    if (skippedLeadIds.has(leadId) || blockedLeadIds.has(leadId)) continue
 
     const last = lastSendsByLead.get(leadId)
     const nextStepOrder = getNextStepOrder(last ?? null)
@@ -75,7 +75,12 @@ export async function loadLastSuccessfulSends(
   if (leadIds.length === 0) return map
 
   const sends = await prisma.leadSend.findMany({
-    where: { campaignId, leadId: { in: leadIds }, error: null },
+    where: {
+      campaignId,
+      leadId: { in: leadIds },
+      error: null,
+      subject: { notIn: ['SENDING', 'FAILED'] },
+    },
     orderBy: { stepOrder: 'desc' },
     select: { leadId: true, stepOrder: true, sentAt: true },
   })
@@ -94,10 +99,10 @@ export function getLeadQueueStatus(
   steps: CampaignStepLike[],
   lastSend: { stepOrder: number; sentAt: Date } | null,
   skippedLeadIds: Set<number>,
-  engagedLeadIds: Set<number> = new Set(),
+  blockedLeadIds: Set<number> = new Set(),
   now = Date.now()
 ): 'completing' | 'waiting_delay' | 'sending' | 'skipped' {
-  if (skippedLeadIds.has(leadId) || engagedLeadIds.has(leadId)) return 'skipped'
+  if (skippedLeadIds.has(leadId) || blockedLeadIds.has(leadId)) return 'skipped'
 
   const nextStepOrder = getNextStepOrder(lastSend)
   const nextStep = steps.find((s) => s.stepOrder === nextStepOrder)
@@ -128,6 +133,18 @@ export async function loadEngagedLeadIds(
   return engaged
 }
 
+/** Campaign engagement + global do-not-contact. */
+export async function loadBlockedLeadIds(
+  campaignId: number,
+  leadIds: number[]
+): Promise<Set<number>> {
+  const [engaged, dnc] = await Promise.all([
+    loadEngagedLeadIds(campaignId, leadIds),
+    loadDoNotContactLeadIds(leadIds),
+  ])
+  return new Set([...engaged, ...dnc])
+}
+
 export async function getIncompleteLeadIds(
   campaignId: number,
   validLeadIds: number[],
@@ -135,14 +152,34 @@ export async function getIncompleteLeadIds(
 ): Promise<number[]> {
   if (validLeadIds.length === 0) return []
 
-  const [lastSends, engaged] = await Promise.all([
+  const [lastSends, blocked] = await Promise.all([
     loadLastSuccessfulSends(campaignId, validLeadIds),
-    loadEngagedLeadIds(campaignId, validLeadIds),
+    loadBlockedLeadIds(campaignId, validLeadIds),
   ])
 
   return validLeadIds.filter((leadId) => {
-    if (engaged.has(leadId)) return false
+    if (blocked.has(leadId)) return false
     const last = lastSends.get(leadId)
     return getNextStepOrder(last ?? null) <= maxStepOrder
   })
+}
+
+export async function countPriorCampaignContacts(
+  campaignId: number,
+  leadIds: number[]
+): Promise<number> {
+  if (leadIds.length === 0) return 0
+
+  const rows = await prisma.leadSend.findMany({
+    where: {
+      leadId: { in: leadIds },
+      campaignId: { not: campaignId },
+      error: null,
+      subject: { notIn: ['SENDING', 'FAILED'] },
+    },
+    select: { leadId: true },
+    distinct: ['leadId'],
+  })
+
+  return rows.length
 }

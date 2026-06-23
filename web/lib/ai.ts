@@ -1,6 +1,11 @@
 import OpenAI from 'openai'
 import fs from 'fs'
 import path from 'path'
+import {
+  buildBodyOutputLanguageRule,
+  buildSubjectOutputLanguageRule,
+  normalizeOutputLanguage,
+} from '@/lib/output-languages'
 
 interface LeadData {
   email?: string
@@ -20,10 +25,12 @@ interface PreviousSend {
 
 interface GenerateEmailOptions {
   leadData: LeadData
+  leadId?: number
   pitchBlock: string
   senderInfo: string
   aiVoice: string
   aiInstructions: string
+  outputLanguage?: string
   subjectTemplate: string
   bodyTemplate: string
   stepOrder?: number
@@ -55,6 +62,48 @@ const PITCH_STUB_FOR_AI =
 
 function loadPromptFile(name: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'prompts', 'cold_outreach', name), 'utf8').trim()
+}
+
+function loadFewShotExamples(stepOrder: number): string[] {
+  const subdir = stepOrder > 1 ? 'few_shot/step2' : 'few_shot/step1'
+  const dirPath = path.join(process.cwd(), 'prompts', 'cold_outreach', subdir)
+  if (!fs.existsSync(dirPath)) {
+    try {
+      return [loadPromptFile('few_shot_example.txt')]
+    } catch {
+      return []
+    }
+  }
+  const examples = fs
+    .readdirSync(dirPath)
+    .filter((f) => f.endsWith('.txt'))
+    .sort()
+    .map((f) => fs.readFileSync(path.join(dirPath, f), 'utf8').trim())
+    .filter(Boolean)
+  if (examples.length === 0) {
+    try {
+      return [loadPromptFile('few_shot_example.txt')]
+    } catch {
+      return []
+    }
+  }
+  return examples
+}
+
+/** Stable pick so the same lead + step always gets the same style bucket. */
+function pickFewShotForLead(examples: string[], opts: { leadId?: number; email?: string; stepOrder: number }): string {
+  if (examples.length === 0) return ''
+  if (examples.length === 1) return examples[0]
+
+  let key = opts.leadId ?? 0
+  if (!key) {
+    const email = (opts.email || '').trim().toLowerCase()
+    for (let i = 0; i < email.length; i++) {
+      key = (key * 31 + email.charCodeAt(i)) | 0
+    }
+  }
+  key = Math.abs((key * 31 + opts.stepOrder) | 0)
+  return examples[key % examples.length]
 }
 
 function fillTemplate(template: string, vars: Record<string, string>): string {
@@ -208,6 +257,7 @@ function signOffRules(senderInfo: string): string {
 
 function buildBodyMessages(opts: {
   lead: LeadData
+  leadId?: number
   pitchBlock: string
   senderInfo: string
   previous?: PreviousSend
@@ -215,19 +265,27 @@ function buildBodyMessages(opts: {
   mergedPreview: string
   aiVoice: string
   aiInstructions: string
+  outputLanguage?: string
 }) {
-  const fewShot = loadPromptFile('few_shot_example.txt')
+  const examples = loadFewShotExamples(opts.stepOrder)
+  const fewShot = pickFewShotForLead(examples, {
+    leadId: opts.leadId,
+    email: opts.lead.email,
+    stepOrder: opts.stepOrder,
+  })
   const systemTpl = loadPromptFile('body_system.md')
   const userTpl = loadPromptFile('body_user.md')
 
   const pitch = parsePitchBlock(opts.pitchBlock)
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
+  const lang = normalizeOutputLanguage(opts.outputLanguage)
 
   const system = fillTemplate(systemTpl, {
     VOICE_RULES: voiceRules(opts.aiVoice),
     FEW_SHOT_EXAMPLE: fewShot,
     SIGN_OFF_RULES: signOffRules(opts.senderInfo),
     AI_INSTRUCTIONS: instructions,
+    OUTPUT_LANGUAGE_RULE: buildBodyOutputLanguageRule(lang),
   })
 
   const leadWithEmail = { ...opts.lead, email: opts.lead.email ?? '' }
@@ -265,13 +323,16 @@ function buildSubjectMessages(opts: {
   bodySoFar: string
   aiVoice: string
   aiInstructions: string
+  outputLanguage?: string
 }) {
   const systemTpl = loadPromptFile('subject_system.md')
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
+  const lang = normalizeOutputLanguage(opts.outputLanguage)
 
   const system = fillTemplate(systemTpl, {
     VOICE_RULES: voiceRules(opts.aiVoice),
     AI_INSTRUCTIONS: instructions,
+    OUTPUT_LANGUAGE_RULE: buildSubjectOutputLanguageRule(lang),
   })
 
   const user = `Merged subject template (starting point only — rewrite substantially):
@@ -346,6 +407,7 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
 
   const baseMessages = buildBodyMessages({
     lead: leadFull,
+    leadId: opts.leadId,
     pitchBlock: opts.pitchBlock,
     senderInfo: opts.senderInfo,
     previous: opts.previous,
@@ -353,9 +415,10 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
     mergedPreview: mergeTags(opts.bodyTemplate, leadFull, PITCH_STUB_FOR_AI, opts.senderInfo),
     aiVoice: opts.aiVoice || 'founder',
     aiInstructions: opts.aiInstructions || '',
+    outputLanguage: opts.outputLanguage,
   })
 
-  const request = async (messages: typeof baseMessages) => {
+  const request = async (messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) => {
     const response = await openai.chat.completions.create({
       model: opts.model,
       messages,
@@ -393,6 +456,7 @@ export async function generateSubjectLine(opts: GenerateEmailOptions & { bodySoF
     bodySoFar: opts.bodySoFar,
     aiVoice: opts.aiVoice || 'founder',
     aiInstructions: opts.aiInstructions || '',
+    outputLanguage: opts.outputLanguage,
   })
 
   const response = await openai.chat.completions.create({
@@ -424,10 +488,12 @@ export async function generateEmailWithAI(opts: GenerateEmailOptions): Promise<{
 
 export async function renderEmailForLead(opts: {
   leadData: LeadData
+  leadId?: number
   pitchBlock: string
   senderInfo: string
   aiVoice: string
   aiInstructions: string
+  outputLanguage?: string
   subjectTemplate: string
   bodyTemplate: string
   stepOrder: number
@@ -448,6 +514,7 @@ export async function renderEmailForLead(opts: {
           senderInfo: opts.senderInfo,
           aiVoice: opts.aiVoice,
           aiInstructions: opts.aiInstructions,
+          outputLanguage: opts.outputLanguage,
           subjectTemplate: opts.subjectTemplate,
           bodyTemplate: opts.bodyTemplate,
           stepOrder: opts.stepOrder,
@@ -467,10 +534,12 @@ export async function renderEmailForLead(opts: {
   if (opts.useAi && opts.apiKey) {
     const result = await generateEmailWithAI({
       leadData: opts.leadData,
+      leadId: opts.leadId,
       pitchBlock: opts.pitchBlock,
       senderInfo: opts.senderInfo,
       aiVoice: opts.aiVoice,
       aiInstructions: opts.aiInstructions,
+      outputLanguage: opts.outputLanguage,
       subjectTemplate: opts.subjectTemplate,
       bodyTemplate: opts.bodyTemplate,
       stepOrder: opts.stepOrder,

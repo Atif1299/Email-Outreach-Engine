@@ -14,6 +14,8 @@ interface Props {
 }
 
 interface CampaignStats {
+  campaignName?: string
+  isActiveCampaign?: boolean
   sendable: number
   blocked: number
   stepCount: number
@@ -23,6 +25,19 @@ interface CampaignStats {
   dueNow: number
   repliedCount?: number
   unsubscribedCount?: number
+  priorCampaignContacts?: number
+  doNotContactExcluded?: number
+  step1?: { sent: number; eligible: number }
+  followUps?: { sent: number; due: number; eligible: number }
+  waitingOnDelay?: number
+  notStarted?: number
+  blockedEngaged?: number
+  stepBreakdown?: Array<{
+    stepOrder: number
+    label: string
+    sent: number
+    due: number
+  }>
 }
 
 interface InboxStatus {
@@ -62,9 +77,10 @@ export default function StepQueue({
     const interval = setInterval(() => {
       loadQueueStatus()
       loadInboxStatus()
+      if (queueCampaignId) loadCampaignStats()
     }, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [queueCampaignId])
 
   // Browser tick only when cron worker is disabled (local dev)
   useEffect(() => {
@@ -90,12 +106,15 @@ export default function StepQueue({
                 await new Promise((r) => setTimeout(r, 1500))
                 continue
               }
+              await loadCampaignStats()
               break
             }
             if (data.status === 'cap_reached') {
               await new Promise((r) => setTimeout(r, 5000))
+              await loadCampaignStats()
               continue
             }
+            await loadCampaignStats()
           } catch (e) {
             console.error('Queue tick error:', e)
             break
@@ -160,9 +179,18 @@ export default function StepQueue({
         body: JSON.stringify({ campaignId: queueCampaignId }),
       })
       if (res.ok) {
+        const data = await res.json()
         await loadQueueStatus()
+        await loadCampaignStats()
         startFlash.flashDone()
-        showQueueHint('Started', 'ok')
+        const parts: string[] = ['Started']
+        if (data.warnings?.priorCampaignContacts > 0) {
+          parts.push(`${data.warnings.priorCampaignContacts} already emailed in other campaigns`)
+        }
+        if (data.warnings?.doNotContactExcluded > 0) {
+          parts.push(`${data.warnings.doNotContactExcluded} on do-not-contact list`)
+        }
+        showQueueHint(parts.join(' · '), data.warnings?.priorCampaignContacts > 0 ? 'warn' : 'ok')
       } else {
         const err = await res.json()
         startFlash.flashError()
@@ -223,41 +251,137 @@ export default function StepQueue({
             : (USE_CRON_WORKER ? 'Running (background)' : 'Running'))
           : 'Stopped'
 
+  const selectedCampaign = campaigns.find((c) => c.id === queueCampaignId)
+  const showProgress = queueCampaignId && stats && (queueStatus.running || stats.emailsSent > 0)
+
   return (
     <section className="step-view">
       <div className="step-body">
         <div className="queue-dashboard">
           {/* Stats Cards */}
           <div className="queue-stats">
-            <div className="stat-card">
-              <div className="stat-value">{queueStatus.sendsToday}</div>
-              <div className="stat-label">Sent Today</div>
+            <div className="queue-stats-row">
+              <div className="stat-card">
+                <div className="stat-value">{queueStatus.sendsToday}</div>
+                <div className="stat-label">Sent Today</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{queueStatus.sendsThisHour ?? 0}</div>
+                <div className="stat-label">Sent This Hour</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{queueStatus.processedInSession}</div>
+                <div className="stat-label">Sent (this run)</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{stats?.dueNow || 0}</div>
+                <div className="stat-label">Due Now</div>
+              </div>
             </div>
-            <div className="stat-card">
-              <div className="stat-value">{queueStatus.sendsThisHour ?? 0}</div>
-              <div className="stat-label">Sent This Hour</div>
+            <div className="queue-stats-row">
+              <div className="stat-card">
+                <div className="stat-value">{queueStatus.failedInSession}</div>
+                <div className="stat-label">SMTP errors (run)</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{queueStatus.failedSendsToday ?? 0}</div>
+                <div className="stat-label">Failed in DB (today)</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{stats?.repliedCount ?? inboxStatus?.repliedCount ?? 0}</div>
+                <div className="stat-label">Replied</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{stats?.unsubscribedCount ?? inboxStatus?.unsubscribedCount ?? 0}</div>
+                <div className="stat-label">Unsubscribed</div>
+              </div>
             </div>
-            <div className="stat-card">
-              <div className="stat-value">{queueStatus.processedInSession}</div>
-              <div className="stat-label">Processed</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{queueStatus.failedInSession}</div>
-              <div className="stat-label">Failed</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{stats?.dueNow || 0}</div>
-              <div className="stat-label">Due Now</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{stats?.repliedCount ?? inboxStatus?.repliedCount ?? 0}</div>
-              <div className="stat-label">Replied</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{stats?.unsubscribedCount ?? inboxStatus?.unsubscribedCount ?? 0}</div>
-              <div className="stat-label">Unsubscribed</div>
-            </div>
+            {queueStatus.stepTypeCapsEnabled ? (
+              <div className="queue-stats-row queue-stats-row--caps">
+                <div className="stat-card">
+                  <div className="stat-value">
+                    {queueStatus.step1SentToday ?? 0}/{queueStatus.dailyStep1Cap ?? 0}
+                  </div>
+                  <div className="stat-label">Step 1 Today</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">
+                    {queueStatus.followUpSentToday ?? 0}/{queueStatus.dailyFollowUpCap ?? 0}
+                  </div>
+                  <div className="stat-label">Follow-ups Today</div>
+                </div>
+              </div>
+            ) : null}
           </div>
+
+          {/* Campaign Progress */}
+          {showProgress && stats && (
+            <div className="campaign-progress-panel">
+              <div className="campaign-progress-header">
+                <span className="campaign-progress-name">
+                  {stats.campaignName || selectedCampaign?.name || 'Campaign'}
+                </span>
+                {stats.isActiveCampaign && queueStatus.running && (
+                  <span className="status-pill status-pill--running">Active</span>
+                )}
+              </div>
+
+              <div className="campaign-progress-summary">
+                <span>{stats.leadsCompleted} completed</span>
+                <span>{stats.notStarted ?? 0} not started</span>
+                <span>{stats.waitingOnDelay ?? 0} waiting on delay</span>
+                <span>{stats.blockedEngaged ?? 0} blocked (replied/unsub)</span>
+              </div>
+
+              <div className="campaign-progress-steps">
+                <div className="campaign-progress-row">
+                  <span className="campaign-progress-label">Step 1</span>
+                  <div className="campaign-progress-bar-wrap">
+                    <div
+                      className="campaign-progress-bar campaign-progress-bar--step1"
+                      style={{
+                        width: `${Math.min(100, ((stats.step1?.sent ?? 0) / Math.max(stats.step1?.eligible ?? 1, 1)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="campaign-progress-count">
+                    {stats.step1?.sent ?? 0} / {stats.step1?.eligible ?? stats.sendable} sent
+                  </span>
+                </div>
+
+                {(stats.stepCount ?? 0) > 1 && (
+                  <div className="campaign-progress-row">
+                    <span className="campaign-progress-label">Follow-ups</span>
+                    <div className="campaign-progress-bar-wrap">
+                      <div
+                        className="campaign-progress-bar campaign-progress-bar--followup"
+                        style={{
+                          width: `${Math.min(100, ((stats.followUps?.sent ?? 0) / Math.max(stats.followUps?.eligible ?? 1, 1)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="campaign-progress-count">
+                      {stats.followUps?.sent ?? 0} sent · {stats.followUps?.due ?? 0} due ·{' '}
+                      {stats.followUps?.eligible ?? 0} in sequence
+                    </span>
+                  </div>
+                )}
+
+                {stats.stepBreakdown && stats.stepBreakdown.length > 1 && (
+                  <div className="campaign-progress-breakdown">
+                    {stats.stepBreakdown.map((step) => (
+                      <div key={step.stepOrder} className="campaign-progress-step-detail">
+                        <span>{step.label}</span>
+                        <span>
+                          {step.sent} sent{step.due > 0 ? ` · ${step.due} due` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Queue Status Panel */}
           <div className="queue-status-panel">
@@ -304,6 +428,20 @@ export default function StepQueue({
               </button>
             </div>
 
+            {stats && (stats.priorCampaignContacts ?? 0) > 0 && (
+              <p className="queue-cron-hint inline-hint inline-hint--warn">
+                {stats.priorCampaignContacts} lead{stats.priorCampaignContacts === 1 ? '' : 's'} in this campaign
+                were already emailed in another campaign — they may receive overlapping sequences.
+              </p>
+            )}
+
+            {stats && (stats.doNotContactExcluded ?? 0) > 0 && (
+              <p className="queue-cron-hint">
+                {stats.doNotContactExcluded} lead{stats.doNotContactExcluded === 1 ? '' : 's'} excluded
+                (do not contact).
+              </p>
+            )}
+
             {USE_CRON_WORKER && queueStatus.running && !queueStatus.paused && (
               <p className="queue-cron-hint">
                 Background worker active — queue continues when this tab is closed.
@@ -320,6 +458,49 @@ export default function StepQueue({
               </p>
             )}
 
+            {queueStatus.smtpAccounts && queueStatus.smtpAccounts.length > 0 && (
+              <div className="smtp-queue-accounts">
+                <div className="smtp-queue-accounts-title">
+                  Inboxes ({queueStatus.enabledSmtpCount ?? queueStatus.smtpAccounts.filter((a) => a.enabled).length} active)
+                  {queueStatus.perInboxDailyCap
+                    ? ` · ${queueStatus.perInboxDailyCap}/day each · ${queueStatus.perInboxHourlyCap}/hr each`
+                    : ''}
+                </div>
+                <div className="smtp-queue-accounts-grid">
+                  {queueStatus.smtpAccounts.filter((a) => a.enabled).map((account) => {
+                    const cooling = account.exhaustedUntil && new Date(account.exhaustedUntil) > new Date()
+                    const effectiveDailyCap = account.warmupDailyCap ?? queueStatus.perInboxDailyCap
+                    const atCap =
+                      effectiveDailyCap != null &&
+                      account.sendsToday >= effectiveDailyCap
+                    return (
+                      <div
+                        key={account.id}
+                        className={`smtp-queue-account${cooling ? ' smtp-queue-account--cooling' : atCap ? ' smtp-queue-account--capped' : ''}`}
+                      >
+                        <div className="smtp-queue-account-email">
+                          {account.label || account.email}
+                        </div>
+                        <div className="smtp-queue-account-stats">
+                          {account.sendsToday}/{account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—'} today ·{' '}
+                          {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
+                          {account.warmupDay != null && account.warmupDay <= 7 && (
+                            <> · warmup day {account.warmupDay}</>
+                          )}
+                        </div>
+                        {cooling && (
+                          <div className="smtp-queue-account-status">Cooling down</div>
+                        )}
+                        {!cooling && atCap && (
+                          <div className="smtp-queue-account-status">Daily cap</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {queueStatus.currentJob && (
               <div className="current-job">
                 <span className="job-label">Current:</span>
@@ -332,6 +513,12 @@ export default function StepQueue({
                       : `Step ${queueStatus.currentJob.stepOrder}`}
                 </span>
               </div>
+            )}
+
+            {queueStatus.failedInSession > 0 && queueStatus.processedInSession > 0 && (
+              <p className="queue-cron-hint">
+                {queueStatus.sendsToday} emails delivered today (check Gmail Sent). SMTP errors are retry/rate-limit attempts — not unsent emails.
+              </p>
             )}
 
             {queueStatus.lastError && (
@@ -360,6 +547,7 @@ export default function StepQueue({
                 Sent: {stats.emailsSent} · Started: {stats.leadsStarted} · Completed: {stats.leadsCompleted}
                 {(stats.repliedCount ?? 0) > 0 ? ` · Replied: ${stats.repliedCount}` : ''}
                 {(stats.unsubscribedCount ?? 0) > 0 ? ` · Unsubscribed: ${stats.unsubscribedCount}` : ''}
+                {(stats.waitingOnDelay ?? 0) > 0 ? ` · Waiting: ${stats.waitingOnDelay}` : ''}
               </div>
             )}
           </div>

@@ -44,6 +44,7 @@ Write the email body for this lead.
 1. Pain hook references {{LEAD_COMPANY}} or {{LEAD_INDUSTRY}}.
 2. Product bridge = one sentence: pitch Solution applied to {{LEAD_INDUSTRY}} / {{LEAD_TITLE}} workflow.
 3. CTA from pitch Offer, not a generic "quick call to explore AI".
-4. No generic agency paragraphs. No second solution paragraph.
+4. Product bridge from pitch Solution only — not from the few-shot example or email-tool tropes unless pitch says so.
+5. No generic agency paragraphs. No second solution paragraph.
 
 Produce only the email body text. No subject line. No commentary.

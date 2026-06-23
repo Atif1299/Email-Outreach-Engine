@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/db'
 
 export async function DELETE(
@@ -29,11 +30,19 @@ export async function DELETE(
       }
     }
 
+    const existing = await prisma.importBatch.findUnique({ where: { id }, select: { id: true } })
+    if (!existing) {
+      return NextResponse.json({ success: true, alreadyDeleted: true })
+    }
+
     await prisma.lead.deleteMany({ where: { importBatchId: id } })
     await prisma.importBatch.delete({ where: { id } })
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      return NextResponse.json({ success: true, alreadyDeleted: true })
+    }
     console.error('Failed to delete batch:', error)
     return NextResponse.json({ error: 'Failed to delete batch' }, { status: 500 })
   }

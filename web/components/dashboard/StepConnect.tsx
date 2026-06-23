@@ -2,11 +2,48 @@
 
 import { useState, useEffect } from 'react'
 import type { Settings } from '@/app/dashboard/page'
-import { useButtonFlash } from '@/components/dashboard/useStepFeedback'
+import { useButtonFlash, InlineHint } from '@/components/dashboard/useStepFeedback'
+
+interface SmtpAccountForm {
+  id?: number
+  email: string
+  password: string
+  label: string
+  enabled: boolean
+  hasPassword?: boolean
+}
 
 interface Props {
   settings: Settings | null
   onSettingsSaved: () => void
+}
+
+function emptyAccount(): SmtpAccountForm {
+  return { email: '', password: '', label: '', enabled: true }
+}
+
+function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
+  if (!settings) return [emptyAccount()]
+  if (settings.smtpAccounts?.length) {
+    return settings.smtpAccounts.map((a) => ({
+      id: a.id,
+      email: a.email,
+      password: '',
+      label: a.label,
+      enabled: a.enabled,
+      hasPassword: a.hasPassword,
+    }))
+  }
+  if (settings.smtpUser || settings.smtpFromEmail) {
+    return [{
+      email: settings.smtpFromEmail || settings.smtpUser,
+      password: '',
+      label: 'Primary',
+      enabled: true,
+      hasPassword: settings.hasSmtpPassword,
+    }]
+  }
+  return [emptyAccount()]
 }
 
 export default function StepConnect({ settings, onSettingsSaved }: Props) {
@@ -14,26 +51,53 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
     smtpHost: settings?.smtpHost || 'smtp.gmail.com',
     smtpPort: settings?.smtpPort || 465,
     smtpSecure: settings?.smtpSecure ?? true,
-    smtpUser: settings?.smtpUser || '',
-    smtpPassword: '',
     smtpFromName: settings?.smtpFromName || '',
-    smtpFromEmail: settings?.smtpFromEmail || '',
     sendDelayMinMs: settings?.sendDelayMinMs || 60000,
     sendDelayMaxMs: settings?.sendDelayMaxMs || 240000,
-    dailyCap: settings?.dailyCap || 300,
-    hourlyCap: settings?.hourlyCap || 25,
+    dailyCap: settings?.dailyCap || 50,
+    dailyStep1Cap: settings?.dailyStep1Cap || 0,
+    dailyFollowUpCap: settings?.dailyFollowUpCap || 0,
+    hourlyCap: settings?.hourlyCap || 15,
     sendTimezone: settings?.sendTimezone || 'Asia/Karachi',
-    sendStartHour: settings?.sendStartHour ?? 12,
+    sendStartHour: settings?.sendStartHour ?? 10,
     openaiKey: '',
     openaiModel: settings?.openaiModel || 'gpt-4o-mini',
     verificationProvider: settings?.verificationProvider || 'none',
     verificationApiKey: '',
   })
+  const [smtpAccounts, setSmtpAccounts] = useState<SmtpAccountForm[]>(accountsFromSettings(settings))
   const [testEmail, setTestEmail] = useState('')
+  const [testingAccountIndex, setTestingAccountIndex] = useState<number | null>(null)
+  const [testHints, setTestHints] = useState<Record<number, { text: string; type: 'ok' | 'err' }>>({})
   const saveFlash = useButtonFlash()
-  const testFlash = useButtonFlash()
   const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const enabledInboxCount = Math.max(
+    smtpAccounts.filter((a) => a.enabled && a.email.trim()).length,
+    1
+  )
+  const totalDailyCapacity = formData.dailyCap * enabledInboxCount
+  const splitCapsEnabled = formData.dailyStep1Cap > 0 || formData.dailyFollowUpCap > 0
+  const capsSum = formData.dailyStep1Cap + formData.dailyFollowUpCap
+  const capsOverCapacity = splitCapsEnabled && capsSum > totalDailyCapacity
+  const suggestedStep1Cap = Math.max(1, totalDailyCapacity - formData.dailyFollowUpCap)
+  const suggestedFollowUpCap = Math.max(1, totalDailyCapacity - formData.dailyStep1Cap)
+
+  function validateCaps(): string | null {
+    if (formData.dailyStep1Cap < 0 || formData.dailyFollowUpCap < 0) {
+      return 'Step caps must be non-negative'
+    }
+    if (formData.dailyStep1Cap > 0 || formData.dailyFollowUpCap > 0) {
+      if (formData.dailyStep1Cap <= 0 || formData.dailyFollowUpCap <= 0) {
+        return 'Set both Step 1 and follow-up daily caps, or leave both at 0 to disable split'
+      }
+      if (capsSum > totalDailyCapacity) {
+        return `Step 1 cap (${formData.dailyStep1Cap}) + follow-up cap (${formData.dailyFollowUpCap}) cannot exceed ${totalDailyCapacity}/day (${formData.dailyCap} per inbox × ${enabledInboxCount} inbox(es))`
+      }
+    }
+    return null
+  }
 
   useEffect(() => {
     if (!settings) return
@@ -42,69 +106,143 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
       smtpHost: settings.smtpHost,
       smtpPort: settings.smtpPort,
       smtpSecure: settings.smtpSecure,
-      smtpUser: settings.smtpUser,
       smtpFromName: settings.smtpFromName,
-      smtpFromEmail: settings.smtpFromEmail,
       sendDelayMinMs: settings.sendDelayMinMs,
       sendDelayMaxMs: settings.sendDelayMaxMs,
       dailyCap: settings.dailyCap,
+      dailyStep1Cap: settings.dailyStep1Cap,
+      dailyFollowUpCap: settings.dailyFollowUpCap,
       hourlyCap: settings.hourlyCap,
       sendTimezone: settings.sendTimezone,
       sendStartHour: settings.sendStartHour,
       openaiModel: settings.openaiModel,
       verificationProvider: settings.verificationProvider,
     }))
+    setSmtpAccounts(accountsFromSettings(settings))
   }, [settings])
 
+  function updateAccount(index: number, patch: Partial<SmtpAccountForm>) {
+    setSmtpAccounts((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)))
+  }
+
+  function addAccount() {
+    setSmtpAccounts((prev) => [...prev, emptyAccount()])
+  }
+
+  function removeAccount(index: number) {
+    setSmtpAccounts((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
+  }
+
   async function handleSave() {
+    const clientError = validateCaps()
+    if (clientError) {
+      setSaveError(clientError)
+      saveFlash.flashError()
+      return
+    }
+
     setSaving(true)
+    setSaveError(null)
     try {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          smtpAccounts: smtpAccounts
+            .filter((a) => a.email.trim())
+            .map((a, index) => ({
+              id: a.id,
+              email: a.email.trim(),
+              password: a.password || undefined,
+              label: a.label,
+              enabled: a.enabled,
+              sortOrder: index,
+            })),
+        }),
       })
       if (res.ok) {
         saveFlash.flashDone()
-        setFormData((prev) => ({ ...prev, smtpPassword: '', openaiKey: '', verificationApiKey: '' }))
+        setSaveError(null)
+        setFormData((prev) => ({ ...prev, openaiKey: '', verificationApiKey: '' }))
+        setSmtpAccounts((prev) => prev.map((a) => ({ ...a, password: '' })))
         onSettingsSaved()
       } else {
         const err = await res.json()
+        setSaveError(err.error || 'Failed to save settings')
         saveFlash.flashError()
-        console.error(err.error || 'Failed to save')
       }
-    } catch (e) {
+    } catch {
+      setSaveError('Failed to save settings')
       saveFlash.flashError()
     }
     setSaving(false)
   }
 
-  async function handleTest() {
-    setTesting(true)
+  async function handleTestAccount(index: number) {
+    const account = smtpAccounts[index]
+    setTestingAccountIndex(index)
     try {
       const res = await fetch('/api/settings/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, testEmail }),
+        body: JSON.stringify({
+          smtpHost: formData.smtpHost,
+          smtpPort: formData.smtpPort,
+          smtpSecure: formData.smtpSecure,
+          smtpFromName: formData.smtpFromName,
+          email: account.email,
+          password: account.password || undefined,
+          accountId: account.id,
+          testEmail,
+        }),
       })
       if (res.ok) {
-        testFlash.flashDone()
+        setTestHints((prev) => ({ ...prev, [index]: { text: 'Test sent', type: 'ok' } }))
+        setTimeout(() => {
+          setTestHints((prev) => {
+            const next = { ...prev }
+            delete next[index]
+            return next
+          })
+        }, 3500)
       } else {
-        testFlash.flashError()
+        const err = await res.json()
+        setTestHints((prev) => ({
+          ...prev,
+          [index]: { text: err.error || 'SMTP test failed', type: 'err' },
+        }))
+        setTimeout(() => {
+          setTestHints((prev) => {
+            const next = { ...prev }
+            delete next[index]
+            return next
+          })
+        }, 5000)
       }
-    } catch (e) {
-      testFlash.flashError()
+    } catch {
+      setTestHints((prev) => ({ ...prev, [index]: { text: 'SMTP test failed', type: 'err' } }))
+      setTimeout(() => {
+        setTestHints((prev) => {
+          const next = { ...prev }
+          delete next[index]
+          return next
+        })
+      }, 5000)
     }
-    setTesting(false)
+    setTestingAccountIndex(null)
   }
 
   return (
     <section className="step-view">
       <div className="step-body">
         <div className="settings-panel">
-          {/* SMTP Settings */}
           <div className="settings-section">
             <div className="section-title">SMTP Settings</div>
+            <p className="section-hint">
+              Add multiple Gmail accounts. The same From Name is used for all; each inbox sends from its own email.
+              Hourly and daily caps apply <strong>per inbox</strong>.
+            </p>
             <div className="settings-grid">
               <div className="field">
                 <label className="mini-label">Host</label>
@@ -113,7 +251,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                   className="input"
                   placeholder="smtp.gmail.com"
                   value={formData.smtpHost}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpHost: e.target.value }))}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, smtpHost: e.target.value }))}
                 />
               </div>
               <div className="field field-mini">
@@ -122,7 +260,9 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                   type="number"
                   className="input"
                   value={formData.smtpPort}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpPort: parseInt(e.target.value) || 465 }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, smtpPort: parseInt(e.target.value) || 465 }))
+                  }
                 />
               </div>
               <div className="field field-mini">
@@ -130,66 +270,131 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 <select
                   className="input"
                   value={formData.smtpSecure ? 'true' : 'false'}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpSecure: e.target.value === 'true' }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, smtpSecure: e.target.value === 'true' }))
+                  }
                 >
                   <option value="true">Yes</option>
                   <option value="false">No</option>
                 </select>
               </div>
               <div className="field">
-                <label className="mini-label">Username (email)</label>
+                <label className="mini-label">From Name (shared)</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="you@gmail.com"
-                  value={formData.smtpUser}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpUser: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label className="mini-label">Password / App Password</label>
-                <input
-                  type="password"
-                  className="input"
-                  placeholder={settings?.hasSmtpPassword ? '•••••••• (saved — leave blank to keep)' : '••••••••'}
-                  value={formData.smtpPassword}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpPassword: e.target.value }))}
-                />
-              </div>
-            </div>
-            <p className="settings-hint">
-              Reply detection uses the same Gmail App Password via IMAP. Enable IMAP in Gmail
-              (Settings → See all settings → Forwarding and POP/IMAP).
-            </p>
-            <div className="settings-grid" style={{ marginTop: '0.75rem' }}>
-              <div className="field">
-                <label className="mini-label">From Name</label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Your Company"
+                  placeholder="VisionsCraft AI"
                   value={formData.smtpFromName}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpFromName: e.target.value }))}
-                />
-              </div>
-              <div className="field">
-                <label className="mini-label">From Email</label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="hello@company.com"
-                  value={formData.smtpFromEmail}
-                  onChange={(e) => setFormData(prev => ({ ...prev, smtpFromEmail: e.target.value }))}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, smtpFromName: e.target.value }))}
                 />
               </div>
             </div>
+
+            <div className="smtp-accounts-list">
+              {smtpAccounts.map((account, index) => (
+                <div key={account.id ?? `new-${index}`} className="smtp-account-card">
+                  <div className="smtp-account-card-header">
+                    <span className="smtp-account-card-title">
+                      Inbox {index + 1}
+                      {account.label ? ` — ${account.label}` : ''}
+                    </span>
+                    <label className="smtp-account-enabled">
+                      <input
+                        type="checkbox"
+                        checked={account.enabled}
+                        onChange={(e) => updateAccount(index, { enabled: e.target.checked })}
+                      />
+                      Enabled
+                    </label>
+                  </div>
+                  <div className="settings-grid">
+                    <div className="field">
+                      <label className="mini-label">Gmail address</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="you@gmail.com"
+                        value={account.email}
+                        onChange={(e) => updateAccount(index, { email: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label className="mini-label">App Password</label>
+                      <input
+                        type="password"
+                        className="input"
+                        placeholder={
+                          account.hasPassword
+                            ? '•••••••• (saved — leave blank to keep)'
+                            : '••••••••'
+                        }
+                        value={account.password}
+                        onChange={(e) => updateAccount(index, { password: e.target.value })}
+                      />
+                    </div>
+                    <div className="field field-mini">
+                      <label className="mini-label">Label (optional)</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="e.g. Inbox 2"
+                        value={account.label}
+                        onChange={(e) => updateAccount(index, { label: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="smtp-account-card-actions">
+                    <input
+                      type="text"
+                      className="input smtp-test-email-input"
+                      placeholder="Test email address..."
+                      value={testEmail}
+                      onChange={(e) => setTestEmail(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      disabled={testingAccountIndex === index || !account.email.trim()}
+                      onClick={() => handleTestAccount(index)}
+                    >
+                      {testingAccountIndex === index
+                        ? 'Testing...'
+                        : testHints[index]?.type === 'ok'
+                          ? 'Sent'
+                          : testHints[index]?.type === 'err'
+                            ? 'Failed'
+                            : 'Test'}
+                    </button>
+                    <InlineHint hint={testHints[index] ?? null} />
+                    {smtpAccounts.length > 1 && (
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={() => removeAccount(index)}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button type="button" className="btn btn-outline" onClick={addAccount} style={{ marginTop: '0.75rem' }}>
+              + Add Gmail Inbox
+            </button>
+
+            <p className="settings-hint">
+              Reply detection polls every enabled inbox via IMAP (same App Password). Enable IMAP in each Gmail account.
+            </p>
           </div>
 
-          {/* Send Settings */}
           <div className="settings-section">
             <div className="section-title">Send Settings</div>
             <p className="section-hint">
-              Defaults: 1–3 min between sends (sometimes up to 4 min), max 25/hr, max 300/day, resumes at midday.
+              Caps are <strong>per inbox</strong>. With {enabledInboxCount} inbox(es): up to{' '}
+              {totalDailyCapacity}/day and{' '}
+              {(formData.hourlyCap * enabledInboxCount)}/hr combined. Rotate automatically; switch on rate limits.
             </p>
             <div className="settings-grid">
               <div className="field field-mini">
@@ -223,27 +428,59 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 />
               </div>
               <div className="field field-mini">
-                <label className="mini-label">Hourly cap</label>
+                <label className="mini-label">Hourly cap (per inbox)</label>
                 <input
                   type="number"
                   className="input"
                   min={1}
                   value={formData.hourlyCap}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, hourlyCap: parseInt(e.target.value) || 25 }))
+                    setFormData((prev) => ({ ...prev, hourlyCap: parseInt(e.target.value) || 15 }))
                   }
                 />
               </div>
               <div className="field field-mini">
-                <label className="mini-label">Daily cap</label>
+                <label className="mini-label">Daily cap (per inbox)</label>
                 <input
                   type="number"
                   className="input"
                   min={1}
                   value={formData.dailyCap}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, dailyCap: parseInt(e.target.value) || 300 }))
+                    setFormData((prev) => ({ ...prev, dailyCap: parseInt(e.target.value) || 50 }))
                   }
+                />
+              </div>
+              <div className="field field-mini">
+                <label className="mini-label">Step 1 cap (global/day)</label>
+                <input
+                  type="number"
+                  className="input"
+                  min={0}
+                  value={formData.dailyStep1Cap}
+                  onChange={(e) => {
+                    setSaveError(null)
+                    setFormData((prev) => ({
+                      ...prev,
+                      dailyStep1Cap: parseInt(e.target.value) || 0,
+                    }))
+                  }}
+                />
+              </div>
+              <div className="field field-mini">
+                <label className="mini-label">Follow-up cap (global/day)</label>
+                <input
+                  type="number"
+                  className="input"
+                  min={0}
+                  value={formData.dailyFollowUpCap}
+                  onChange={(e) => {
+                    setSaveError(null)
+                    setFormData((prev) => ({
+                      ...prev,
+                      dailyFollowUpCap: parseInt(e.target.value) || 0,
+                    }))
+                  }}
                 />
               </div>
               <div className="field field-mini">
@@ -257,7 +494,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                   onChange={(e) =>
                     setFormData((prev) => ({
                       ...prev,
-                      sendStartHour: Math.min(23, Math.max(0, parseInt(e.target.value) || 12)),
+                      sendStartHour: Math.min(23, Math.max(0, parseInt(e.target.value) || 10)),
                     }))
                   }
                 />
@@ -275,9 +512,19 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 />
               </div>
             </div>
+            <p className="settings-hint">
+              Step 1 + follow-up caps are optional (set both, or leave both at 0). When enabled, they must not exceed{' '}
+              {totalDailyCapacity}/day combined ({formData.dailyStep1Cap}+{formData.dailyFollowUpCap}={capsSum}).
+              Follow-ups send before new Step 1 emails when both are due.
+            </p>
+            {capsOverCapacity && (
+              <p className="settings-hint inline-hint inline-hint--err" role="alert">
+                Combined caps exceed {totalDailyCapacity}/day. Example split: {suggestedStep1Cap} Step 1 +{' '}
+                {suggestedFollowUpCap} follow-up = {totalDailyCapacity}.
+              </p>
+            )}
           </div>
 
-          {/* OpenAI Settings */}
           <div className="settings-section">
             <div className="section-title">OpenAI (Optional)</div>
             <div className="settings-grid">
@@ -288,7 +535,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                   className="input"
                   placeholder={settings?.hasOpenaiKey ? 'sk-... (saved — leave blank to keep)' : 'sk-...'}
                   value={formData.openaiKey}
-                  onChange={(e) => setFormData(prev => ({ ...prev, openaiKey: e.target.value }))}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, openaiKey: e.target.value }))}
                 />
               </div>
               <div className="field field-mini">
@@ -296,17 +543,15 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 <select
                   className="input"
                   value={formData.openaiModel}
-                  onChange={(e) => setFormData(prev => ({ ...prev, openaiModel: e.target.value }))}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, openaiModel: e.target.value }))}
                 >
                   <option value="gpt-4o-mini">GPT-4o Mini</option>
                   <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
                 </select>
-                <p className="field-hint">Default is GPT-4o Mini. Switch to GPT-4.1 Mini if you prefer.</p>
               </div>
             </div>
           </div>
 
-          {/* Email Verification */}
           <div className="settings-section">
             <div className="section-title">Email Verification (Optional)</div>
             <div className="settings-grid">
@@ -315,7 +560,9 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 <select
                   className="input"
                   value={formData.verificationProvider}
-                  onChange={(e) => setFormData(prev => ({ ...prev, verificationProvider: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, verificationProvider: e.target.value }))
+                  }
                 >
                   <option value="none">Local only</option>
                   <option value="zerobounce">ZeroBounce</option>
@@ -326,9 +573,13 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                 <input
                   type="password"
                   className="input"
-                  placeholder={settings?.hasVerificationApiKey ? 'Saved — leave blank to keep' : 'ZeroBounce API key...'}
+                  placeholder={
+                    settings?.hasVerificationApiKey ? 'Saved — leave blank to keep' : 'ZeroBounce API key...'
+                  }
                   value={formData.verificationApiKey}
-                  onChange={(e) => setFormData(prev => ({ ...prev, verificationApiKey: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, verificationApiKey: e.target.value }))
+                  }
                 />
               </div>
             </div>
@@ -339,34 +590,12 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
       <footer className="step-footer">
         <div className="footer-left" />
         <div className="footer-right">
-          <input
-            type="text"
-            className="input"
-            style={{ width: '200px' }}
-            placeholder="Test email address..."
-            value={testEmail}
-            onChange={(e) => setTestEmail(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={handleTest}
-            disabled={testing}
-          >
-            {testing
-              ? 'Testing...'
-              : testFlash.flash === 'done'
-                ? 'Connected'
-                : testFlash.flash === 'error'
-                  ? 'Failed'
-                  : 'Test SMTP'}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={handleSave}
-            disabled={saving}
-          >
+          {saveError && (
+            <span className="inline-hint inline-hint--err" role="alert" style={{ marginRight: '0.75rem' }}>
+              {saveError}
+            </span>
+          )}
+          <button type="button" className="btn primary" onClick={handleSave} disabled={saving}>
             {saving
               ? 'Saving...'
               : saveFlash.flash === 'done'

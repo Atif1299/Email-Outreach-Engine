@@ -133,5 +133,49 @@ export async function verifyEmailZeroBounce(email: string, apiKey: string): Prom
 }
 
 export function isHardBounceError(msg: string): boolean {
-  return /550|552|553|554|user unknown|mailbox not found|address rejected|recipient rejected|no such user|does not exist|invalid recipient|account disabled|mailbox unavailable/i.test(msg || '')
+  const m = msg || ''
+  if (getDeliveryHaltError(m)) return false
+  return /550|552|553|554|user unknown|mailbox not found|address rejected|recipient rejected|no such user|does not exist|invalid recipient|account disabled|mailbox unavailable|address not found/i.test(m)
+}
+
+export type DeliveryHaltReason = 'gmail_rate_limit' | 'message_blocked' | 'auth_failure'
+
+export function getDeliveryHaltError(
+  msg: string
+): { reason: DeliveryHaltReason; userMessage: string } | null {
+  const m = msg || ''
+
+  if (/EAUTH|535|invalid credentials|authentication failed|badcredentials/i.test(m)) {
+    return {
+      reason: 'auth_failure',
+      userMessage:
+        'Paused: SMTP authentication failed — check Gmail App Password in Connect settings.',
+    }
+  }
+
+  if (
+    /reached a limit|sending limit|too many mails|too many messages|rate limit exceeded|daily user sending limit|daily sending limit|quota exceeded|421 |452 |454 |4\.7\./i.test(
+      m
+    )
+  ) {
+    return {
+      reason: 'gmail_rate_limit',
+      userMessage:
+        'Paused: Gmail sending limit hit — wait ~24 hours, lower daily cap to 50–80, increase delays, then Resume.',
+    }
+  }
+
+  if (
+    /message blocked|has been blocked|blocked by google|spam detected|not accepted for policy|policy restriction|suspicious activity|5\.7\.1|5\.7\.0|mail relay denied|unusual sending activity/i.test(
+      m
+    )
+  ) {
+    return {
+      reason: 'message_blocked',
+      userMessage:
+        'Paused: Gmail blocked outbound mail (spam/policy) — wait ~24 hours, verify leads, lower volume, then Resume slowly.',
+    }
+  }
+
+  return null
 }

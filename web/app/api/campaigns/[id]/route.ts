@@ -27,6 +27,7 @@ export async function GET(
       senderInfo: campaign.senderInfo,
       aiVoice: campaign.aiVoice,
       aiInstructions: campaign.aiInstructions,
+      outputLanguage: campaign.outputLanguage,
       createdAt: campaign.createdAt.toISOString(),
       targetImportBatchIds: campaign.targetBatches.map(tb => tb.importBatchId),
       steps: campaign.steps.map(s => ({
@@ -60,6 +61,7 @@ export async function PUT(
         senderInfo: body.senderInfo,
         aiVoice: body.aiVoice,
         aiInstructions: body.aiInstructions,
+        outputLanguage: body.outputLanguage || 'en',
       }
     })
 

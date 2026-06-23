@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
+import prisma from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
-import { assertGmailSmtpUsername, enhanceSmtpError, resolveSmtpUser } from '@/lib/smtp'
+import { assertGmailSmtpUsername, enhanceSmtpError } from '@/lib/smtp'
+import { createAccountTransporter } from '@/lib/smtp-accounts'
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
@@ -10,40 +12,50 @@ export async function POST(request: NextRequest) {
   const host = (body.smtpHost || settings.smtpHost).trim()
   const port = body.smtpPort ?? settings.smtpPort
   const secure = body.smtpSecure ?? settings.smtpSecure
-  const user = resolveSmtpUser(body.smtpUser, settings.smtpUser, body.smtpFromEmail, settings.smtpFromEmail)
-  const password = (body.smtpPassword || settings.smtpPassword || '').trim()
+  const fromName = body.smtpFromName || settings.smtpFromName
+
+  let user = (body.email || body.smtpUser || '').trim().toLowerCase()
+  let password = (body.password || body.smtpPassword || '').trim()
+
+  if (body.accountId) {
+    const account = await prisma.smtpAccount.findUnique({ where: { id: body.accountId } })
+    if (!account) {
+      return NextResponse.json({ error: 'SMTP account not found' }, { status: 404 })
+    }
+    user = account.email
+    if (!password) password = account.password
+  }
 
   try {
     if (!user) {
       return NextResponse.json(
-        { error: 'SMTP Username is required. For Gmail, use your full email address (e.g. you@gmail.com).' },
+        { error: 'SMTP email is required. For Gmail, use your full email address.' },
         { status: 400 }
       )
     }
 
     if (!password) {
       return NextResponse.json(
-        { error: 'SMTP password not configured. Enter your App Password and click Save Settings first.' },
+        { error: 'App Password required. Enter it and save, or pass password in the test request.' },
         { status: 400 }
       )
     }
 
-    assertGmailSmtpUsername({ host, user, fromEmail: body.smtpFromEmail || settings.smtpFromEmail })
+    assertGmailSmtpUsername({ host, user })
 
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass: password },
-    })
+    const transporter = body.accountId
+      ? createAccountTransporter({ id: body.accountId, email: user, password }, settings)
+      : nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: { user, pass: password },
+      })
 
     await transporter.verify()
 
     if (body.testEmail?.includes('@')) {
-      const fromName = body.smtpFromName || settings.smtpFromName
-      const fromEmail = body.smtpFromEmail || settings.smtpFromEmail
-      const from = fromName && fromEmail ? `${fromName} <${fromEmail}>` : fromEmail || user
-
+      const from = fromName ? `${fromName} <${user}>` : user
       await transporter.sendMail({
         from,
         to: body.testEmail.trim(),

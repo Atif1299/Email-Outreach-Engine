@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
+import { ensureSettings } from '@/lib/settings'
+import { toSendLimitSettings } from '@/lib/send-limits'
+import { ensureSmtpAccounts, toPublicSmtpAccount } from '@/lib/smtp-accounts'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,6 +12,12 @@ export async function GET(request: NextRequest) {
     const campaignId = parseInt(searchParams.get('campaignId') || '0')
 
     const syncState = await prisma.inboxSyncState.findUnique({ where: { id: 1 } })
+    const settings = await ensureSettings()
+    const limitSettings = toSendLimitSettings(settings)
+    const accounts = await ensureSmtpAccounts()
+    const smtpAccounts = await Promise.all(
+      accounts.map((account) => toPublicSmtpAccount(account, limitSettings))
+    )
 
     let repliedCount = 0
     let unsubscribedCount = 0
@@ -29,6 +38,7 @@ export async function GET(request: NextRequest) {
       lastError: syncState?.lastError ?? null,
       repliedCount,
       unsubscribedCount,
+      smtpAccounts,
     })
   } catch (error) {
     console.error('Failed to get inbox status:', error)

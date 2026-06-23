@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Campaign, CampaignStep, Batch } from '@/app/dashboard/page'
+import { OUTPUT_LANGUAGES } from '@/lib/output-languages'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -128,6 +129,7 @@ export default function StepCampaign({
   const saveFlash = useButtonFlash()
   const { hint: pitchHint, showHint: showPitchHint } = useInlineHint()
   const { hint: listHint, showHint: showListHint } = useInlineHint()
+  const savedOutputLanguageRef = useRef<string | null>(null)
 
   const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId)
 
@@ -145,6 +147,7 @@ export default function StepCampaign({
       if (res.ok) {
         const data = await res.json()
         setDraft(data)
+        savedOutputLanguageRef.current = data.outputLanguage || 'en'
       }
     } catch (e) {
       console.error('Failed to load campaign:', e)
@@ -160,6 +163,7 @@ export default function StepCampaign({
       senderInfo: DEFAULT_SENDER_SIGNOFF,
       aiVoice: 'founder',
       aiInstructions: '',
+      outputLanguage: 'en',
       createdAt: new Date().toISOString(),
       targetImportBatchIds: leadsBatchFilter ? [leadsBatchFilter] : [],
       steps: [defaultStep(1)],
@@ -184,6 +188,7 @@ export default function StepCampaign({
         if (!draft.id) {
           onSelectCampaign(saved.id)
         }
+        savedOutputLanguageRef.current = saved.outputLanguage || draft.outputLanguage || 'en'
         onCampaignsChanged()
         saveFlash.flashDone()
       } else {
@@ -398,7 +403,29 @@ export default function StepCampaign({
                         <option value="company">Company (We help…)</option>
                       </select>
                     </div>
+                    <div className="field field-mini">
+                      <label className="mini-label">Email language</label>
+                      <select
+                        className="input"
+                        value={draft.outputLanguage || 'en'}
+                        onChange={(e) => setDraft({ ...draft, outputLanguage: e.target.value })}
+                      >
+                        {OUTPUT_LANGUAGES.map((lang) => (
+                          <option key={lang.code} value={lang.code}>
+                            {lang.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
+                  <p className="field-hint" style={{ marginTop: '-0.35rem', marginBottom: '0.65rem' }}>
+                    Pitch in English; AI writes the email in the language you pick above.
+                    {draft.id > 0 &&
+                      savedOutputLanguageRef.current != null &&
+                      (draft.outputLanguage || 'en') !== savedOutputLanguageRef.current && (
+                        <> Regenerate previews — saved overrides are still in the previous language.</>
+                      )}
+                  </p>
 
                   <div className="field field-grow">
                     <div className="pitch-block-head">

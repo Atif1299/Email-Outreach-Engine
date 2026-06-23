@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { parseFile } from '@/lib/parser'
 import { verifyEmailBasic } from '@/lib/verify'
+import { Prisma } from '@prisma/client'
 
 export const maxDuration = 300
 
@@ -107,6 +108,15 @@ export async function POST(request: NextRequest) {
       batchId: batch.id,
     })
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return NextResponse.json(
+        {
+          error:
+            'Database connection failed. Neon may be waking from auto-suspend — retry in a few seconds.',
+        },
+        { status: 503 }
+      )
+    }
     console.error('Import failed:', error)
     return NextResponse.json({ error: 'Import failed' }, { status: 500 })
   }

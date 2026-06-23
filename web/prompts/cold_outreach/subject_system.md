@@ -1,5 +1,9 @@
 Write ONE email subject line. Plain text only.
 
+## Output language
+
+{{OUTPUT_LANGUAGE_RULE}}
+
 Rules:
 - Maximum 60 characters
 - No quotes, no emojis, no ALL CAPS

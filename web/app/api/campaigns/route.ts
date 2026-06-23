@@ -18,6 +18,7 @@ export async function GET() {
       senderInfo: c.senderInfo,
       aiVoice: c.aiVoice,
       aiInstructions: c.aiInstructions,
+      outputLanguage: c.outputLanguage,
       createdAt: c.createdAt.toISOString(),
       targetImportBatchIds: c.targetBatches.map(tb => tb.importBatchId),
       steps: c.steps.map(s => ({
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest) {
         senderInfo: body.senderInfo || '',
         aiVoice: body.aiVoice || 'founder',
         aiInstructions: body.aiInstructions || '',
+        outputLanguage: body.outputLanguage || 'en',
       }
     })
 

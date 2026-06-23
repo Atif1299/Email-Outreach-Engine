@@ -8,24 +8,43 @@ import StepCampaign from '@/components/dashboard/StepCampaign'
 import StepPreview from '@/components/dashboard/StepPreview'
 import StepQueue from '@/components/dashboard/StepQueue'
 
+export interface SmtpAccountStatus {
+  id: number
+  email: string
+  label: string
+  enabled: boolean
+  sendsToday: number
+  sendsThisHour: number
+  exhaustedUntil: string | null
+  exhaustReason: string | null
+  lastInboxCheckedAt: string | null
+  lastInboxError: string | null
+  warmupDay?: number | null
+  warmupDailyCap?: number | null
+}
+
 export interface Settings {
   smtpHost: string
   smtpPort: number
   smtpSecure: boolean
-  smtpUser: string
   smtpFromName: string
-  smtpFromEmail: string
   sendDelayMinMs: number
   sendDelayMaxMs: number
   dailyCap: number
+  dailyStep1Cap: number
+  dailyFollowUpCap: number
   hourlyCap: number
   sendTimezone: string
   sendStartHour: number
   openaiModel: string
   verificationProvider: string
-  hasSmtpPassword: boolean
   hasOpenaiKey: boolean
   hasVerificationApiKey: boolean
+  smtpAccounts: SmtpAccountStatus[]
+  /** @deprecated legacy fields */
+  smtpUser?: string
+  smtpFromEmail?: string
+  hasSmtpPassword?: boolean
 }
 
 export interface Batch {
@@ -43,6 +62,7 @@ export interface Lead {
   createdAt: string
   verificationStatus: string
   verificationReason: string | null
+  doNotContact?: boolean
   engagementStatus?: string | null
 }
 
@@ -53,6 +73,7 @@ export interface Campaign {
   senderInfo: string
   aiVoice: string
   aiInstructions: string
+  outputLanguage: string
   createdAt: string
   targetImportBatchIds: number[]
   steps: CampaignStep[]
@@ -70,17 +91,28 @@ export interface CampaignStep {
 export interface QueueStatus {
   running: boolean
   paused: boolean
+  activeCampaignId?: number | null
   lastError: string | null
   processedInSession: number
   failedInSession: number
   sendsToday: number
+  failedSendsToday?: number
   dailyCap?: number
   hourlyCap?: number
+  perInboxDailyCap?: number
+  perInboxHourlyCap?: number
+  enabledSmtpCount?: number
+  smtpAccounts?: SmtpAccountStatus[]
   sendsThisHour?: number
   capReached?: boolean
   hourCapReached?: boolean
   outsideWindow?: boolean
   useCronWorker?: boolean
+  stepTypeCapsEnabled?: boolean
+  step1SentToday?: number
+  followUpSentToday?: number
+  dailyStep1Cap?: number
+  dailyFollowUpCap?: number
   currentJob: {
     leadId: number
     stepOrder: number | null
@@ -107,6 +139,7 @@ export default function DashboardPage() {
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<number>>(new Set())
   const [leadsBatchFilter, setLeadsBatchFilter] = useState<number | null>(null)
   const [leadsStatusFilter, setLeadsStatusFilter] = useState('')
+  const [leadsEngagementFilter, setLeadsEngagementFilter] = useState('')
   const [leadsSearch, setLeadsSearch] = useState('')
   const [leadsReloadToken, setLeadsReloadToken] = useState(0)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -144,6 +177,7 @@ export default function DashboardPage() {
     const params = new URLSearchParams()
     if (leadsBatchFilter != null) params.set('batchId', String(leadsBatchFilter))
     if (leadsStatusFilter) params.set('status', leadsStatusFilter)
+    if (leadsEngagementFilter) params.set('engagement', leadsEngagementFilter)
     if (leadsSearch) params.set('search', leadsSearch)
 
     const controller = new AbortController()
@@ -163,7 +197,7 @@ export default function DashboardPage() {
       })()
 
     return () => controller.abort()
-  }, [currentStep, leadsBatchFilter, leadsStatusFilter, leadsSearch, leadsReloadToken])
+  }, [currentStep, leadsBatchFilter, leadsStatusFilter, leadsEngagementFilter, leadsSearch, leadsReloadToken])
 
   async function loadSettings() {
     try {
@@ -290,10 +324,12 @@ export default function DashboardPage() {
                 selectedLeadIds={selectedLeadIds}
                 leadsBatchFilter={leadsBatchFilter}
                 leadsStatusFilter={leadsStatusFilter}
+                leadsEngagementFilter={leadsEngagementFilter}
                 leadsSearch={leadsSearch}
                 onSelectLeadIds={setSelectedLeadIds}
                 onBatchFilterChange={setLeadsBatchFilter}
                 onStatusFilterChange={setLeadsStatusFilter}
+                onEngagementFilterChange={setLeadsEngagementFilter}
                 onSearchChange={setLeadsSearch}
                 onLeadsChanged={refreshLeads}
                 onNextStep={() => setCurrentStep(3)}

@@ -66,10 +66,12 @@ export async function GET(request: NextRequest) {
 
     const result = await renderEmailForLead({
       leadData: { ...leadData, email: lead.email },
+      leadId,
       pitchBlock: campaign.pitchBlock,
       senderInfo: campaign.senderInfo,
       aiVoice: campaign.aiVoice,
       aiInstructions: campaign.aiInstructions,
+      outputLanguage: campaign.outputLanguage,
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
       stepOrder,

@@ -1,8 +1,11 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import prisma from '@/lib/db'
-import { ensureSettings } from '@/lib/settings'
-import { resolveSmtpUser } from '@/lib/smtp'
+import { getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
+import {
+  markLeadDoNotContact,
+  removeLeadFromQueue,
+} from '@/lib/lead-suppression'
 
 const IMAP_HOST = 'imap.gmail.com'
 const IMAP_PORT = 993
@@ -16,8 +19,10 @@ export interface InboxSyncResult {
   matched: number
   replied: number
   unsubscribed: number
+  bounces: number
   skipped: number
   errors: string[]
+  accountsSynced: number
 }
 
 function normalizeEmail(raw: string): string | null {
@@ -26,6 +31,43 @@ function normalizeEmail(raw: string): string | null {
   const email = (angle ? angle[1] : trimmed).trim()
   if (!email.includes('@')) return null
   return email
+}
+
+function isBounceSender(fromEmail: string, subject: string): boolean {
+  const from = fromEmail.toLowerCase()
+  const subj = subject.toLowerCase()
+  return (
+    from.includes('mailer-daemon') ||
+    from.includes('postmaster') ||
+    from.includes('mail delivery subsystem') ||
+    subj.includes('delivery status notification') ||
+    subj.includes('undeliverable') ||
+    subj.includes('delivery failure') ||
+    subj.includes('returned mail') ||
+    subj.includes('failure notice')
+  )
+}
+
+function extractBouncedRecipient(body: string): string | null {
+  const headerMatch = body.match(
+    /(?:original-recipient|final-recipient|to):\s*(?:rfc822;)?\s*<?([^\s<>]+@[^\s<>]+)>?/i
+  )
+  if (headerMatch?.[1]) return normalizeEmail(headerMatch[1])
+
+  const emails = body.match(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi) || []
+  for (const raw of emails) {
+    const email = normalizeEmail(raw)
+    if (!email) continue
+    if (
+      email.includes('mailer-daemon') ||
+      email.includes('postmaster') ||
+      email.includes('googlemail.com')
+    ) {
+      continue
+    }
+    return email
+  }
+  return null
 }
 
 function isAutoReply(headers: Map<string, string>, subject: string): boolean {
@@ -42,9 +84,7 @@ function isAutoReply(headers: Map<string, string>, subject: string): boolean {
     subj.includes('out of office') ||
     subj.includes('automatic reply') ||
     subj.includes('auto-reply') ||
-    subj.includes('autoreply') ||
-    subj.startsWith('undeliverable') ||
-    subj.startsWith('delivery status notification')
+    subj.includes('autoreply')
   ) {
     return true
   }
@@ -54,12 +94,27 @@ function isAutoReply(headers: Map<string, string>, subject: string): boolean {
 
 function isUnsubscribeRequest(body: string): boolean {
   const text = body.toLowerCase()
-  return (
-    /\bstop\b/.test(text) ||
-    /\bunsubscribe\b/.test(text) ||
-    /\bremove me\b/.test(text) ||
-    /\bopt[\s-]?out\b/.test(text)
-  )
+  const patterns = [
+    /\bunsubscribe\b/,
+    /\bremove me\b/,
+    /\bopt[\s-]?out\b/,
+    /\btake me off\b/,
+    /\bplease remove\b/,
+    /\bdon'?t contact\b/,
+    /\bdo not contact\b/,
+    /\bnot interested\b/,
+    /\bno longer interested\b/,
+    /\bdejar de enviar\b/,
+    /\bdarme de baja\b/,
+    /\bno me contactes\b/,
+    /\bdésabonner\b/,
+    /\bse désabonner\b/,
+    /\bne plus me contacter\b/,
+    /\bdisiscrivermi\b/,
+    /\brimuovermi\b/,
+    /\bnon contattarmi\b/,
+  ]
+  return patterns.some((re) => re.test(text))
 }
 
 function extractMessageIds(headerValue: string | undefined): string[] {
@@ -68,25 +123,38 @@ function extractMessageIds(headerValue: string | undefined): string[] {
   return matches.map((m) => m.toLowerCase())
 }
 
-async function removeLeadFromQueue(leadId: number) {
-  const state = await prisma.queueState.findUnique({ where: { id: 1 } })
-  if (!state) return
+async function processBounce(
+  parsed: ParsedMail
+): Promise<{ handled: boolean; skipped: boolean }> {
+  const fromRaw = parsed.from?.value?.[0]?.address || parsed.from?.text || ''
+  const fromEmail = normalizeEmail(fromRaw)
+  const subject = parsed.subject || ''
+  const bodyText = (parsed.text || parsed.html?.replace(/<[^>]+>/g, ' ') || '').slice(0, 8000)
 
-  const activeIds: number[] = JSON.parse(state.activeLeadIdsJson || '[]')
-  if (!activeIds.includes(leadId)) return
+  if (!fromEmail || !isBounceSender(fromEmail, subject)) {
+    return { handled: false, skipped: true }
+  }
 
-  const skippedIds: number[] = JSON.parse(state.skippedLeadIdsJson || '[]')
-  const newActive = activeIds.filter((id) => id !== leadId)
-  const newSkipped = skippedIds.includes(leadId) ? skippedIds : [...skippedIds, leadId]
+  const bouncedEmail = extractBouncedRecipient(bodyText)
+  if (!bouncedEmail) return { handled: true, skipped: true }
 
-  await prisma.queueState.update({
-    where: { id: 1 },
+  const lead = await prisma.lead.findFirst({
+    where: { email: { equals: bouncedEmail, mode: 'insensitive' } },
+    select: { id: true },
+  })
+  if (!lead) return { handled: true, skipped: true }
+
+  await prisma.lead.update({
+    where: { id: lead.id },
     data: {
-      activeLeadIdsJson: JSON.stringify(newActive),
-      skippedLeadIdsJson: JSON.stringify(newSkipped),
-      updatedAt: new Date(),
+      verificationStatus: 'invalid',
+      verificationReason: 'inbox_bounce',
     },
   })
+  await markLeadDoNotContact(lead.id, 'bounce', 'imap')
+  await removeLeadFromQueue(lead.id)
+
+  return { handled: true, skipped: false }
 }
 
 async function resolveCampaignForReply(
@@ -200,6 +268,10 @@ async function recordEngagement(opts: {
     },
   })
 
+  if (opts.status === 'unsubscribed') {
+    await markLeadDoNotContact(opts.leadId, 'unsubscribed', 'imap')
+  }
+
   await removeLeadFromQueue(opts.leadId)
   return true
 }
@@ -226,9 +298,11 @@ async function processMessage(
 
   const lead = await prisma.lead.findFirst({
     where: { email: { equals: fromEmail, mode: 'insensitive' } },
-    select: { id: true },
+    select: { id: true, doNotContact: true },
   })
-  if (!lead) return { matched: false, replied: false, unsubscribed: false, skipped: true }
+  if (!lead || lead.doNotContact) {
+    return { matched: false, replied: false, unsubscribed: false, skipped: true }
+  }
 
   const replyDate = parsed.date || new Date()
   const inReplyToIds = [
@@ -266,57 +340,31 @@ async function processMessage(
   }
 }
 
-export async function syncInbox(): Promise<InboxSyncResult> {
-  const result: InboxSyncResult = {
-    checked: 0,
-    matched: 0,
-    replied: 0,
-    unsubscribed: 0,
-    skipped: 0,
-    errors: [],
-  }
-
-  const settings = await ensureSettings()
-  const imapUser = resolveSmtpUser(settings.smtpUser, '', settings.smtpFromEmail, '')
-  const imapPass = settings.smtpPassword
-
-  if (!imapUser || !imapPass) {
-    result.errors.push('SMTP credentials not configured — inbox sync skipped')
-    await prisma.inboxSyncState.upsert({
-      where: { id: 1 },
-      create: { id: 1, lastError: result.errors[0] },
-      update: { lastError: result.errors[0], updatedAt: new Date() },
-    })
-    return result
-  }
-
-  const syncState = await prisma.inboxSyncState.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
-    update: {},
-  })
-
+async function syncAccountInbox(
+  account: { id: number; email: string; password: string; lastInboxCheckedAt: Date | null },
+  queueState: { activeCampaignId: number | null; activeLeadIdsJson: string } | null,
+  result: InboxSyncResult
+) {
   const sinceDate =
-    syncState.lastCheckedAt ||
+    account.lastInboxCheckedAt ||
     new Date(Date.now() - DEFAULT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
-
-  const queueState = await prisma.queueState.findUnique({ where: { id: 1 } })
 
   const client = new ImapFlow({
     host: IMAP_HOST,
     port: IMAP_PORT,
     secure: true,
-    auth: { user: imapUser, pass: imapPass },
+    auth: { user: account.email, pass: account.password },
     logger: false,
   })
+
+  const accountErrors: string[] = []
 
   try {
     await client.connect()
     const lock = await client.getMailboxLock('INBOX')
 
     try {
-      const searchSince = sinceDate
-      const uids = await client.search({ since: searchSince }, { uid: true })
+      const uids = await client.search({ since: sinceDate }, { uid: true })
       const uidList = Array.isArray(uids) ? uids : []
       const toProcess = uidList.slice(-MAX_MESSAGES_PER_RUN)
 
@@ -327,6 +375,14 @@ export async function syncInbox(): Promise<InboxSyncResult> {
           if (!raw?.source) continue
 
           const parsed = await simpleParser(raw.source)
+
+          const bounce = await processBounce(parsed)
+          if (bounce.handled) {
+            if (!bounce.skipped) result.bounces++
+            else result.skipped++
+            continue
+          }
+
           const outcome = await processMessage(parsed, queueState)
           if (outcome.matched) result.matched++
           if (outcome.replied) result.replied++
@@ -334,7 +390,7 @@ export async function syncInbox(): Promise<InboxSyncResult> {
           if (outcome.skipped) result.skipped++
         } catch (msgErr) {
           const msg = msgErr instanceof Error ? msgErr.message : 'Message parse failed'
-          result.errors.push(`UID ${uid}: ${msg}`)
+          accountErrors.push(`UID ${uid}: ${msg}`)
         }
       }
     } finally {
@@ -343,21 +399,20 @@ export async function syncInbox(): Promise<InboxSyncResult> {
 
     await client.logout()
 
-    await prisma.inboxSyncState.update({
-      where: { id: 1 },
+    await prisma.smtpAccount.update({
+      where: { id: account.id },
       data: {
-        lastCheckedAt: new Date(),
-        lastError: result.errors.length > 0 ? result.errors.slice(0, 3).join('; ') : null,
-        updatedAt: new Date(),
+        lastInboxCheckedAt: new Date(),
+        lastInboxError: accountErrors.length > 0 ? accountErrors.slice(0, 3).join('; ') : null,
       },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'IMAP sync failed'
-    result.errors.push(message)
-    await prisma.inboxSyncState.upsert({
-      where: { id: 1 },
-      create: { id: 1, lastError: message },
-      update: { lastError: message, updatedAt: new Date() },
+    accountErrors.push(message)
+    result.errors.push(`${account.email}: ${message}`)
+    await prisma.smtpAccount.update({
+      where: { id: account.id },
+      data: { lastInboxError: message },
     })
     try {
       await client.logout()
@@ -365,6 +420,51 @@ export async function syncInbox(): Promise<InboxSyncResult> {
       // ignore logout errors
     }
   }
+}
+
+export async function syncInbox(): Promise<InboxSyncResult> {
+  const result: InboxSyncResult = {
+    checked: 0,
+    matched: 0,
+    replied: 0,
+    unsubscribed: 0,
+    bounces: 0,
+    skipped: 0,
+    errors: [],
+    accountsSynced: 0,
+  }
+
+  const accounts = await getEnabledSmtpAccounts()
+  if (accounts.length === 0) {
+    result.errors.push('No SMTP accounts configured — inbox sync skipped')
+    await prisma.inboxSyncState.upsert({
+      where: { id: 1 },
+      create: { id: 1, lastError: result.errors[0] },
+      update: { lastError: result.errors[0], updatedAt: new Date() },
+    })
+    return result
+  }
+
+  const queueState = await prisma.queueState.findUnique({ where: { id: 1 } })
+
+  for (const account of accounts) {
+    await syncAccountInbox(account, queueState, result)
+    result.accountsSynced++
+  }
+
+  await prisma.inboxSyncState.upsert({
+    where: { id: 1 },
+    create: {
+      id: 1,
+      lastCheckedAt: new Date(),
+      lastError: result.errors.length > 0 ? result.errors.slice(0, 3).join('; ') : null,
+    },
+    update: {
+      lastCheckedAt: new Date(),
+      lastError: result.errors.length > 0 ? result.errors.slice(0, 3).join('; ') : null,
+      updatedAt: new Date(),
+    },
+  })
 
   return result
 }

@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { computeDueJobs, getMaxStepOrder, loadEngagedLeadIds, loadLastSuccessfulSends } from '@/lib/queue-schedule'
+import { countDoNotContactInList } from '@/lib/lead-suppression'
+import {
+  computeDueJobs,
+  countPriorCampaignContacts,
+  getMaxStepOrder,
+  isDelayElapsed,
+  loadBlockedLeadIds,
+  loadLastSuccessfulSends,
+} from '@/lib/queue-schedule'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,13 +46,13 @@ export async function GET(request: NextRequest) {
     const maxStepOrder = getMaxStepOrder(campaign.steps)
 
     const sends = await prisma.leadSend.findMany({
-      where: { campaignId, error: null, subject: { not: 'SENDING' } },
+      where: { campaignId, error: null, subject: { notIn: ['SENDING', 'FAILED'] } },
       select: { leadId: true, stepOrder: true },
     })
 
     const lastSendsByLead = await loadLastSuccessfulSends(campaignId, validLeadIds)
     const skippedLeadIds = new Set<number>()
-    const engagedLeadIds = await loadEngagedLeadIds(campaignId, validLeadIds)
+    const blockedLeadIds = await loadBlockedLeadIds(campaignId, validLeadIds)
 
     const queueState = await prisma.queueState.findUnique({ where: { id: 1 } })
     if (queueState?.activeCampaignId === campaignId) {
@@ -57,21 +65,75 @@ export async function GET(request: NextRequest) {
       campaign.steps,
       lastSendsByLead,
       skippedLeadIds,
-      engagedLeadIds
+      blockedLeadIds
     )
     const leadsStarted = lastSendsByLead.size
     const leadsCompleted = [...lastSendsByLead.values()].filter((s) => s.stepOrder >= maxStepOrder).length
 
-    const [repliedCount, unsubscribedCount] = await Promise.all([
-      prisma.leadCampaignEngagement.count({
-        where: { campaignId, status: 'replied' },
-      }),
-      prisma.leadCampaignEngagement.count({
-        where: { campaignId, status: 'unsubscribed' },
-      }),
-    ])
+    const sendsByStep = new Map<number, number>()
+    for (const send of sends) {
+      sendsByStep.set(send.stepOrder, (sendsByStep.get(send.stepOrder) || 0) + 1)
+    }
+
+    const dueByStep = new Map<number, number>()
+    for (const job of dueJobs) {
+      dueByStep.set(job.stepOrder, (dueByStep.get(job.stepOrder) || 0) + 1)
+    }
+
+    const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
+    let waitingOnDelay = 0
+    let notStarted = 0
+    let followUpEligible = 0
+
+    for (const leadId of validLeadIds) {
+      if (blockedLeadIds.has(leadId) || skippedLeadIds.has(leadId)) continue
+
+      const last = lastSendsByLead.get(leadId)
+      if (!last) {
+        notStarted++
+        continue
+      }
+
+      if (last.stepOrder >= maxStepOrder) continue
+
+      if (last.stepOrder >= 1) followUpEligible++
+
+      const nextStepOrder = last.stepOrder + 1
+      const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
+      if (nextStep && !isDelayElapsed(last, nextStep)) {
+        waitingOnDelay++
+      }
+    }
+
+    const step1Sent = sendsByStep.get(1) || 0
+    const followUpSent = sends.filter((s) => s.stepOrder > 1).length
+    const followUpDue = dueJobs.filter((j) => j.stepOrder > 1).length
+    const blockedEngaged = blockedLeadIds.size
+
+    const stepBreakdown = sortedSteps.map((step) => ({
+      stepOrder: step.stepOrder,
+      label: step.stepOrder === 1 ? 'Step 1' : `Follow-up ${step.stepOrder - 1}`,
+      sent: sendsByStep.get(step.stepOrder) || 0,
+      due: dueByStep.get(step.stepOrder) || 0,
+    }))
+
+    const isActiveCampaign = queueState?.activeCampaignId === campaignId
+
+    const [repliedCount, unsubscribedCount, priorCampaignContacts, doNotContactExcluded] =
+      await Promise.all([
+        prisma.leadCampaignEngagement.count({
+          where: { campaignId, status: 'replied' },
+        }),
+        prisma.leadCampaignEngagement.count({
+          where: { campaignId, status: 'unsubscribed' },
+        }),
+        countPriorCampaignContacts(campaignId, validLeadIds),
+        countDoNotContactInList(validLeadIds),
+      ])
 
     return NextResponse.json({
+      campaignName: campaign.name,
+      isActiveCampaign,
       sendable,
       blocked,
       stepCount: campaign.steps.length,
@@ -81,6 +143,14 @@ export async function GET(request: NextRequest) {
       dueNow: dueJobs.length,
       repliedCount,
       unsubscribedCount,
+      priorCampaignContacts,
+      doNotContactExcluded,
+      step1: { sent: step1Sent, eligible: sendable },
+      followUps: { sent: followUpSent, due: followUpDue, eligible: followUpEligible },
+      waitingOnDelay,
+      notStarted,
+      blockedEngaged,
+      stepBreakdown,
     })
   } catch (error) {
     console.error('Failed to get campaign stats:', error)

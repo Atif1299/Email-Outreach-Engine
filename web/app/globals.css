@@ -637,7 +637,131 @@
   font-size: 0.75rem;
   color: var(--text-muted);
   margin: -0.25rem 0 0.65rem;
-  line-height: 1.4;
+}
+
+.smtp-accounts-list
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.smtp-account-card
+{
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r2);
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.smtp-account-card-header
+{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.55rem;
+}
+
+.smtp-account-card-title
+{
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.smtp-account-enabled
+{
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.smtp-account-card-actions
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.smtp-test-email-input
+{
+  flex: 1;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.btn-sm
+{
+  padding: 0.3rem 0.65rem;
+  font-size: 0.72rem;
+}
+
+.smtp-queue-accounts
+{
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.smtp-queue-accounts-title
+{
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.smtp-queue-accounts-grid
+{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.smtp-queue-account
+{
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r1);
+  padding: 0.5rem 0.6rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.smtp-queue-account--cooling
+{
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.smtp-queue-account--capped
+{
+  border-color: rgba(96, 165, 250, 0.35);
+}
+
+.smtp-queue-account-email
+{
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smtp-queue-account-stats
+{
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.smtp-queue-account-status
+{
+  font-size: 0.65rem;
+  color: #fcd34d;
+  margin-top: 0.2rem;
 }
 
 .settings-grid
@@ -1000,9 +1124,10 @@
 .campaign-overview-row
 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.5rem;
   min-width: 0;
+  align-items: end;
 }
 
 .tab-content .field-grow
@@ -1273,14 +1398,27 @@
 
 .queue-stats
 {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.queue-stats-row
+{
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.6rem;
+  gap: 0.45rem;
+}
+
+.queue-stats-row--caps
+{
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 50%;
 }
 
 .stat-card
 {
-  padding: 1rem;
+  padding: 0.5rem 0.55rem;
   background: var(--card);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--r2);
@@ -1289,19 +1427,21 @@
 
 .stat-value
 {
-  font-size: 1.8rem;
+  font-size: 1.2rem;
   font-weight: 700;
   color: var(--text);
   font-family: var(--mono);
+  line-height: 1.2;
 }
 
 .stat-label
 {
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   color: var(--dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-top: 0.25rem;
+  margin-top: 0.15rem;
+  line-height: 1.25;
 }
 
 .queue-status-panel
@@ -1397,6 +1537,113 @@
   color: var(--dim);
 }
 
+.campaign-progress-panel
+{
+  padding: 0.85rem;
+  background: var(--card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r2);
+}
+
+.campaign-progress-header
+{
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.campaign-progress-name
+{
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.campaign-progress-summary
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--dim);
+  margin-bottom: 0.75rem;
+}
+
+.campaign-progress-steps
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.campaign-progress-row
+{
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.campaign-progress-label
+{
+  font-size: 0.75rem;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.campaign-progress-bar-wrap
+{
+  height: 0.45rem;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.campaign-progress-bar
+{
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.campaign-progress-bar--step1
+{
+  background: var(--accent-bright);
+}
+
+.campaign-progress-bar--followup
+{
+  background: #60a5fa;
+}
+
+.campaign-progress-count
+{
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.campaign-progress-breakdown
+{
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.campaign-progress-step-detail
+{
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--dim);
+}
+
 .verify-pill
 {
   display: inline-block;
@@ -1478,6 +1725,13 @@
   border: 1px solid rgba(168, 85, 247, 0.35);
 }
 
+.engagement-pill--dnc
+{
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
 @media (max-width: 900px)
 {
   .step-body.split
@@ -1490,8 +1744,13 @@
     grid-template-columns: 1fr;
   }
 
-  .queue-stats
+  .queue-stats-row
   {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .queue-stats-row--caps
+  {
+    max-width: 100%;
   }
 }

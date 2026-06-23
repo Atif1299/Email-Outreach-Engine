@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { Campaign } from '@/app/dashboard/page'
+import { getOutputLanguageLabel } from '@/lib/output-languages'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -370,6 +371,11 @@ export default function StepPreview({
               ))}
             </select>
           </div>
+          {selectedCampaign && (
+            <p className="field-hint" style={{ padding: '0 0.5rem 0.35rem' }}>
+              AI emails generate in <strong>{getOutputLanguageLabel(selectedCampaign.outputLanguage)}</strong> — set in Campaign → Overview.
+            </p>
+          )}
           <div className="queue-list">
             {leads.length === 0 ? (
               <div className="queue-item">

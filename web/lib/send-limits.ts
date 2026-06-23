@@ -4,6 +4,8 @@ export interface SendLimitSettings {
   sendDelayMinMs: number
   sendDelayMaxMs: number
   dailyCap: number
+  dailyStep1Cap: number
+  dailyFollowUpCap: number
   hourlyCap: number
   sendTimezone: string
   sendStartHour: number
@@ -13,13 +15,17 @@ export type SendGateResult =
   | { allowed: true }
   | {
     allowed: false
-    status: 'throttled' | 'outside_window' | 'daily_cap' | 'hourly_cap'
+    status: 'throttled' | 'outside_window' | 'daily_cap' | 'hourly_cap' | 'step1_cap' | 'follow_up_cap'
     message: string
     nextSendAllowedAt?: Date
     sendsToday?: number
     sendsThisHour?: number
     cap?: number
   }
+
+export function isStepTypeCapsEnabled(settings: SendLimitSettings): boolean {
+  return settings.dailyStep1Cap > 0 || settings.dailyFollowUpCap > 0
+}
 
 export function getZonedParts(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat('en-US', {
@@ -83,12 +89,43 @@ export function computeSendDelayMs(settings: SendLimitSettings): number {
   return Math.floor(Math.random() * (max - usualMax + 1)) + usualMax
 }
 
-export async function countSuccessfulSendsSince(since: Date): Promise<number> {
+export async function countSuccessfulSendsSince(since: Date, smtpAccountId?: number): Promise<number> {
   return prisma.leadSend.count({
     where: {
       sentAt: { gte: since },
       error: null,
-      subject: { not: 'SENDING' },
+      subject: { notIn: ['SENDING', 'FAILED'] },
+      ...(smtpAccountId ? { smtpAccountId } : {}),
+    },
+  })
+}
+
+export async function countSuccessfulSendsSinceByStepType(
+  since: Date,
+  opts: { isFollowUp: boolean }
+): Promise<number> {
+  return prisma.leadSend.count({
+    where: {
+      sentAt: { gte: since },
+      error: null,
+      subject: { notIn: ['SENDING', 'FAILED'] },
+      stepOrder: opts.isFollowUp ? { gt: 1 } : 1,
+    },
+  })
+}
+
+export async function countSuccessfulSendsForAccountSince(
+  smtpAccountId: number,
+  since: Date
+): Promise<number> {
+  return countSuccessfulSendsSince(since, smtpAccountId)
+}
+
+export async function countFailedSendsSince(since: Date): Promise<number> {
+  return prisma.leadSend.count({
+    where: {
+      sentAt: { gte: since },
+      subject: 'FAILED',
     },
   })
 }
@@ -103,6 +140,61 @@ export async function getOldestSendSince(since: Date) {
     orderBy: { sentAt: 'asc' },
     select: { sentAt: true },
   })
+}
+
+export async function getStepTypeSendCounts(settings: SendLimitSettings, now = new Date()) {
+  const dayStart = getDayStartInTimezone(settings.sendTimezone, now)
+  const [step1SentToday, followUpSentToday] = await Promise.all([
+    countSuccessfulSendsSinceByStepType(dayStart, { isFollowUp: false }),
+    countSuccessfulSendsSinceByStepType(dayStart, { isFollowUp: true }),
+  ])
+  return { step1SentToday, followUpSentToday }
+}
+
+export function isStepTypeCapAvailable(
+  settings: SendLimitSettings,
+  stepOrder: number,
+  counts: { step1SentToday: number; followUpSentToday: number }
+): boolean {
+  if (!isStepTypeCapsEnabled(settings)) return true
+  if (stepOrder <= 1) {
+    return settings.dailyStep1Cap <= 0 || counts.step1SentToday < settings.dailyStep1Cap
+  }
+  return settings.dailyFollowUpCap <= 0 || counts.followUpSentToday < settings.dailyFollowUpCap
+}
+
+export async function evaluateStepTypeDailyCap(
+  settings: SendLimitSettings,
+  stepOrder: number,
+  counts?: { step1SentToday: number; followUpSentToday: number },
+  now = new Date()
+): Promise<SendGateResult> {
+  if (!isStepTypeCapsEnabled(settings)) return { allowed: true }
+
+  const { step1SentToday, followUpSentToday } =
+    counts ?? (await getStepTypeSendCounts(settings, now))
+
+  if (stepOrder <= 1 && settings.dailyStep1Cap > 0 && step1SentToday >= settings.dailyStep1Cap) {
+    return {
+      allowed: false,
+      status: 'step1_cap',
+      message: `Step 1 daily cap (${settings.dailyStep1Cap}) reached — remaining Step 1 leads continue tomorrow at ${formatResumeTime(settings)}`,
+      sendsToday: step1SentToday,
+      cap: settings.dailyStep1Cap,
+    }
+  }
+
+  if (stepOrder > 1 && settings.dailyFollowUpCap > 0 && followUpSentToday >= settings.dailyFollowUpCap) {
+    return {
+      allowed: false,
+      status: 'follow_up_cap',
+      message: `Follow-up daily cap (${settings.dailyFollowUpCap}) reached — remaining follow-ups continue tomorrow at ${formatResumeTime(settings)}`,
+      sendsToday: followUpSentToday,
+      cap: settings.dailyFollowUpCap,
+    }
+  }
+
+  return { allowed: true }
 }
 
 export async function evaluateSendGate(
@@ -127,37 +219,36 @@ export async function evaluateSendGate(
     }
   }
 
-  const dayStart = getDayStartInTimezone(settings.sendTimezone, now)
-  const hourAgo = new Date(now.getTime() - 60 * 60 * 1000)
+  return { allowed: true }
+}
 
-  const [sendsToday, sendsThisHour] = await Promise.all([
-    countSuccessfulSendsSince(dayStart),
-    countSuccessfulSendsSince(hourAgo),
-  ])
-
-  if (sendsToday >= settings.dailyCap) {
+/** Global cap check: true only when every enabled inbox is at its per-inbox daily cap. */
+export async function evaluateGlobalDailyCap(
+  settings: SendLimitSettings,
+  enabledAccountCount: number,
+  now = new Date()
+): Promise<SendGateResult> {
+  if (enabledAccountCount <= 0) {
     return {
       allowed: false,
       status: 'daily_cap',
-      message: `Daily cap (${settings.dailyCap}) reached — remaining leads continue tomorrow at ${formatResumeTime(settings)}`,
-      sendsToday,
+      message: 'No SMTP accounts configured',
       cap: settings.dailyCap,
+      sendsToday: 0,
     }
   }
 
-  if (sendsThisHour >= settings.hourlyCap) {
-    const oldest = await getOldestSendSince(hourAgo)
-    const nextSendAllowedAt = oldest
-      ? new Date(oldest.sentAt.getTime() + 60 * 60 * 1000)
-      : new Date(now.getTime() + 15 * 60 * 1000)
+  const dayStart = getDayStartInTimezone(settings.sendTimezone, now)
+  const sendsToday = await countSuccessfulSendsSince(dayStart)
+  const effectiveDailyCap = settings.dailyCap * enabledAccountCount
 
+  if (sendsToday >= effectiveDailyCap) {
     return {
       allowed: false,
-      status: 'hourly_cap',
-      message: `Hourly cap (${settings.hourlyCap}/hr) reached — pausing until next slot`,
-      sendsThisHour,
-      cap: settings.hourlyCap,
-      nextSendAllowedAt,
+      status: 'daily_cap',
+      message: `Combined daily cap (${effectiveDailyCap}) reached — remaining leads continue tomorrow at ${formatResumeTime(settings)}`,
+      sendsToday,
+      cap: effectiveDailyCap,
     }
   }
 
@@ -168,6 +259,8 @@ export function toSendLimitSettings(settings: {
   sendDelayMinMs: number
   sendDelayMaxMs: number
   dailyCap: number
+  dailyStep1Cap?: number
+  dailyFollowUpCap?: number
   hourlyCap: number
   sendTimezone: string
   sendStartHour: number
@@ -176,6 +269,8 @@ export function toSendLimitSettings(settings: {
     sendDelayMinMs: settings.sendDelayMinMs,
     sendDelayMaxMs: settings.sendDelayMaxMs,
     dailyCap: settings.dailyCap,
+    dailyStep1Cap: settings.dailyStep1Cap ?? 0,
+    dailyFollowUpCap: settings.dailyFollowUpCap ?? 0,
     hourlyCap: settings.hourlyCap,
     sendTimezone: settings.sendTimezone || 'Asia/Karachi',
     sendStartHour: settings.sendStartHour ?? 12,

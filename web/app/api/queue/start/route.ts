@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { getIncompleteLeadIds, getMaxStepOrder } from '@/lib/queue-schedule'
+import { countDoNotContactInList } from '@/lib/lead-suppression'
+import {
+  countPriorCampaignContacts,
+  getIncompleteLeadIds,
+  getMaxStepOrder,
+} from '@/lib/queue-schedule'
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,7 +53,12 @@ export async function POST(request: NextRequest) {
     const leads = await prisma.lead.findMany({ where, select: { id: true } })
     const validLeadIds = leads.map((l) => l.id)
     const maxStepOrder = getMaxStepOrder(campaign.steps)
-    const leadIds = await getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder)
+
+    const [leadIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
+      getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder),
+      countPriorCampaignContacts(campaignId, validLeadIds),
+      countDoNotContactInList(validLeadIds),
+    ])
 
     if (leadIds.length === 0) {
       return NextResponse.json({ error: 'No sendable leads remaining for this campaign' }, { status: 400 })
@@ -86,7 +96,14 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return NextResponse.json({ success: true, leadCount: leadIds.length })
+    return NextResponse.json({
+      success: true,
+      leadCount: leadIds.length,
+      warnings: {
+        priorCampaignContacts,
+        doNotContactExcluded,
+      },
+    })
   } catch (error) {
     console.error('Failed to start queue:', error)
     return NextResponse.json({ error: 'Failed to start queue' }, { status: 500 })

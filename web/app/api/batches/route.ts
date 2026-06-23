@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
+import { Prisma } from '@prisma/client'
 
 export async function GET() {
   try {
@@ -19,6 +20,15 @@ export async function GET() {
       leadCount: b._count.leads,
     })))
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return NextResponse.json(
+        {
+          error:
+            'Database connection failed. Neon may be waking from auto-suspend — retry in a few seconds, or run `npx prisma db execute --stdin` from web/ to wake it.',
+        },
+        { status: 503 }
+      )
+    }
     console.error('Failed to list batches:', error)
     return NextResponse.json({ error: 'Failed to list batches' }, { status: 500 })
   }

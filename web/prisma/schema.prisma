@@ -28,12 +28,16 @@ model Lead {
   verificationReason String?  @map("verification_reason")
   verifiedAt         DateTime? @map("verified_at")
   verificationMethod String?  @map("verification_method")
+  doNotContact       Boolean  @default(false) @map("do_not_contact")
+  doNotContactAt     DateTime? @map("do_not_contact_at")
+  doNotContactReason String?  @map("do_not_contact_reason")
 
   importBatch       ImportBatch?              @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
   sends             LeadSend[]
   bodyOverrides     LeadBodyOverride[]
   mergePreviews     LeadMergePreview[]
   engagements       LeadCampaignEngagement[]
+  smtpAssignments   LeadSmtpAssignment[]
 
   @@index([email])
   @@index([importBatchId])
@@ -48,6 +52,7 @@ model Campaign {
   senderInfo     String   @default("") @map("sender_info")
   aiVoice        String   @default("founder") @map("ai_voice")
   aiInstructions String   @default("") @map("ai_instructions")
+  outputLanguage String   @default("en") @map("output_language")
   createdAt      DateTime @default(now()) @map("created_at")
 
   steps         CampaignStep[]
@@ -56,6 +61,7 @@ model Campaign {
   bodyOverrides LeadBodyOverride[]
   mergePreviews LeadMergePreview[]
   engagements   LeadCampaignEngagement[]
+  smtpAssignments LeadSmtpAssignment[]
 
   @@map("campaigns")
 }
@@ -94,14 +100,54 @@ model LeadSend {
   subject       String
   bodySnippet   String?  @map("body_snippet")
   smtpMessageId String?  @map("smtp_message_id")
+  smtpAccountId Int?     @map("smtp_account_id")
   sentAt        DateTime @default(now()) @map("sent_at")
   error         String?
 
-  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead        Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign    Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  smtpAccount SmtpAccount? @relation(fields: [smtpAccountId], references: [id], onDelete: SetNull)
 
   @@index([leadId, campaignId])
+  @@index([smtpAccountId, sentAt])
   @@map("lead_sends")
+}
+
+model SmtpAccount {
+  id                 Int       @id @default(autoincrement())
+  email              String
+  password           String    @default("")
+  label              String    @default("")
+  enabled            Boolean   @default(true)
+  sortOrder          Int       @default(0) @map("sort_order")
+  exhaustedUntil     DateTime? @map("exhausted_until")
+  exhaustReason      String?   @map("exhaust_reason")
+  lastUsedAt         DateTime? @map("last_used_at")
+  lastInboxCheckedAt DateTime? @map("last_inbox_checked_at")
+  lastInboxError     String?   @map("last_inbox_error")
+  warmupStartedAt    DateTime? @map("warmup_started_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  assignments LeadSmtpAssignment[]
+  sends       LeadSend[]
+
+  @@unique([email])
+  @@index([enabled, sortOrder])
+  @@map("smtp_accounts")
+}
+
+model LeadSmtpAssignment {
+  leadId        Int      @map("lead_id")
+  campaignId    Int      @map("campaign_id")
+  smtpAccountId Int      @map("smtp_account_id")
+  assignedAt    DateTime @default(now()) @map("assigned_at")
+
+  lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign    Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  smtpAccount SmtpAccount @relation(fields: [smtpAccountId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, campaignId])
+  @@map("lead_smtp_assignments")
 }
 
 model LeadCampaignEngagement {
@@ -173,6 +219,8 @@ model Settings {
   sendDelayMinMs       Int     @default(60000) @map("send_delay_min_ms")
   sendDelayMaxMs       Int     @default(240000) @map("send_delay_max_ms")
   dailyCap             Int     @default(300) @map("daily_cap")
+  dailyStep1Cap        Int     @default(0) @map("daily_step1_cap")
+  dailyFollowUpCap     Int     @default(0) @map("daily_follow_up_cap")
   hourlyCap            Int     @default(25) @map("hourly_cap")
   sendTimezone         String  @default("Asia/Karachi") @map("send_timezone")
   sendStartHour        Int     @default(12) @map("send_start_hour")

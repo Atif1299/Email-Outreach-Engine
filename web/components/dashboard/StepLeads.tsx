@@ -10,10 +10,12 @@ interface Props {
   selectedLeadIds: Set<number>
   leadsBatchFilter: number | null
   leadsStatusFilter: string
+  leadsEngagementFilter: string
   leadsSearch: string
   onSelectLeadIds: (ids: Set<number>) => void
   onBatchFilterChange: (id: number | null) => void
   onStatusFilterChange: (status: string) => void
+  onEngagementFilterChange: (engagement: string) => void
   onSearchChange: (search: string) => void
   onLeadsChanged: () => void
   onNextStep: () => void
@@ -26,8 +28,13 @@ function VerifyPill({ status }: { status: string }) {
 
 function EngagementPill({ status }: { status: string | null | undefined }) {
   if (!status) return null
+  const labels: Record<string, string> = {
+    dnc: 'DNC',
+    replied: 'replied',
+    unsubscribed: 'unsubscribed',
+  }
   const cls = `engagement-pill engagement-pill--${status}`
-  return <span className={cls}>{status}</span>
+  return <span className={cls}>{labels[status] ?? status}</span>
 }
 
 export default function StepLeads({
@@ -36,10 +43,12 @@ export default function StepLeads({
   selectedLeadIds,
   leadsBatchFilter,
   leadsStatusFilter,
+  leadsEngagementFilter,
   leadsSearch,
   onSelectLeadIds,
   onBatchFilterChange,
   onStatusFilterChange,
+  onEngagementFilterChange,
   onSearchChange,
   onLeadsChanged,
   onNextStep,
@@ -50,6 +59,7 @@ export default function StepLeads({
   const { hint: verifyBatchHint, showHint: showVerifyBatchHint } = useInlineHint()
   const { hint: verifySelectedHint, showHint: showVerifySelectedHint } = useInlineHint()
   const { hint: deleteHint, showHint: showDeleteHint } = useInlineHint()
+  const { hint: suppressHint, showHint: showSuppressHint } = useInlineHint()
 
   function toggleSelect(id: number) {
     const newSet = new Set(selectedLeadIds)
@@ -143,6 +153,29 @@ export default function StepLeads({
     setVerifying(false)
   }
 
+  async function suppressSelected() {
+    if (selectedLeadIds.size === 0) return
+
+    try {
+      const res = await fetch('/api/leads/suppress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds: [...selectedLeadIds] }),
+      })
+      if (res.ok) {
+        const result = await res.json()
+        showSuppressHint(`Marked ${result.count} as do not contact`, 'ok')
+        onSelectLeadIds(new Set())
+        onLeadsChanged()
+      } else {
+        const err = await res.json()
+        showSuppressHint(err.error || 'Failed to suppress', 'err')
+      }
+    } catch {
+      showSuppressHint('Failed to suppress', 'err')
+    }
+  }
+
   // Calculate stats
   const stats = leads.reduce((acc, l) => {
     acc[l.verificationStatus] = (acc[l.verificationStatus] || 0) + 1
@@ -195,6 +228,19 @@ export default function StepLeads({
             <option value="risky">Risky</option>
             <option value="pending">Pending</option>
             <option value="unknown">Unknown</option>
+          </select>
+        </div>
+        <div className="field field-mini">
+          <label className="mini-label">Engagement</label>
+          <select
+            className="input"
+            value={leadsEngagementFilter}
+            onChange={(e) => onEngagementFilterChange(e.target.value)}
+          >
+            <option value="">All</option>
+            <option value="dnc">Do not contact</option>
+            <option value="replied">Replied</option>
+            <option value="unsubscribed">Unsubscribed</option>
           </select>
         </div>
       </div>
@@ -286,6 +332,17 @@ export default function StepLeads({
               Cancel
             </button>
           )}
+          <span className="footer-action">
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              disabled={selectedLeadIds.size === 0}
+              onClick={suppressSelected}
+            >
+              Mark do not contact
+            </button>
+            <InlineHint hint={suppressHint} />
+          </span>
           <span className="footer-action">
             <button
               type="button"

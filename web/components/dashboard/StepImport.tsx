@@ -33,6 +33,7 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
   const [importing, setImporting] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const importFlash = useButtonFlash()
   const { hint: importHint, showHint: showImportHint } = useInlineHint()
   const { hint: listHint, showHint: showListHint } = useInlineHint()
@@ -123,12 +124,13 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
   }
 
   async function handleDeleteBatch() {
-    if (!selectedBatchId) return
+    if (!selectedBatchId || deleting) return
     if (!confirmDelete) {
       setConfirmDelete(true)
       return
     }
 
+    setDeleting(true)
     try {
       const res = await fetch(`/api/batches/${selectedBatchId}`, { method: 'DELETE' })
       if (res.ok) {
@@ -142,6 +144,7 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
       showListHint('Delete failed', 'err')
     }
     setConfirmDelete(false)
+    setDeleting(false)
   }
 
   function cancelDelete() {
@@ -166,10 +169,10 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
             <button
               type="button"
               className="btn btn-outline btn-sm"
-              disabled={!selectedBatchId}
+              disabled={!selectedBatchId || deleting}
               onClick={handleDeleteBatch}
             >
-              {confirmDelete ? 'Confirm delete' : 'Delete'}
+              {deleting ? 'Deleting...' : confirmDelete ? 'Confirm delete' : 'Delete'}
             </button>
             {confirmDelete && (
               <button type="button" className="btn btn-outline btn-sm" onClick={cancelDelete}>

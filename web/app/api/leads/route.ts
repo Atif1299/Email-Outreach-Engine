@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
+import { resolveEngagementDisplay } from '@/lib/lead-suppression'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,15 +9,23 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const batchId = searchParams.get('batchId')
     const status = searchParams.get('status')
+    const engagement = searchParams.get('engagement')
     const search = searchParams.get('search')
 
-    const where: any = {}
+    const where: {
+      importBatchId?: number
+      verificationStatus?: string
+      doNotContact?: boolean
+      OR?: Array<{ email: { contains: string; mode: 'insensitive' } } | { dataJson: { contains: string } }>
+    } = {}
+
     if (batchId) where.importBatchId = parseInt(batchId, 10)
     if (status) where.verificationStatus = status
+    if (engagement === 'dnc') where.doNotContact = true
     if (search) {
       where.OR = [
         { email: { contains: search, mode: 'insensitive' } },
-        { dataJson: { contains: search, mode: 'insensitive' } },
+        { dataJson: { contains: search } },
       ]
     }
 
@@ -31,7 +40,11 @@ export async function GET(request: NextRequest) {
       ? parseInt(searchParams.get('campaignId')!, 10)
       : null
 
-    const engagementWhere: { leadId: { in: number[] }; status: { in: string[] }; campaignId?: number } = {
+    const engagementWhere: {
+      leadId: { in: number[] }
+      status: { in: string[] }
+      campaignId?: number
+    } = {
       leadId: { in: leadIds },
       status: { in: ['replied', 'unsubscribed'] },
     }
@@ -52,7 +65,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json(leads.map(l => ({
+    let result = leads.map((l) => ({
       id: l.id,
       importBatchId: l.importBatchId,
       email: l.email,
@@ -60,8 +73,18 @@ export async function GET(request: NextRequest) {
       createdAt: l.createdAt.toISOString(),
       verificationStatus: l.verificationStatus,
       verificationReason: l.verificationReason,
-      engagementStatus: engagementByLead.get(l.id) || null,
-    })))
+      doNotContact: l.doNotContact,
+      engagementStatus: resolveEngagementDisplay({
+        doNotContact: l.doNotContact,
+        campaignEngagement: engagementByLead.get(l.id) || null,
+      }),
+    }))
+
+    if (engagement === 'replied' || engagement === 'unsubscribed') {
+      result = result.filter((l) => l.engagementStatus === engagement)
+    }
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Failed to list leads:', error)
     return NextResponse.json({ error: 'Failed to list leads' }, { status: 500 })
