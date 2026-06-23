@@ -59,6 +59,8 @@ export async function POST(request: NextRequest) {
       model: settings.openaiModel,
       apiKey: settings.openaiKey || '',
       useAi: true,
+      fewShotStep1Json: campaign.fewShotStep1Json,
+      fewShotStep2Json: campaign.fewShotStep2Json,
     })
 
     return NextResponse.json(result)

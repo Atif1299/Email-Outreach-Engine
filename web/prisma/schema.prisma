@@ -53,6 +53,8 @@ model Campaign {
   aiVoice        String   @default("founder") @map("ai_voice")
   aiInstructions String   @default("") @map("ai_instructions")
   outputLanguage String   @default("en") @map("output_language")
+  fewShotStep1Json String @default("[]") @map("few_shot_step1_json")
+  fewShotStep2Json String @default("[]") @map("few_shot_step2_json")
   createdAt      DateTime @default(now()) @map("created_at")
 
   steps         CampaignStep[]
@@ -126,6 +128,7 @@ model SmtpAccount {
   lastInboxCheckedAt DateTime? @map("last_inbox_checked_at")
   lastInboxError     String?   @map("last_inbox_error")
   warmupStartedAt    DateTime? @map("warmup_started_at")
+  warmupEnabled      Boolean   @default(false) @map("warmup_enabled")
   createdAt          DateTime  @default(now()) @map("created_at")
 
   assignments LeadSmtpAssignment[]

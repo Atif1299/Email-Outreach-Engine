@@ -6,6 +6,10 @@ import {
   buildSubjectOutputLanguageRule,
   normalizeOutputLanguage,
 } from '@/lib/output-languages'
+import { parseFewShotJson, resolveFewShotExamples } from '@/lib/few-shot'
+import { parsePitchBlock } from '@/lib/pitch-block'
+
+export { parsePitchBlock } from '@/lib/pitch-block'
 
 interface LeadData {
   email?: string
@@ -37,6 +41,8 @@ interface GenerateEmailOptions {
   previous?: PreviousSend
   model: string
   apiKey: string
+  fewShotStep1Json?: string
+  fewShotStep2Json?: string
 }
 
 interface PitchSuggestOptions {
@@ -47,47 +53,11 @@ interface PitchSuggestOptions {
   apiKey: string
 }
 
-const PITCH_LABELS: Array<[string, RegExp]> = [
-  ['product', /^product\s*:/i],
-  ['for', /^for\s*:/i],
-  ['pain', /^pain\s*:/i],
-  ['solution', /^solution\s*:/i],
-  ['integrations', /^integrations(?:\/channels)?\s*:/i],
-  ['offer', /^offer(?:\/cta)?\s*:/i],
-  ['proof', /^proof(?:\s*\(optional\))?\s*:/i],
-]
-
 const PITCH_STUB_FOR_AI =
   '[Write one industry-specific bridge sentence from PITCH_PARSED — do not copy this placeholder or pitch raw text]'
 
 function loadPromptFile(name: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'prompts', 'cold_outreach', name), 'utf8').trim()
-}
-
-function loadFewShotExamples(stepOrder: number): string[] {
-  const subdir = stepOrder > 1 ? 'few_shot/step2' : 'few_shot/step1'
-  const dirPath = path.join(process.cwd(), 'prompts', 'cold_outreach', subdir)
-  if (!fs.existsSync(dirPath)) {
-    try {
-      return [loadPromptFile('few_shot_example.txt')]
-    } catch {
-      return []
-    }
-  }
-  const examples = fs
-    .readdirSync(dirPath)
-    .filter((f) => f.endsWith('.txt'))
-    .sort()
-    .map((f) => fs.readFileSync(path.join(dirPath, f), 'utf8').trim())
-    .filter(Boolean)
-  if (examples.length === 0) {
-    try {
-      return [loadPromptFile('few_shot_example.txt')]
-    } catch {
-      return []
-    }
-  }
-  return examples
 }
 
 /** Stable pick so the same lead + step always gets the same style bucket. */
@@ -112,42 +82,6 @@ function fillTemplate(template: string, vars: Record<string, string>): string {
     out = out.split(`{{${key}}}`).join(value ?? '')
   }
   return out
-}
-
-export function parsePitchBlock(text: string) {
-  const raw = (text || '').trim()
-  if (!raw) return { raw: '', structured: false, fields: {} as Record<string, string> }
-
-  const fields: Record<string, string> = {}
-  let currentKey: string | null = null
-  let currentLines: string[] = []
-
-  const flush = () => {
-    if (currentKey && currentLines.length) {
-      fields[currentKey] = currentLines.join('\n').trim()
-    }
-  }
-
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim()
-    let matched = false
-    for (const [key, re] of PITCH_LABELS) {
-      if (re.test(trimmed)) {
-        flush()
-        currentKey = key
-        currentLines = [trimmed.replace(re, '').trim()]
-        matched = true
-        break
-      }
-    }
-    if (!matched && currentKey) {
-      currentLines.push(line)
-    }
-  }
-  flush()
-
-  const structured = Object.keys(fields).length >= 2
-  return { raw, structured, fields }
 }
 
 function inferLeadIndustry(lead: LeadData): string {
@@ -266,8 +200,14 @@ function buildBodyMessages(opts: {
   aiVoice: string
   aiInstructions: string
   outputLanguage?: string
+  fewShotStep1Json?: string
+  fewShotStep2Json?: string
 }) {
-  const examples = loadFewShotExamples(opts.stepOrder)
+  const campaignExamples =
+    opts.stepOrder > 1
+      ? parseFewShotJson(opts.fewShotStep2Json)
+      : parseFewShotJson(opts.fewShotStep1Json)
+  const examples = resolveFewShotExamples(opts.stepOrder, campaignExamples)
   const fewShot = pickFewShotForLead(examples, {
     leadId: opts.leadId,
     email: opts.lead.email,
@@ -416,6 +356,8 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
     aiVoice: opts.aiVoice || 'founder',
     aiInstructions: opts.aiInstructions || '',
     outputLanguage: opts.outputLanguage,
+    fewShotStep1Json: opts.fewShotStep1Json,
+    fewShotStep2Json: opts.fewShotStep2Json,
   })
 
   const request = async (messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) => {
@@ -445,6 +387,7 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
 
   return text
 }
+
 
 export async function generateSubjectLine(opts: GenerateEmailOptions & { bodySoFar: string; mergedSubject: string }): Promise<string> {
   const openai = new OpenAI({ apiKey: opts.apiKey })
@@ -503,6 +446,8 @@ export async function renderEmailForLead(opts: {
   useAi: boolean
   storedBody?: string
   storedSubject?: string | null
+  fewShotStep1Json?: string
+  fewShotStep2Json?: string
 }): Promise<{ subject: string; body: string }> {
   if (opts.storedBody !== undefined) {
     let subject = opts.storedSubject ?? mergeTags(opts.subjectTemplate, opts.leadData, opts.pitchBlock, opts.senderInfo)
@@ -546,6 +491,8 @@ export async function renderEmailForLead(opts: {
       previous: opts.previous,
       model: opts.model,
       apiKey: opts.apiKey,
+      fewShotStep1Json: opts.fewShotStep1Json,
+      fewShotStep2Json: opts.fewShotStep2Json,
     })
     return result
   }

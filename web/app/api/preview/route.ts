@@ -79,6 +79,8 @@ export async function GET(request: NextRequest) {
       model: settings.openaiModel,
       apiKey: settings.openaiKey || '',
       useAi,
+      fewShotStep1Json: campaign.fewShotStep1Json,
+      fewShotStep2Json: campaign.fewShotStep2Json,
     })
 
     return NextResponse.json(result)

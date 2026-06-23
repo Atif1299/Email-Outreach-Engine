@@ -10,6 +10,7 @@ interface SmtpAccountForm {
   password: string
   label: string
   enabled: boolean
+  warmupEnabled: boolean
   hasPassword?: boolean
 }
 
@@ -19,7 +20,7 @@ interface Props {
 }
 
 function emptyAccount(): SmtpAccountForm {
-  return { email: '', password: '', label: '', enabled: true }
+  return { email: '', password: '', label: '', enabled: true, warmupEnabled: false }
 }
 
 function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
@@ -31,6 +32,7 @@ function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
       password: '',
       label: a.label,
       enabled: a.enabled,
+      warmupEnabled: a.warmupEnabled ?? false,
       hasPassword: a.hasPassword,
     }))
   }
@@ -40,6 +42,7 @@ function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
       password: '',
       label: 'Primary',
       enabled: true,
+      warmupEnabled: false,
       hasPassword: settings.hasSmtpPassword,
     }]
   }
@@ -157,6 +160,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
               password: a.password || undefined,
               label: a.label,
               enabled: a.enabled,
+              warmupEnabled: a.warmupEnabled,
               sortOrder: index,
             })),
         }),
@@ -343,6 +347,16 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
                       />
                     </div>
                   </div>
+                  <label className="smtp-warmup-toggle">
+                    <input
+                      type="checkbox"
+                      checked={account.warmupEnabled}
+                      onChange={(e) => updateAccount(index, { warmupEnabled: e.target.checked })}
+                    />
+                    <span>
+                      Gradual warmup (15/day days 1–3, 30/day days 4–7, then your daily cap)
+                    </span>
+                  </label>
                   <div className="smtp-account-card-actions">
                     <input
                       type="text"
@@ -386,6 +400,7 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
 
             <p className="settings-hint">
               Reply detection polls every enabled inbox via IMAP (same App Password). Enable IMAP in each Gmail account.
+              Warmup is <strong>off by default</strong> — each inbox uses your daily cap immediately unless you enable gradual warmup above.
             </p>
           </div>
 

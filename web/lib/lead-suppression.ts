@@ -74,6 +74,22 @@ export async function removeLeadFromQueue(leadId: number) {
   })
 }
 
+export async function suppressLeadForBounce(
+  leadId: number,
+  source: 'smtp' | 'imap',
+  verificationReason: 'hard_bounce' | 'inbox_bounce' = source === 'smtp' ? 'hard_bounce' : 'inbox_bounce'
+) {
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      verificationStatus: 'invalid',
+      verificationReason,
+    },
+  })
+  await markLeadDoNotContact(leadId, 'bounce', source)
+  await removeLeadFromQueue(leadId)
+}
+
 export function resolveEngagementDisplay(opts: {
   doNotContact: boolean
   campaignEngagement: string | null

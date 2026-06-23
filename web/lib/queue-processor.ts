@@ -3,6 +3,7 @@ import prisma from '@/lib/db'
 import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
 import { getDeliveryHaltError, isHardBounceError } from '@/lib/verify'
+import { suppressLeadForBounce } from '@/lib/lead-suppression'
 import { ensureSettings } from '@/lib/settings'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
 import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds } from '@/lib/queue-schedule'
@@ -558,6 +559,8 @@ async function processQueueBatchInner(maxEmails = 1) {
             model: settings.openaiModel,
             apiKey: settings.openaiKey || '',
             useAi: nextStep.useAi,
+            fewShotStep1Json: campaign.fewShotStep1Json,
+            fewShotStep2Json: campaign.fewShotStep2Json,
           })
           subject = rendered.subject
           body = rendered.body
@@ -673,10 +676,8 @@ async function processQueueBatchInner(maxEmails = 1) {
         })
 
         if (isHardBounceError(message)) {
-          await prisma.lead.update({
-            where: { id: leadId },
-            data: { verificationStatus: 'invalid', verificationReason: 'hard_bounce' },
-          })
+          await suppressLeadForBounce(leadId, 'smtp')
+          blockedLeadIds.add(leadId)
           activeLeadIds.shift()
           skippedLeadIds = addToSkipped(skippedLeadIds, leadId)
           consecutiveFailures = 0

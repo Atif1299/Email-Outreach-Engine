@@ -469,7 +469,9 @@ export default function StepQueue({
                 <div className="smtp-queue-accounts-grid">
                   {queueStatus.smtpAccounts.filter((a) => a.enabled).map((account) => {
                     const cooling = account.exhaustedUntil && new Date(account.exhaustedUntil) > new Date()
-                    const effectiveDailyCap = account.warmupDailyCap ?? queueStatus.perInboxDailyCap
+                    const effectiveDailyCap = account.warmupEnabled
+                      ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
+                      : queueStatus.perInboxDailyCap
                     const atCap =
                       effectiveDailyCap != null &&
                       account.sendsToday >= effectiveDailyCap
@@ -482,9 +484,13 @@ export default function StepQueue({
                           {account.label || account.email}
                         </div>
                         <div className="smtp-queue-account-stats">
-                          {account.sendsToday}/{account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—'} today ·{' '}
+                          {account.sendsToday}/
+                          {account.warmupEnabled
+                            ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—')
+                            : (queueStatus.perInboxDailyCap ?? '—')}{' '}
+                          today ·{' '}
                           {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
-                          {account.warmupDay != null && account.warmupDay <= 7 && (
+                          {account.warmupEnabled && account.warmupDay != null && account.warmupDay <= 7 && (
                             <> · warmup day {account.warmupDay}</>
                           )}
                         </div>

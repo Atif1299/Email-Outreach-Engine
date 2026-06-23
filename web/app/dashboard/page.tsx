@@ -21,6 +21,7 @@ export interface SmtpAccountStatus {
   lastInboxError: string | null
   warmupDay?: number | null
   warmupDailyCap?: number | null
+  warmupEnabled?: boolean
 }
 
 export interface Settings {
@@ -74,6 +75,8 @@ export interface Campaign {
   aiVoice: string
   aiInstructions: string
   outputLanguage: string
+  fewShotStep1: string[]
+  fewShotStep2: string[]
   createdAt: string
   targetImportBatchIds: number[]
   steps: CampaignStep[]

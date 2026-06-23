@@ -5,6 +5,7 @@ import { getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
 import {
   markLeadDoNotContact,
   removeLeadFromQueue,
+  suppressLeadForBounce,
 } from '@/lib/lead-suppression'
 
 const IMAP_HOST = 'imap.gmail.com'
@@ -144,15 +145,7 @@ async function processBounce(
   })
   if (!lead) return { handled: true, skipped: true }
 
-  await prisma.lead.update({
-    where: { id: lead.id },
-    data: {
-      verificationStatus: 'invalid',
-      verificationReason: 'inbox_bounce',
-    },
-  })
-  await markLeadDoNotContact(lead.id, 'bounce', 'imap')
-  await removeLeadFromQueue(lead.id)
+  await suppressLeadForBounce(lead.id, 'imap', 'inbox_bounce')
 
   return { handled: true, skipped: false }
 }

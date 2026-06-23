@@ -29,6 +29,7 @@ export interface PublicSmtpAccount {
   sendsThisHour: number
   warmupDay: number | null
   warmupDailyCap: number | null
+  warmupEnabled: boolean
   lastInboxCheckedAt: string | null
   lastInboxError: string | null
 }
@@ -88,11 +89,12 @@ function isExhausted(account: SmtpAccount, now = new Date()): boolean {
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
 export function getWarmupDay(account: SmtpAccount, now = new Date()): number | null {
-  if (!account.warmupStartedAt) return null
+  if (!account.warmupEnabled || !account.warmupStartedAt) return null
   return Math.floor((now.getTime() - account.warmupStartedAt.getTime()) / MS_PER_DAY) + 1
 }
 
 export function getWarmupDailyCap(account: SmtpAccount, userDailyCap: number, now = new Date()): number {
+  if (!account.warmupEnabled) return userDailyCap
   if (!account.warmupStartedAt) return userDailyCap
   const day = getWarmupDay(account, now) ?? 1
   if (day <= 3) return Math.min(userDailyCap, 15)
@@ -166,7 +168,9 @@ export async function toPublicSmtpAccount(
 ): Promise<PublicSmtpAccount> {
   const { sendsToday, sendsThisHour } = await getAccountSendCounts(account.id, limitSettings)
   const warmupDay = getWarmupDay(account)
-  const warmupDailyCap = warmupDay ? getWarmupDailyCap(account, limitSettings.dailyCap) : null
+  const warmupDailyCap = account.warmupEnabled && warmupDay
+    ? getWarmupDailyCap(account, limitSettings.dailyCap)
+    : null
   return {
     id: account.id,
     email: account.email,
@@ -180,6 +184,7 @@ export async function toPublicSmtpAccount(
     sendsThisHour,
     warmupDay,
     warmupDailyCap,
+    warmupEnabled: account.warmupEnabled,
     lastInboxCheckedAt: account.lastInboxCheckedAt?.toISOString() ?? null,
     lastInboxError: account.lastInboxError,
   }
@@ -311,7 +316,7 @@ export async function touchAccountUsed(accountId: number) {
     where: { id: accountId },
     data: {
       lastUsedAt: new Date(),
-      ...(!account?.warmupStartedAt ? { warmupStartedAt: new Date() } : {}),
+      ...(!account?.warmupStartedAt && account?.warmupEnabled ? { warmupStartedAt: new Date() } : {}),
     },
   })
 }
@@ -342,6 +347,7 @@ export interface SmtpAccountInput {
   label?: string
   enabled?: boolean
   sortOrder?: number
+  warmupEnabled?: boolean
 }
 
 export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
@@ -353,6 +359,7 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
       label: (a.label || '').trim(),
       enabled: a.enabled ?? true,
       sortOrder: a.sortOrder ?? index,
+      warmupEnabled: a.warmupEnabled ?? false,
     }))
     .filter((a) => a.email)
 
@@ -365,6 +372,7 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
         label: account.label,
         enabled: account.enabled,
         sortOrder: account.sortOrder,
+        warmupEnabled: account.warmupEnabled,
       }
       if (account.password) update.password = account.password
 
@@ -381,6 +389,7 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
           label: account.label,
           enabled: account.enabled,
           sortOrder: account.sortOrder,
+          warmupEnabled: account.warmupEnabled,
         },
       })
       keptIds.add(created.id)

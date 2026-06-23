@@ -3,6 +3,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Campaign, CampaignStep, Batch } from '@/app/dashboard/page'
 import { OUTPUT_LANGUAGES } from '@/lib/output-languages'
+import {
+  PITCH_FIELDS,
+  countFilledPitchFields,
+  fieldsFromPitchBlock,
+  serializePitchBlock,
+  type PitchFieldKey,
+} from '@/lib/pitch-block'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -121,7 +128,7 @@ export default function StepCampaign({
   onCampaignsChanged,
   onNextStep,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'sequences'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'sequences' | 'examples'>('overview')
   const [draft, setDraft] = useState<Campaign | null>(null)
   const [saving, setSaving] = useState(false)
   const [suggestingPitch, setSuggestingPitch] = useState(false)
@@ -146,7 +153,11 @@ export default function StepCampaign({
       const res = await fetch(`/api/campaigns/${id}`)
       if (res.ok) {
         const data = await res.json()
-        setDraft(data)
+        setDraft({
+          ...data,
+          fewShotStep1: data.fewShotStep1 ?? [],
+          fewShotStep2: data.fewShotStep2 ?? [],
+        })
         savedOutputLanguageRef.current = data.outputLanguage || 'en'
       }
     } catch (e) {
@@ -164,6 +175,8 @@ export default function StepCampaign({
       aiVoice: 'founder',
       aiInstructions: '',
       outputLanguage: 'en',
+      fewShotStep1: [],
+      fewShotStep2: [],
       createdAt: new Date().toISOString(),
       targetImportBatchIds: leadsBatchFilter ? [leadsBatchFilter] : [],
       steps: [defaultStep(1)],
@@ -251,6 +264,59 @@ export default function StepCampaign({
       showPitchHint('Failed', 'err')
     }
     setSuggestingPitch(false)
+  }
+
+  function updatePitchField(key: PitchFieldKey, value: string) {
+    if (!draft) return
+    const fields = fieldsFromPitchBlock(draft.pitchBlock)
+    fields[key] = value
+    setDraft({ ...draft, pitchBlock: serializePitchBlock(fields) })
+  }
+
+  function updateFewShot(step: 'fewShotStep1' | 'fewShotStep2', index: number, value: string) {
+    if (!draft) return
+    const list = [...draft[step]]
+    list[index] = value
+    setDraft({ ...draft, [step]: list })
+  }
+
+  function addFewShot(step: 'fewShotStep1' | 'fewShotStep2') {
+    if (!draft) return
+    setDraft({ ...draft, [step]: [...draft[step], ''] })
+  }
+
+  function removeFewShot(step: 'fewShotStep1' | 'fewShotStep2', index: number) {
+    if (!draft) return
+    setDraft({ ...draft, [step]: draft[step].filter((_, i) => i !== index) })
+  }
+
+  async function applyFewShotDefaults(step: 'step1' | 'step2' | 'both') {
+    if (!draft) return
+    try {
+      const res = await fetch('/api/campaigns/few-shot-defaults')
+      if (!res.ok) return
+      const data = await res.json()
+      if (step === 'step1') {
+        setDraft({ ...draft, fewShotStep1: data.step1 || [] })
+      } else if (step === 'step2') {
+        setDraft({ ...draft, fewShotStep2: data.step2 || [] })
+      } else {
+        setDraft({
+          ...draft,
+          fewShotStep1: data.step1 || [],
+          fewShotStep2: data.step2 || [],
+        })
+      }
+    } catch (e) {
+      console.error('Failed to load few-shot defaults:', e)
+    }
+  }
+
+  function clearFewShots(step: 'step1' | 'step2' | 'both') {
+    if (!draft) return
+    if (step === 'step1') setDraft({ ...draft, fewShotStep1: [] })
+    else if (step === 'step2') setDraft({ ...draft, fewShotStep2: [] })
+    else setDraft({ ...draft, fewShotStep1: [], fewShotStep2: [] })
   }
 
   function addStep() {
@@ -369,6 +435,14 @@ export default function StepCampaign({
                   >
                     Sequences
                   </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${activeTab === 'examples' ? 'is-active' : ''}`}
+                    onClick={() => setActiveTab('examples')}
+                    title="AI style examples"
+                  >
+                    Examples
+                  </button>
                 </div>
               </div>
 
@@ -442,15 +516,25 @@ export default function StepCampaign({
                         {suggestingPitch ? 'Analyzing...' : 'Suggest from leads'}
                       </button>
                     </div>
-                    <textarea
-                      className="input textarea"
-                      style={{ minHeight: '120px' }}
-                      placeholder="Describe product, ICP, pain, solution, offer..."
-                      value={draft.pitchBlock}
-                      onChange={(e) => setDraft({ ...draft, pitchBlock: e.target.value })}
-                    />
+                    <div className="pitch-fields">
+                      {PITCH_FIELDS.map(({ key, label }) => (
+                        <div key={key} className="field pitch-field-row">
+                          <label className="mini-label">{label}</label>
+                          <AutoResizeTextarea
+                            value={fieldsFromPitchBlock(draft.pitchBlock)[key]}
+                            onChange={(e) => updatePitchField(key, e.target.value)}
+                            placeholder={`${label}...`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {countFilledPitchFields(draft.pitchBlock) < 2 && (
+                      <p className="field-hint inline-hint inline-hint--warn">
+                        Fill at least Pain and Solution so AI can personalize reliably.
+                      </p>
+                    )}
                     <p className="field-hint">
-                      The AI extracts these blocks — write in plain labeled lines, not marketing fluff.
+                      The AI extracts these blocks — plain labeled lines, not marketing fluff.
                       Select a Target Batch to enable Suggest from leads.
                     </p>
                   </div>
@@ -488,6 +572,106 @@ export default function StepCampaign({
                       <code>{'{{location}}'}</code>
                       <code>{'{{pitch_block}}'}</code>
                       <code>{'{{sender_info}}'}</code>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Examples Tab */}
+              {activeTab === 'examples' && (
+                <div className="tab-content">
+                  <p className="field-hint" style={{ marginBottom: '0.75rem' }}>
+                    Style guides for AI body generation — tone and structure only. Product and offer always come from the pitch block.
+                    Leave empty to use built-in defaults.
+                  </p>
+
+                  <div className="few-shot-section">
+                    <div className="few-shot-section-head">
+                      <div>
+                        <div className="mini-label">Step 1 examples</div>
+                        <p className="field-hint">
+                          {draft.fewShotStep1.length > 0
+                            ? `${draft.fewShotStep1.length} custom — one picked per lead`
+                            : 'Using built-in defaults'}
+                        </p>
+                      </div>
+                      <div className="few-shot-section-actions">
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => addFewShot('fewShotStep1')}>
+                          + Add
+                        </button>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => applyFewShotDefaults('step1')}>
+                          Load defaults
+                        </button>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => clearFewShots('step1')}>
+                          Use built-in
+                        </button>
+                      </div>
+                    </div>
+                    <div className="few-shot-list">
+                      {draft.fewShotStep1.length === 0 ? (
+                        <p className="field-hint">No custom examples — built-in files under prompts/cold_outreach/few_shot/step1/ are used.</p>
+                      ) : (
+                        draft.fewShotStep1.map((example, i) => (
+                          <div key={`s1-${i}`} className="few-shot-item">
+                            <div className="few-shot-item-head">
+                              <span className="few-shot-item-label">Example {i + 1}</span>
+                              <button type="button" className="btn-delete-item" onClick={() => removeFewShot('fewShotStep1', i)} title="Remove">
+                                🗑
+                              </button>
+                            </div>
+                            <AutoResizeTextarea
+                              value={example}
+                              onChange={(e) => updateFewShot('fewShotStep1', i, e.target.value)}
+                              placeholder="Hi {first_name}, ..."
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="few-shot-section">
+                    <div className="few-shot-section-head">
+                      <div>
+                        <div className="mini-label">Follow-up examples (step 2+)</div>
+                        <p className="field-hint">
+                          {draft.fewShotStep2.length > 0
+                            ? `${draft.fewShotStep2.length} custom — one picked per lead`
+                            : 'Using built-in defaults'}
+                        </p>
+                      </div>
+                      <div className="few-shot-section-actions">
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => addFewShot('fewShotStep2')}>
+                          + Add
+                        </button>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => applyFewShotDefaults('step2')}>
+                          Load defaults
+                        </button>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => clearFewShots('step2')}>
+                          Use built-in
+                        </button>
+                      </div>
+                    </div>
+                    <div className="few-shot-list">
+                      {draft.fewShotStep2.length === 0 ? (
+                        <p className="field-hint">No custom examples — built-in files under prompts/cold_outreach/few_shot/step2/ are used.</p>
+                      ) : (
+                        draft.fewShotStep2.map((example, i) => (
+                          <div key={`s2-${i}`} className="few-shot-item">
+                            <div className="few-shot-item-head">
+                              <span className="few-shot-item-label">Example {i + 1}</span>
+                              <button type="button" className="btn-delete-item" onClick={() => removeFewShot('fewShotStep2', i)} title="Remove">
+                                🗑
+                              </button>
+                            </div>
+                            <AutoResizeTextarea
+                              value={example}
+                              onChange={(e) => updateFewShot('fewShotStep2', i, e.target.value)}
+                              placeholder="Hi {first_name}, ..."
+                            />
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
