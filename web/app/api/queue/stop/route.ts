@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
+import { serializeActiveCampaigns } from '@/lib/queue-active'
+
+export const dynamic = 'force-dynamic'
 
 export async function POST() {
   try {
@@ -10,9 +13,11 @@ export async function POST() {
         paused: false,
         activeCampaignId: null,
         activeLeadIdsJson: '[]',
+        skippedLeadIdsJson: '[]',
+        activeCampaignsJson: serializeActiveCampaigns([]),
         processingLockUntil: null,
         updatedAt: new Date(),
-      }
+      },
     })
     return NextResponse.json({ success: true })
   } catch (error) {

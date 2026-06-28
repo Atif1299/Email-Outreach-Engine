@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { renderEmailForLead } from '@/lib/ai'
 import { ensureSettings } from '@/lib/settings'
-import { loadPreviousStepContext } from '@/lib/preview-context'
+import { loadSequenceContext } from '@/lib/preview-context'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     }
 
     const leadData = JSON.parse(lead.dataJson)
-    const previous = await loadPreviousStepContext(leadId, campaignId, stepOrder || 1)
+    const sequence = await loadSequenceContext(leadId, campaignId, stepOrder || 1)
     const model = provider === 'gemini' ? settings.geminiModel : settings.openaiModel
 
     const result = await renderEmailForLead({
@@ -59,7 +59,8 @@ export async function POST(request: NextRequest) {
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
       stepOrder: stepOrder || 1,
-      previous,
+      previous: sequence.previous,
+      step1Touch: sequence.step1,
       model,
       apiKey: apiKey || '',
       provider,

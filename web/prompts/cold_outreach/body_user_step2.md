@@ -1,6 +1,6 @@
-Write the follow-up email body (step {{STEP_ORDER}}) for this lead.
+Write the step 2 follow-up email body (insight / proof) for this lead.
 
-## Previous email they already received (write the NEXT message in this thread)
+## Step 1 they already received (continue this thread — do not re-introduce)
 
 Subject: {{PREVIOUS_SUBJECT}}
 
@@ -29,10 +29,10 @@ Subject: {{PREVIOUS_SUBJECT}}
 
 ## Before you write — checklist
 
-1. Opens by referencing the previous email's topic or pain — not a fresh cold intro.
-2. Adds something NEW (proof point, consequence, or angle) not already said in the previous email.
-3. Does not repeat the previous email's solution paragraph or company introduction.
-4. CTA from pitch Offer — low friction.
-5. Shorter than step 1 (60–100 words).
+1. Opens by referencing step 1's topic or pain — not a fresh cold intro.
+2. Adds ONE insight, proof point, or industry pattern not already in step 1.
+3. Does not repeat step 1's solution paragraph or company introduction.
+4. CTA offers something easy to accept (send asset / quick look) — from pitch Offer.
+5. Shorter than step 1 (60–90 words).
 
 Produce only the email body text. No subject line. No commentary.

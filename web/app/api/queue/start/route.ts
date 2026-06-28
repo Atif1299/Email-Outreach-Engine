@@ -6,102 +6,111 @@ import {
   getIncompleteLeadIds,
   getMaxStepOrder,
 } from '@/lib/queue-schedule'
+import { upsertActiveCampaign, isCampaignActive } from '@/lib/queue-active'
+
+export const dynamic = 'force-dynamic'
+
+async function resolveLeadIdsForCampaign(campaignId: number) {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    include: { targetBatches: true, steps: true },
+  })
+
+  if (!campaign) return { error: 'Campaign not found', status: 404 as const }
+  if (campaign.steps.length === 0) return { error: 'Campaign has no steps', status: 400 as const }
+
+  const where: { verificationStatus: string; importBatchId?: { in: number[] } } = {
+    verificationStatus: 'valid',
+  }
+  if (campaign.targetBatches.length > 0) {
+    where.importBatchId = { in: campaign.targetBatches.map((tb) => tb.importBatchId) }
+  }
+
+  const leads = await prisma.lead.findMany({ where, select: { id: true } })
+  const validLeadIds = leads.map((l) => l.id)
+  const maxStepOrder = getMaxStepOrder(campaign.steps)
+
+  const [leadIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
+    getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder),
+    countPriorCampaignContacts(campaignId, validLeadIds),
+    countDoNotContactInList(validLeadIds),
+  ])
+
+  if (leadIds.length === 0) {
+    return { error: 'No sendable leads remaining for this campaign', status: 400 as const }
+  }
+
+  return { leadIds, priorCampaignContacts, doNotContactExcluded }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { campaignId, force } = body
+    const { campaignId, campaignIds, force } = body
 
-    if (!campaignId) {
-      return NextResponse.json({ error: 'Missing campaignId' }, { status: 400 })
+    const ids: number[] = campaignIds?.length
+      ? campaignIds
+      : campaignId
+        ? [campaignId]
+        : []
+
+    if (ids.length === 0) {
+      return NextResponse.json({ error: 'Missing campaignId or campaignIds' }, { status: 400 })
     }
 
     const existing = await prisma.queueState.findUnique({ where: { id: 1 } })
-    if (existing?.running && !force) {
-      if (existing.activeCampaignId === campaignId) {
-        return NextResponse.json(
-          { error: 'Queue is already running for this campaign' },
-          { status: 409 }
-        )
+    const wasRunning = existing?.running ?? false
+
+    const results: Array<{
+      campaignId: number
+      leadCount?: number
+      skipped?: boolean
+      error?: string
+    }> = []
+
+    let totalPriorContacts = 0
+    let totalDncExcluded = 0
+
+    for (const id of ids) {
+      if (isCampaignActive(existing, id) && !force) {
+        results.push({ campaignId: id, skipped: true, error: 'Already active' })
+        continue
       }
-      return NextResponse.json(
-        { error: 'Queue is already running for another campaign. Stop it first or use force: true.' },
-        { status: 409 }
-      )
+
+      const resolved = await resolveLeadIdsForCampaign(id)
+      if ('error' in resolved) {
+        results.push({ campaignId: id, error: resolved.error })
+        continue
+      }
+
+      const { alreadyActive } = await upsertActiveCampaign(id, resolved.leadIds, {
+        force: !!force,
+        resetSession: !wasRunning && results.every((r) => r.skipped || r.error),
+      })
+
+      if (alreadyActive && !force) {
+        results.push({ campaignId: id, skipped: true, error: 'Already active' })
+        continue
+      }
+
+      totalPriorContacts += resolved.priorCampaignContacts
+      totalDncExcluded += resolved.doNotContactExcluded
+      results.push({ campaignId: id, leadCount: resolved.leadIds.length })
     }
 
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-      include: { targetBatches: true, steps: true },
-    })
-
-    if (!campaign) {
-      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
+    const started = results.filter((r) => r.leadCount != null)
+    if (started.length === 0) {
+      const firstError = results.find((r) => r.error)?.error ?? 'No campaigns started'
+      return NextResponse.json({ error: firstError, results }, { status: 400 })
     }
-
-    if (campaign.steps.length === 0) {
-      return NextResponse.json({ error: 'Campaign has no steps' }, { status: 400 })
-    }
-
-    const where: { verificationStatus: string; importBatchId?: { in: number[] } } = {
-      verificationStatus: 'valid',
-    }
-    if (campaign.targetBatches.length > 0) {
-      where.importBatchId = { in: campaign.targetBatches.map((tb) => tb.importBatchId) }
-    }
-
-    const leads = await prisma.lead.findMany({ where, select: { id: true } })
-    const validLeadIds = leads.map((l) => l.id)
-    const maxStepOrder = getMaxStepOrder(campaign.steps)
-
-    const [leadIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
-      getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder),
-      countPriorCampaignContacts(campaignId, validLeadIds),
-      countDoNotContactInList(validLeadIds),
-    ])
-
-    if (leadIds.length === 0) {
-      return NextResponse.json({ error: 'No sendable leads remaining for this campaign' }, { status: 400 })
-    }
-
-    await prisma.queueState.upsert({
-      where: { id: 1 },
-      create: {
-        id: 1,
-        running: true,
-        paused: false,
-        activeCampaignId: campaignId,
-        activeLeadIdsJson: JSON.stringify(leadIds),
-        skippedLeadIdsJson: '[]',
-        processedInSession: 0,
-        failedInSession: 0,
-        consecutiveFailures: 0,
-        lastError: null,
-        processingLockUntil: null,
-        nextSendAllowedAt: null,
-      },
-      update: {
-        running: true,
-        paused: false,
-        activeCampaignId: campaignId,
-        activeLeadIdsJson: JSON.stringify(leadIds),
-        skippedLeadIdsJson: '[]',
-        processedInSession: 0,
-        failedInSession: 0,
-        consecutiveFailures: 0,
-        lastError: null,
-        processingLockUntil: null,
-        nextSendAllowedAt: null,
-        updatedAt: new Date(),
-      },
-    })
 
     return NextResponse.json({
       success: true,
-      leadCount: leadIds.length,
+      results,
+      leadCount: started.reduce((s, r) => s + (r.leadCount ?? 0), 0),
       warnings: {
-        priorCampaignContacts,
-        doNotContactExcluded,
+        priorCampaignContacts: totalPriorContacts,
+        doNotContactExcluded: totalDncExcluded,
       },
     })
   } catch (error) {

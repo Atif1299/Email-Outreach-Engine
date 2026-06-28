@@ -18,6 +18,12 @@ import {
   toSendLimitSettings,
 } from '@/lib/send-limits'
 import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
+import {
+  computeAggregateDueNow,
+  getActiveCampaignIds,
+  parseActiveCampaigns,
+  pickNextDueJob,
+} from '@/lib/queue-active'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,61 +62,105 @@ export async function GET() {
 
     const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
-    const activeLeadIds = JSON.parse(state.activeLeadIdsJson || '[]') as number[]
-    const skippedLeadIds = new Set<number>(JSON.parse(state.skippedLeadIdsJson || '[]'))
+    const activeEntries = parseActiveCampaigns(state)
+    const activeCampaignIds = getActiveCampaignIds(state)
+
+    const campaigns = await prisma.campaign.findMany({
+      where: { id: { in: activeCampaignIds } },
+      select: { id: true, name: true },
+    })
+    const campaignNames = new Map(campaigns.map((c) => [c.id, c.name]))
+
+    const activeCampaigns = activeEntries.map((e) => ({
+      campaignId: e.campaignId,
+      name: campaignNames.get(e.campaignId) ?? `Campaign ${e.campaignId}`,
+      remainingLeads: e.leadIds.length,
+    }))
+
+    const aggregateDueNow = await computeAggregateDueNow(activeEntries)
 
     let currentJob: {
+      campaignId: number
+      campaignName: string
       leadId: number
       email: string
       stepOrder: number | null
       status: 'sending' | 'completing' | 'waiting_delay'
     } | null = null
 
-    if (state.running && !state.paused && activeLeadIds.length > 0 && state.activeCampaignId) {
-      const leadId = activeLeadIds[0]
-      const [lead, campaign] = await Promise.all([
-        prisma.lead.findUnique({ where: { id: leadId } }),
-        prisma.campaign.findUnique({
-          where: { id: state.activeCampaignId },
-          include: { steps: { orderBy: { stepOrder: 'asc' } } },
-        }),
-      ])
+    if (state.running && !state.paused && activeEntries.length > 0) {
+      const fullCampaigns = await prisma.campaign.findMany({
+        where: { id: { in: activeCampaignIds } },
+        include: { steps: { orderBy: { stepOrder: 'asc' } } },
+      })
+      const campaignsById = new Map(fullCampaigns.map((c) => [c.id, c]))
 
-      if (lead && campaign) {
-        const [lastSends, engagedLeadIds] = await Promise.all([
-          loadLastSuccessfulSends(state.activeCampaignId, [leadId]),
-          loadBlockedLeadIds(state.activeCampaignId, [leadId]),
+      const pickResult = await pickNextDueJob(
+        activeEntries,
+        campaignsById,
+        limitSettings,
+        stepTypeCounts,
+        state.lastServedCampaignId ?? null
+      )
+
+      const previewLeadId =
+        pickResult.candidate?.leadId ??
+        activeEntries.find((e) => e.leadIds.length > 0)?.leadIds[0]
+
+      const previewCampaignId =
+        pickResult.candidate?.campaignId ??
+        activeEntries.find((e) => e.leadIds.length > 0)?.campaignId
+
+      if (previewLeadId && previewCampaignId) {
+        const campaign = campaignsById.get(previewCampaignId)
+        const entry = activeEntries.find((e) => e.campaignId === previewCampaignId)
+        const [lead] = await Promise.all([
+          prisma.lead.findUnique({ where: { id: previewLeadId } }),
         ])
-        const lastSend = lastSends.get(leadId) ?? null
-        const queueStatus = getLeadQueueStatus(
-          leadId,
-          campaign.steps,
-          lastSend,
-          skippedLeadIds,
-          engagedLeadIds
-        )
-        const nextStepOrder = getNextStepOrder(lastSend)
 
-        if (queueStatus === 'completing') {
-          currentJob = {
-            leadId,
-            email: lead.email,
-            stepOrder: lastSend?.stepOrder ?? null,
-            status: 'completing',
-          }
-        } else if (queueStatus === 'waiting_delay') {
-          currentJob = {
-            leadId,
-            email: lead.email,
-            stepOrder: nextStepOrder,
-            status: 'waiting_delay',
-          }
-        } else {
-          currentJob = {
-            leadId,
-            email: lead.email,
-            stepOrder: nextStepOrder,
-            status: 'sending',
+        if (lead && campaign) {
+          const skippedLeadIds = new Set(entry?.skippedLeadIds ?? [])
+          const [lastSends, engagedLeadIds] = await Promise.all([
+            loadLastSuccessfulSends(previewCampaignId, [previewLeadId]),
+            loadBlockedLeadIds(previewCampaignId, [previewLeadId]),
+          ])
+          const lastSend = lastSends.get(previewLeadId) ?? null
+          const queueStatus = getLeadQueueStatus(
+            previewLeadId,
+            campaign.steps,
+            lastSend,
+            skippedLeadIds,
+            engagedLeadIds
+          )
+          const nextStepOrder = getNextStepOrder(lastSend)
+
+          if (queueStatus === 'completing') {
+            currentJob = {
+              campaignId: previewCampaignId,
+              campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
+              leadId: previewLeadId,
+              email: lead.email,
+              stepOrder: lastSend?.stepOrder ?? null,
+              status: 'completing',
+            }
+          } else if (queueStatus === 'waiting_delay') {
+            currentJob = {
+              campaignId: previewCampaignId,
+              campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
+              leadId: previewLeadId,
+              email: lead.email,
+              stepOrder: nextStepOrder,
+              status: 'waiting_delay',
+            }
+          } else {
+            currentJob = {
+              campaignId: previewCampaignId,
+              campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
+              leadId: previewLeadId,
+              email: lead.email,
+              stepOrder: nextStepOrder,
+              status: 'sending',
+            }
           }
         }
       }
@@ -119,7 +169,10 @@ export async function GET() {
     return NextResponse.json({
       running: state.running,
       paused: state.paused,
-      activeCampaignId: state.activeCampaignId,
+      activeCampaignId: activeCampaignIds[0] ?? null,
+      activeCampaignIds,
+      activeCampaigns,
+      aggregateDueNow,
       lastError: state.lastError,
       processedInSession: state.processedInSession,
       failedInSession: state.failedInSession,

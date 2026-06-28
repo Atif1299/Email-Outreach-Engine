@@ -28,6 +28,25 @@ interface PreviousSend {
   body_snippet?: string
 }
 
+/** step1 = observation, step2 = insight/proof, step3 = close loop */
+function stepPromptTier(stepOrder: number): 'step1' | 'step2' | 'step3' {
+  if (stepOrder <= 1) return 'step1'
+  if (stepOrder === 2) return 'step2'
+  return 'step3'
+}
+
+function bodyPromptFiles(tier: 'step1' | 'step2' | 'step3'): { system: string; user: string } {
+  if (tier === 'step1') return { system: 'body_system.md', user: 'body_user.md' }
+  if (tier === 'step2') return { system: 'body_system_step2.md', user: 'body_user_step2.md' }
+  return { system: 'body_system_step3.md', user: 'body_user_step3.md' }
+}
+
+function subjectPromptFile(tier: 'step1' | 'step2' | 'step3'): string {
+  if (tier === 'step1') return 'subject_system.md'
+  if (tier === 'step2') return 'subject_system_step2.md'
+  return 'subject_system_step3.md'
+}
+
 interface GenerateEmailOptions {
   leadData: LeadData
   leadId?: number
@@ -40,6 +59,7 @@ interface GenerateEmailOptions {
   bodyTemplate: string
   stepOrder?: number
   previous?: PreviousSend
+  step1Touch?: PreviousSend
   model: string
   apiKey: string
   provider?: 'openai' | 'gemini'
@@ -199,6 +219,22 @@ function hasBannedBodyFiller(text: string): boolean {
   return BANNED_BODY_PATTERNS.some((re) => re.test(text))
 }
 
+const STEP3_BANNED_PATTERNS = [
+  /previous notes/i,
+  /our previous (?:emails?|messages?|conversation)/i,
+  /following up on (?:my|our) last email/i,
+  /just circling back/i,
+  /explore how ai could/i,
+  /automate 2-3 workflows/i,
+  /quick call to explore/i,
+  /should i close the loop\?$/i,
+  /close the loop\?$/i,
+]
+
+function hasBannedStep3Filler(text: string): boolean {
+  return STEP3_BANNED_PATTERNS.some((re) => re.test(text))
+}
+
 function voiceRules(aiVoice: string): string {
   if (aiVoice === 'company') {
     return 'Use company voice — we/our/us. Name the lead\'s company or industry in the bridge sentence. Never write a generic capabilities paragraph — one specific bridge sentence only.'
@@ -220,6 +256,7 @@ function buildBodyMessages(opts: {
   pitchBlock: string
   senderInfo: string
   previous?: PreviousSend
+  step1Touch?: PreviousSend
   stepOrder: number
   mergedPreview: string
   aiVoice: string
@@ -228,19 +265,20 @@ function buildBodyMessages(opts: {
   fewShotStep1Json?: string
   fewShotStep2Json?: string
 }) {
+  const tier = stepPromptTier(opts.stepOrder)
   const campaignExamples =
-    opts.stepOrder > 1
-      ? parseFewShotJson(opts.fewShotStep2Json)
-      : parseFewShotJson(opts.fewShotStep1Json)
+    tier === 'step1'
+      ? parseFewShotJson(opts.fewShotStep1Json)
+      : parseFewShotJson(opts.fewShotStep2Json)
   const examples = resolveFewShotExamples(opts.stepOrder, campaignExamples)
   const fewShot = pickFewShotForLead(examples, {
     leadId: opts.leadId,
     email: opts.lead.email,
     stepOrder: opts.stepOrder,
   })
-  const isFollowUp = opts.stepOrder > 1
-  const systemTpl = loadPromptFile(isFollowUp ? 'body_system_step2.md' : 'body_system.md')
-  const userTpl = loadPromptFile(isFollowUp ? 'body_user_step2.md' : 'body_user.md')
+  const { system: systemFile, user: userFile } = bodyPromptFiles(tier)
+  const systemTpl = loadPromptFile(systemFile)
+  const userTpl = loadPromptFile(userFile)
 
   const pitch = parsePitchBlock(opts.pitchBlock)
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
@@ -260,6 +298,11 @@ function buildBodyMessages(opts: {
   const previousBody =
     opts.previous?.body?.trim() ||
     opts.previous?.body_snippet?.trim() ||
+    '(none — save or generate the prior step preview for this lead first)'
+
+  const step1Body =
+    opts.step1Touch?.body?.trim() ||
+    opts.step1Touch?.body_snippet?.trim() ||
     '(none — save or generate step 1 preview for this lead first)'
 
   const userVars: Record<string, string> = {
@@ -276,13 +319,16 @@ function buildBodyMessages(opts: {
     PITCH_RAW: pitch.raw || '(empty)',
     SENDER_INFO: opts.senderInfo?.trim() || '(none — use "Best" only)',
     STEP_ORDER: String(opts.stepOrder),
+    PREV_STEP_NUMBER: String(Math.max(1, opts.stepOrder - 1)),
     PREVIOUS_SUBJECT: opts.previous?.subject?.trim() || '(none — first email)',
     PREVIOUS_SNIPPET: opts.previous?.body_snippet?.trim() || previousBody,
     PREVIOUS_BODY: previousBody,
+    STEP1_SUBJECT: opts.step1Touch?.subject?.trim() || opts.previous?.subject?.trim() || '(none)',
+    STEP1_BODY: tier === 'step3' ? step1Body : previousBody,
     MERGED_PREVIEW: opts.mergedPreview?.trim() || '(empty template)',
   }
 
-  if (!isFollowUp) {
+  if (tier === 'step1') {
     userVars.PERSONALIZATION_BRIEF = buildPersonalizationBrief(leadWithEmail, pitch)
   }
 
@@ -304,9 +350,10 @@ function buildSubjectMessages(opts: {
   outputLanguage?: string
   stepOrder?: number
   previous?: PreviousSend
+  step1Touch?: PreviousSend
 }) {
-  const isFollowUp = (opts.stepOrder ?? 1) > 1
-  const systemTpl = loadPromptFile(isFollowUp ? 'subject_system_step2.md' : 'subject_system.md')
+  const tier = stepPromptTier(opts.stepOrder ?? 1)
+  const systemTpl = loadPromptFile(subjectPromptFile(tier))
   const instructions = (opts.aiInstructions || '').trim() || '(none)'
   const lang = normalizeOutputLanguage(opts.outputLanguage)
 
@@ -317,7 +364,7 @@ function buildSubjectMessages(opts: {
   })
 
   const previousBlock =
-    isFollowUp && opts.previous?.subject
+    tier !== 'step1' && opts.previous?.subject
       ? `\nPrevious email subject (follow-up thread — relate to this):\n${opts.previous.subject}\n`
       : ''
 
@@ -397,6 +444,7 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
     pitchBlock: opts.pitchBlock,
     senderInfo: opts.senderInfo,
     previous: opts.previous,
+    step1Touch: opts.step1Touch,
     stepOrder: opts.stepOrder ?? 1,
     mergedPreview: mergeTags(opts.bodyTemplate, leadFull, PITCH_STUB_FOR_AI, opts.senderInfo),
     aiVoice: opts.aiVoice || 'founder',
@@ -419,6 +467,20 @@ export async function generateEmailBody(opts: GenerateEmailOptions): Promise<str
   }
 
   let text = await request(baseMessages)
+  const tier = stepPromptTier(opts.stepOrder ?? 1)
+
+  if (tier === 'step3' && hasBannedStep3Filler(text)) {
+    text = await request([
+      ...baseMessages,
+      { role: 'assistant', content: text },
+      {
+        role: 'user',
+        content:
+          'REJECTED: sounds templated or salesy. Rewrite as premium close-loop. Name ONE specific workflow/pain from prior emails + lead company. Acknowledge timing may be off. Reframe pitch Offer warmly — no "explore how AI", no "previous notes", no bare "close the loop?". End with dignified binary: happy to [offer] or you will close out on your side.',
+      },
+    ])
+  }
+
   if (hasBannedBodyFiller(text)) {
     text = await request([
       ...baseMessages,
@@ -448,6 +510,7 @@ export async function generateSubjectLine(opts: GenerateEmailOptions & { bodySoF
     outputLanguage: opts.outputLanguage,
     stepOrder: opts.stepOrder,
     previous: opts.previous,
+    step1Touch: opts.step1Touch,
   })
 
   const response = await openai.chat.completions.create({
@@ -489,6 +552,7 @@ export async function renderEmailForLead(opts: {
   bodyTemplate: string
   stepOrder: number
   previous?: PreviousSend
+  step1Touch?: PreviousSend
   model: string
   apiKey: string
   provider?: 'openai' | 'gemini'
@@ -515,6 +579,7 @@ export async function renderEmailForLead(opts: {
           bodyTemplate: opts.bodyTemplate,
           stepOrder: opts.stepOrder,
           previous: opts.previous,
+          step1Touch: opts.step1Touch,
           model: opts.model,
           apiKey: opts.apiKey,
           provider: opts.provider,
@@ -546,6 +611,7 @@ export async function renderEmailForLead(opts: {
       bodyTemplate: opts.bodyTemplate,
       stepOrder: opts.stepOrder,
       previous: opts.previous,
+      step1Touch: opts.step1Touch,
       model: opts.model,
       apiKey: opts.apiKey,
       provider: opts.provider,

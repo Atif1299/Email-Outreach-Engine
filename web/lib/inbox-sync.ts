@@ -1,6 +1,10 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import prisma from '@/lib/db'
+import {
+  parseActiveCampaigns,
+  type QueueStateLike,
+} from '@/lib/queue-active'
 import { getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
 import {
   markLeadDoNotContact,
@@ -154,7 +158,7 @@ async function resolveCampaignForReply(
   leadId: number,
   replyDate: Date,
   inReplyToIds: string[],
-  queueState: { activeCampaignId: number | null; activeLeadIdsJson: string } | null
+  queueState: QueueStateLike | null
 ): Promise<number | null> {
   if (inReplyToIds.length > 0) {
     const threadedSend = await prisma.leadSend.findFirst({
@@ -208,12 +212,14 @@ async function resolveCampaignForReply(
 
   if (priorSends.length === 0) return null
 
-  if (queueState?.activeCampaignId) {
-    const activeIds: number[] = JSON.parse(queueState.activeLeadIdsJson || '[]')
-    if (activeIds.includes(leadId)) {
-      const hasSendForActive = priorSends.some((s) => s.campaignId === queueState.activeCampaignId)
-      if (hasSendForActive) return queueState.activeCampaignId
-    }
+  const activeEntries = parseActiveCampaigns(queueState)
+  const activeCampaignIds = activeEntries
+    .filter((e) => e.leadIds.includes(leadId))
+    .map((e) => e.campaignId)
+
+  if (activeCampaignIds.length > 0) {
+    const activeSends = priorSends.filter((s) => activeCampaignIds.includes(s.campaignId))
+    if (activeSends.length > 0) return activeSends[0].campaignId
   }
 
   return priorSends[0].campaignId
@@ -271,7 +277,7 @@ async function recordEngagement(opts: {
 
 async function processMessage(
   parsed: ParsedMail,
-  queueState: { activeCampaignId: number | null; activeLeadIdsJson: string } | null
+  queueState: QueueStateLike | null
 ): Promise<{ matched: boolean; replied: boolean; unsubscribed: boolean; skipped: boolean }> {
   const fromRaw = parsed.from?.value?.[0]?.address || parsed.from?.text || ''
   const fromEmail = normalizeEmail(fromRaw)
@@ -335,7 +341,7 @@ async function processMessage(
 
 async function syncAccountInbox(
   account: { id: number; email: string; password: string; lastInboxCheckedAt: Date | null },
-  queueState: { activeCampaignId: number | null; activeLeadIdsJson: string } | null,
+  queueState: QueueStateLike | null,
   result: InboxSyncResult
 ) {
   const sinceDate =

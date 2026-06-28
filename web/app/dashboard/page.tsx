@@ -99,6 +99,9 @@ export interface QueueStatus {
   running: boolean
   paused: boolean
   activeCampaignId?: number | null
+  activeCampaignIds?: number[]
+  activeCampaigns?: Array<{ campaignId: number; name: string; remainingLeads: number }>
+  aggregateDueNow?: number
   lastError: string | null
   processedInSession: number
   failedInSession: number
@@ -121,6 +124,8 @@ export interface QueueStatus {
   dailyStep1Cap?: number
   dailyFollowUpCap?: number
   currentJob: {
+    campaignId?: number
+    campaignName?: string
     leadId: number
     stepOrder: number | null
     email: string

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { Campaign, QueueStatus } from '@/app/dashboard/page'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
@@ -14,6 +14,7 @@ interface Props {
 }
 
 interface CampaignStats {
+  campaignId?: number
   campaignName?: string
   isActiveCampaign?: boolean
   sendable: number
@@ -49,6 +50,41 @@ interface InboxStatus {
 
 const USE_CRON_WORKER = process.env.NEXT_PUBLIC_USE_CRON_WORKER === 'true'
 
+function CampaignRowStats({ stats }: { stats: CampaignStats | undefined }) {
+  const items = stats
+    ? [
+      { key: 'ready', value: stats.dueNow, label: 'Ready', accent: stats.dueNow > 0 },
+      { key: 'waiting', value: stats.waitingOnDelay ?? 0, label: 'Waiting' },
+      { key: 'done', value: stats.leadsCompleted, label: 'Done' },
+      { key: 'blocked', value: stats.blockedEngaged ?? 0, label: 'Blocked' },
+    ]
+    : null
+
+  return (
+    <div
+      className="queue-campaign-summary"
+      title="Ready = can send now · Waiting = follow-up delay not reached yet · Done = finished all steps · Blocked = replied, unsubscribed, or do-not-contact"
+    >
+      {items
+        ? items.map((item) => (
+          <div
+            key={item.key}
+            className={`queue-stat-box${item.accent ? ' queue-stat-box--ready' : ''}${item.value === 0 ? ' queue-stat-box--zero' : ''}`}
+          >
+            <span className="queue-stat-box-value">{item.value}</span>
+            <span className="queue-stat-box-label">{item.label}</span>
+          </div>
+        ))
+        : [1, 2, 3, 4].map((n) => (
+          <div key={n} className="queue-stat-box queue-stat-box--loading">
+            <span className="queue-stat-box-value">—</span>
+            <span className="queue-stat-box-label">…</span>
+          </div>
+        ))}
+    </div>
+  )
+}
+
 export default function StepQueue({
   campaigns,
   queueCampaignId,
@@ -57,32 +93,68 @@ export default function StepQueue({
   onQueueStatusChange,
   onBackToPreview,
 }: Props) {
-  const [stats, setStats] = useState<CampaignStats | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [campaignStatsById, setCampaignStatsById] = useState<Record<number, CampaignStats>>({})
   const [inboxStatus, setInboxStatus] = useState<InboxStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const startFlash = useButtonFlash()
   const { hint: queueHint, showHint: showQueueHint } = useInlineHint()
 
+  const activeCampaignIds = queueStatus.activeCampaignIds ?? []
+
   useEffect(() => {
-    if (queueCampaignId) {
-      loadCampaignStats()
-      loadInboxStatus()
+    if (activeCampaignIds.length > 0) {
+      setSelectedIds(new Set(activeCampaignIds))
+    }
+  }, [activeCampaignIds.join(',')])
+
+  const loadAllCampaignStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/queue/stats/all')
+      if (res.ok) {
+        const data = await res.json()
+        const map: Record<number, CampaignStats> = {}
+        for (const s of data.campaigns ?? []) {
+          if (s.campaignId) map[s.campaignId] = s
+        }
+        setCampaignStatsById(map)
+      }
+    } catch (e) {
+      console.error('Failed to load campaign stats:', e)
+    }
+  }, [])
+
+  const loadQueueStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/queue')
+      if (res.ok) onQueueStatusChange(await res.json())
+    } catch (e) {
+      console.error('Failed to load queue status:', e)
+    }
+  }, [onQueueStatusChange])
+
+  const loadInboxStatus = useCallback(async () => {
+    try {
+      const q = queueCampaignId ? `?campaignId=${queueCampaignId}` : ''
+      const res = await fetch(`/api/inbox/status${q}`)
+      if (res.ok) setInboxStatus(await res.json())
+    } catch (e) {
+      console.error('Failed to load inbox status:', e)
     }
   }, [queueCampaignId])
 
-  // Status only — fast, no sending
   useEffect(() => {
     loadQueueStatus()
     loadInboxStatus()
+    loadAllCampaignStats()
     const interval = setInterval(() => {
       loadQueueStatus()
       loadInboxStatus()
-      if (queueCampaignId) loadCampaignStats()
+      loadAllCampaignStats()
     }, 5000)
     return () => clearInterval(interval)
-  }, [queueCampaignId])
+  }, [loadQueueStatus, loadInboxStatus, loadAllCampaignStats])
 
-  // Browser tick only when cron worker is disabled (local dev)
   useEffect(() => {
     if (USE_CRON_WORKER) return
     if (!queueStatus.running || queueStatus.paused) return
@@ -106,15 +178,15 @@ export default function StepQueue({
                 await new Promise((r) => setTimeout(r, 1500))
                 continue
               }
-              await loadCampaignStats()
+              await loadAllCampaignStats()
               break
             }
             if (data.status === 'cap_reached') {
               await new Promise((r) => setTimeout(r, 5000))
-              await loadCampaignStats()
+              await loadAllCampaignStats()
               continue
             }
-            await loadCampaignStats()
+            await loadAllCampaignStats()
           } catch (e) {
             console.error('Queue tick error:', e)
             break
@@ -125,65 +197,67 @@ export default function StepQueue({
     return () => {
       cancelled = true
     }
-  }, [queueStatus.running, queueStatus.paused])
+  }, [queueStatus.running, queueStatus.paused, loadQueueStatus, loadAllCampaignStats])
 
-  async function loadQueueStatus() {
-    try {
-      const res = await fetch('/api/queue')
-      if (res.ok) {
-        const data = await res.json()
-        onQueueStatusChange(data)
-      }
-    } catch (e) {
-      console.error('Failed to load queue status:', e)
-    }
+  function toggleSelected(campaignId: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(campaignId)) next.delete(campaignId)
+      else next.add(campaignId)
+      return next
+    })
+    onQueueCampaignChange(campaignId)
   }
 
-  async function loadInboxStatus() {
+  async function toggleActiveInQueue(campaignId: number, currentlyActive: boolean) {
     try {
-      const q = queueCampaignId ? `?campaignId=${queueCampaignId}` : ''
-      const res = await fetch(`/api/inbox/status${q}`)
-      if (res.ok) {
-        const data = await res.json()
-        setInboxStatus(data)
+      if (currentlyActive) {
+        await fetch('/api/queue/deactivate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaignId }),
+        })
+        showQueueHint('Campaign removed from queue', 'ok')
+      } else {
+        const res = await fetch('/api/queue/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaignId }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          showQueueHint(err.error || 'Failed to activate', 'err')
+          return
+        }
+        showQueueHint('Campaign added to queue', 'ok')
       }
-    } catch (e) {
-      console.error('Failed to load inbox status:', e)
-    }
-  }
-
-  async function loadCampaignStats() {
-    if (!queueCampaignId) return
-    try {
-      const res = await fetch(`/api/queue/stats?campaignId=${queueCampaignId}`)
-      if (res.ok) {
-        const data = await res.json()
-        setStats(data)
-      }
-    } catch (e) {
-      console.error('Failed to load campaign stats:', e)
+      await loadQueueStatus()
+      await loadAllCampaignStats()
+    } catch {
+      showQueueHint('Failed to update campaign', 'err')
     }
   }
 
   async function startQueue() {
-    if (!queueCampaignId || !stats?.dueNow) {
-      showQueueHint('No leads due to send right now', 'warn')
+    const ids = [...selectedIds]
+    if (ids.length === 0) {
+      showQueueHint('Select at least one campaign', 'warn')
       return
     }
-    setLoading(true)
 
+    setLoading(true)
     try {
       const res = await fetch('/api/queue/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaignId: queueCampaignId }),
+        body: JSON.stringify({ campaignIds: ids }),
       })
       if (res.ok) {
         const data = await res.json()
         await loadQueueStatus()
-        await loadCampaignStats()
+        await loadAllCampaignStats()
         startFlash.flashDone()
-        const parts: string[] = ['Started']
+        const parts: string[] = [`Started ${data.results?.filter((r: { leadCount?: number }) => r.leadCount).length ?? ids.length} campaign(s)`]
         if (data.warnings?.priorCampaignContacts > 0) {
           parts.push(`${data.warnings.priorCampaignContacts} already emailed in other campaigns`)
         }
@@ -196,7 +270,7 @@ export default function StepQueue({
         startFlash.flashError()
         showQueueHint(err.error || 'Start failed', 'err')
       }
-    } catch (e) {
+    } catch {
       startFlash.flashError()
       showQueueHint('Start failed', 'err')
     }
@@ -208,7 +282,7 @@ export default function StepQueue({
       await fetch('/api/queue/pause', { method: 'POST' })
       await loadQueueStatus()
       showQueueHint('Paused', 'ok')
-    } catch (e) {
+    } catch {
       showQueueHint('Pause failed', 'err')
     }
   }
@@ -218,7 +292,7 @@ export default function StepQueue({
       await fetch('/api/queue/resume', { method: 'POST' })
       await loadQueueStatus()
       showQueueHint('Resumed', 'ok')
-    } catch (e) {
+    } catch {
       showQueueHint('Resume failed', 'err')
     }
   }
@@ -227,17 +301,21 @@ export default function StepQueue({
     try {
       await fetch('/api/queue/stop', { method: 'POST' })
       await loadQueueStatus()
+      await loadAllCampaignStats()
       showQueueHint('Stopped', 'ok')
-    } catch (e) {
+    } catch {
       showQueueHint('Stop failed', 'err')
     }
   }
 
-  const statusClass = queueStatus.capReached || queueStatus.hourCapReached || queueStatus.outsideWindow
-    ? 'status-pill--paused'
-    : queueStatus.running
-      ? (queueStatus.paused ? 'status-pill--paused' : 'status-pill--running')
-      : ''
+  const statusClass =
+    queueStatus.capReached || queueStatus.hourCapReached || queueStatus.outsideWindow
+      ? 'status-pill--paused'
+      : queueStatus.running
+        ? queueStatus.paused
+          ? 'status-pill--paused'
+          : 'status-pill--running'
+        : ''
 
   const statusText = queueStatus.outsideWindow
     ? 'Waiting (midday)'
@@ -246,200 +324,269 @@ export default function StepQueue({
       : queueStatus.hourCapReached
         ? 'Hourly Cap'
         : queueStatus.running
-          ? (queueStatus.paused
-            ? (queueStatus.lastError?.startsWith('Paused:') ? 'Paused (auto)' : 'Paused')
-            : (USE_CRON_WORKER ? 'Running (background)' : 'Running'))
+          ? queueStatus.paused
+            ? queueStatus.lastError?.startsWith('Paused:')
+              ? 'Paused (auto)'
+              : 'Paused'
+            : USE_CRON_WORKER
+              ? 'Running (background)'
+              : 'Running'
           : 'Stopped'
 
-  const selectedCampaign = campaigns.find((c) => c.id === queueCampaignId)
-  const showProgress = queueCampaignId && stats && (queueStatus.running || stats.emailsSent > 0)
+  const dueNow = queueStatus.aggregateDueNow ?? 0
+
+  const selectedDueNow = [...selectedIds].reduce(
+    (sum, id) => sum + (campaignStatsById[id]?.dueNow ?? 0),
+    0
+  )
+  const canStart =
+    selectedIds.size > 0 && selectedDueNow > 0 && !queueStatus.running
+
+  const inQueueNames = activeCampaignIds
+    .map((id) => campaigns.find((c) => c.id === id)?.name)
+    .filter(Boolean) as string[]
+
+  const allStats = Object.values(campaignStatsById)
+  const totalReplied =
+    allStats.reduce((s, c) => s + (c.repliedCount ?? 0), 0) || inboxStatus?.repliedCount || 0
+  const totalUnsubscribed =
+    allStats.reduce((s, c) => s + (c.unsubscribedCount ?? 0), 0) || inboxStatus?.unsubscribedCount || 0
 
   return (
     <section className="step-view">
       <div className="step-body">
         <div className="queue-dashboard">
-          {/* Stats Cards */}
-          <div className="queue-stats">
-            <div className="queue-stats-row">
-              <div className="stat-card">
-                <div className="stat-value">{queueStatus.sendsToday}</div>
-                <div className="stat-label">Sent Today</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{queueStatus.sendsThisHour ?? 0}</div>
-                <div className="stat-label">Sent This Hour</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{queueStatus.processedInSession}</div>
-                <div className="stat-label">Sent (this run)</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{stats?.dueNow || 0}</div>
-                <div className="stat-label">Due Now</div>
-              </div>
-            </div>
-            <div className="queue-stats-row">
-              <div className="stat-card">
-                <div className="stat-value">{queueStatus.failedInSession}</div>
-                <div className="stat-label">SMTP errors (run)</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{queueStatus.failedSendsToday ?? 0}</div>
-                <div className="stat-label">Failed in DB (today)</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{stats?.repliedCount ?? inboxStatus?.repliedCount ?? 0}</div>
-                <div className="stat-label">Replied</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-value">{stats?.unsubscribedCount ?? inboxStatus?.unsubscribedCount ?? 0}</div>
-                <div className="stat-label">Unsubscribed</div>
-              </div>
-            </div>
-            {queueStatus.stepTypeCapsEnabled ? (
-              <div className="queue-stats-row queue-stats-row--caps">
+          {/* Global stats */}
+          <div className="queue-section">
+            <h3 className="queue-section-title">Global send stats</h3>
+            <div className="queue-stats">
+              <div className="queue-stats-row">
                 <div className="stat-card">
-                  <div className="stat-value">
-                    {queueStatus.step1SentToday ?? 0}/{queueStatus.dailyStep1Cap ?? 0}
-                  </div>
-                  <div className="stat-label">Step 1 Today</div>
+                  <div className="stat-value">{queueStatus.sendsToday}</div>
+                  <div className="stat-label">Sent Today</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-value">
-                    {queueStatus.followUpSentToday ?? 0}/{queueStatus.dailyFollowUpCap ?? 0}
-                  </div>
-                  <div className="stat-label">Follow-ups Today</div>
+                  <div className="stat-value">{queueStatus.sendsThisHour ?? 0}</div>
+                  <div className="stat-label">Sent This Hour</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{queueStatus.processedInSession}</div>
+                  <div className="stat-label">Sent (this run)</div>
+                </div>
+                <div className="stat-card stat-card--highlight">
+                  <div className="stat-value">{dueNow}</div>
+                  <div className="stat-label">Due Now</div>
                 </div>
               </div>
-            ) : null}
+              <div className="queue-stats-row">
+                <div className="stat-card">
+                  <div className="stat-value">{queueStatus.failedInSession}</div>
+                  <div className="stat-label">SMTP errors (run)</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{queueStatus.failedSendsToday ?? 0}</div>
+                  <div className="stat-label">Failed (today)</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{totalReplied}</div>
+                  <div className="stat-label">Replied</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{totalUnsubscribed}</div>
+                  <div className="stat-label">Unsubscribed</div>
+                </div>
+              </div>
+              {queueStatus.stepTypeCapsEnabled ? (
+                <div className="queue-stats-row queue-stats-row--caps">
+                  <div className="stat-card">
+                    <div className="stat-value">
+                      {queueStatus.step1SentToday ?? 0}/{queueStatus.dailyStep1Cap ?? 0}
+                    </div>
+                    <div className="stat-label">Step 1 Today</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">
+                      {queueStatus.followUpSentToday ?? 0}/{queueStatus.dailyFollowUpCap ?? 0}
+                    </div>
+                    <div className="stat-label">Follow-ups Today</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          {/* Campaign Progress */}
-          {showProgress && stats && (
-            <div className="campaign-progress-panel">
-              <div className="campaign-progress-header">
-                <span className="campaign-progress-name">
-                  {stats.campaignName || selectedCampaign?.name || 'Campaign'}
-                </span>
-                {stats.isActiveCampaign && queueStatus.running && (
-                  <span className="status-pill status-pill--running">Active</span>
-                )}
-              </div>
-
-              <div className="campaign-progress-summary">
-                <span>{stats.leadsCompleted} completed</span>
-                <span>{stats.notStarted ?? 0} not started</span>
-                <span>{stats.waitingOnDelay ?? 0} waiting on delay</span>
-                <span>{stats.blockedEngaged ?? 0} blocked (replied/unsub)</span>
-              </div>
-
-              <div className="campaign-progress-steps">
-                <div className="campaign-progress-row">
-                  <span className="campaign-progress-label">Step 1</span>
-                  <div className="campaign-progress-bar-wrap">
-                    <div
-                      className="campaign-progress-bar campaign-progress-bar--step1"
-                      style={{
-                        width: `${Math.min(100, ((stats.step1?.sent ?? 0) / Math.max(stats.step1?.eligible ?? 1, 1)) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="campaign-progress-count">
-                    {stats.step1?.sent ?? 0} / {stats.step1?.eligible ?? stats.sendable} sent
-                  </span>
-                </div>
-
-                {(stats.stepCount ?? 0) > 1 && (
-                  <div className="campaign-progress-row">
-                    <span className="campaign-progress-label">Follow-ups</span>
-                    <div className="campaign-progress-bar-wrap">
-                      <div
-                        className="campaign-progress-bar campaign-progress-bar--followup"
-                        style={{
-                          width: `${Math.min(100, ((stats.followUps?.sent ?? 0) / Math.max(stats.followUps?.eligible ?? 1, 1)) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <span className="campaign-progress-count">
-                      {stats.followUps?.sent ?? 0} sent · {stats.followUps?.due ?? 0} due ·{' '}
-                      {stats.followUps?.eligible ?? 0} in sequence
-                    </span>
-                  </div>
-                )}
-
-                {stats.stepBreakdown && stats.stepBreakdown.length > 1 && (
-                  <div className="campaign-progress-breakdown">
-                    {stats.stepBreakdown.map((step) => (
-                      <div key={step.stepOrder} className="campaign-progress-step-detail">
-                        <span>{step.label}</span>
-                        <span>
-                          {step.sent} sent{step.due > 0 ? ` · ${step.due} due` : ''}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Queue Status Panel */}
-          <div className="queue-status-panel">
-            <div className="status-row">
-              <span className="status-label">
-                Status:
-                <InlineHint hint={queueHint} />
+          {/* Campaign selection */}
+          <div className="queue-section queue-campaign-select">
+            <div className="queue-section-header">
+              <h3 className="queue-section-title">Campaigns</h3>
+              <span className="queue-section-hint">
+                {queueStatus.running
+                  ? 'Only campaigns marked In queue will send. Use Add to include more, Remove to exclude.'
+                  : 'Check campaigns to include, then Start queue. Stats: ready = can send now, waiting = on delay.'}
               </span>
-              <span className={`status-pill ${statusClass}`}>{statusText}</span>
             </div>
-            <div className="queue-controls">
-              <button
-                type="button"
-                className="btn primary"
-                disabled={queueStatus.running || !queueCampaignId || !stats?.dueNow || loading}
-                onClick={startQueue}
-                title={!stats?.dueNow && queueCampaignId ? 'No leads due to send right now' : ''}
-              >
-                {loading ? 'Starting...' : startFlash.flash === 'done' ? 'Started' : startFlash.flash === 'error' ? 'Failed' : '▶ Start Queue'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-                disabled={!queueStatus.running || queueStatus.paused}
-                onClick={pauseQueue}
-              >
-                ⏸ Pause
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-                disabled={!queueStatus.running || !queueStatus.paused}
-                onClick={resumeQueue}
-              >
-                ▶ Resume
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-                disabled={!queueStatus.running}
-                onClick={stopQueue}
-              >
-                ⏹ Stop
-              </button>
+            <div className="queue-campaign-list">
+              {campaigns.length === 0 ? (
+                <p className="queue-empty-hint">No campaigns yet — create one in the Campaign step.</p>
+              ) : (
+                campaigns.map((c) => {
+                  const isActive = activeCampaignIds.includes(c.id)
+                  const isSelected = selectedIds.has(c.id)
+                  const isViewing = queueCampaignId === c.id
+                  return (
+                    <div
+                      key={c.id}
+                      className={`queue-campaign-row${isActive ? ' queue-campaign-row--active' : ''}${isViewing ? ' queue-campaign-row--viewing' : ''}${queueStatus.running ? ' queue-campaign-row--running' : ''}`}
+                    >
+                      {!queueStatus.running && (
+                        <label className="queue-campaign-check" title="Include when starting queue">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelected(c.id)}
+                          />
+                        </label>
+                      )}
+                      <button
+                        type="button"
+                        className="queue-campaign-name"
+                        onClick={() => onQueueCampaignChange(c.id)}
+                      >
+                        {c.name}
+                      </button>
+                      <CampaignRowStats stats={campaignStatsById[c.id]} />
+                      <div className="queue-campaign-actions">
+                        {isActive && queueStatus.running && (
+                          <span className="status-pill status-pill--running">In queue</span>
+                        )}
+                        {queueStatus.running ? (
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${isActive ? 'btn-outline' : 'primary'}`}
+                            onClick={() => toggleActiveInQueue(c.id, isActive)}
+                            title={
+                              isActive
+                                ? 'Stop sending for this campaign (others keep running)'
+                                : 'Add this campaign to the running queue'
+                            }
+                          >
+                            {isActive ? 'Remove' : 'Add to queue'}
+                          </button>
+                        ) : (
+                          <span className="status-pill">{isSelected ? 'Selected' : ''}</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Queue controls */}
+          <div className="queue-section queue-status-panel">
+            <div className="queue-status-header">
+              <div className="status-row">
+                <span className="status-label">
+                  Queue status
+                  <InlineHint hint={queueHint} />
+                </span>
+                <span className={`status-pill ${statusClass}`}>{statusText}</span>
+              </div>
+              <div className="queue-controls">
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={queueStatus.running || !canStart || loading}
+                  onClick={startQueue}
+                  title={
+                    !queueStatus.running && selectedIds.size === 0
+                      ? 'Check at least one campaign'
+                      : !queueStatus.running && selectedDueNow === 0
+                        ? 'No ready leads in selected campaigns'
+                        : undefined
+                  }
+                >
+                  {loading
+                    ? 'Starting...'
+                    : startFlash.flash === 'done'
+                      ? 'Started'
+                      : startFlash.flash === 'error'
+                        ? 'Failed'
+                        : queueStatus.running
+                          ? 'Running'
+                          : selectedIds.size > 0
+                            ? `Start queue (${selectedIds.size})`
+                            : 'Start queue'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={!queueStatus.running || queueStatus.paused}
+                  onClick={pauseQueue}
+                >
+                  Pause
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={!queueStatus.running || !queueStatus.paused}
+                  onClick={resumeQueue}
+                >
+                  Resume
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={!queueStatus.running}
+                  onClick={stopQueue}
+                >
+                  Stop
+                </button>
+              </div>
             </div>
 
-            {stats && (stats.priorCampaignContacts ?? 0) > 0 && (
-              <p className="queue-cron-hint inline-hint inline-hint--warn">
-                {stats.priorCampaignContacts} lead{stats.priorCampaignContacts === 1 ? '' : 's'} in this campaign
-                were already emailed in another campaign — they may receive overlapping sequences.
+            {!queueStatus.running && selectedIds.size > 0 && (
+              <p className="queue-cron-hint">
+                Will start:{' '}
+                {[...selectedIds]
+                  .map((id) => campaigns.find((c) => c.id === id)?.name)
+                  .filter(Boolean)
+                  .join(', ')}
+                {selectedDueNow > 0 ? ` · ${selectedDueNow} ready to send` : ' · no leads ready right now'}
               </p>
             )}
 
-            {stats && (stats.doNotContactExcluded ?? 0) > 0 && (
+            {queueStatus.running && inQueueNames.length > 0 && (
               <p className="queue-cron-hint">
-                {stats.doNotContactExcluded} lead{stats.doNotContactExcluded === 1 ? '' : 's'} excluded
-                (do not contact).
+                Currently sending: {inQueueNames.join(', ')}
+                {dueNow > 0 ? ` · ${dueNow} ready across queue` : ' · nothing ready right now (waiting on delay or caps)'}
               </p>
+            )}
+
+            {queueStatus.lastError && (
+              <div className="queue-error">{queueStatus.lastError}</div>
+            )}
+
+            {queueStatus.currentJob && (
+              <div className="current-job">
+                <div className="current-job-row">
+                  <span className="job-label">Current lead</span>
+                  {queueStatus.currentJob.campaignName && (
+                    <span className="job-campaign">{queueStatus.currentJob.campaignName}</span>
+                  )}
+                </div>
+                <div className="current-job-row current-job-row--detail">
+                  <span className="job-email">{queueStatus.currentJob.email}</span>
+                  <span className="job-step">
+                    {queueStatus.currentJob.status === 'completing'
+                      ? 'Completing sequence'
+                      : queueStatus.currentJob.status === 'waiting_delay'
+                        ? `Waiting · Step ${queueStatus.currentJob.stepOrder}`
+                        : `Sending · Step ${queueStatus.currentJob.stepOrder}`}
+                  </span>
+                </div>
+              </div>
             )}
 
             {USE_CRON_WORKER && queueStatus.running && !queueStatus.paused && (
@@ -452,108 +599,58 @@ export default function StepQueue({
               <p className="queue-cron-hint">
                 Inbox sync:{' '}
                 {inboxStatus.lastCheckedAt
-                  ? `last checked ${new Date(inboxStatus.lastCheckedAt).toLocaleString()}`
+                  ? new Date(inboxStatus.lastCheckedAt).toLocaleString()
                   : 'not run yet'}
-                {inboxStatus.lastError ? ` · Error: ${inboxStatus.lastError}` : ''}
+                {inboxStatus.lastError ? ` · ${inboxStatus.lastError}` : ''}
               </p>
             )}
 
             {queueStatus.smtpAccounts && queueStatus.smtpAccounts.length > 0 && (
               <div className="smtp-queue-accounts">
                 <div className="smtp-queue-accounts-title">
-                  Inboxes ({queueStatus.enabledSmtpCount ?? queueStatus.smtpAccounts.filter((a) => a.enabled).length} active)
+                  Inboxes ({queueStatus.enabledSmtpCount ?? queueStatus.smtpAccounts.filter((a) => a.enabled).length}{' '}
+                  active)
                   {queueStatus.perInboxDailyCap
-                    ? ` · ${queueStatus.perInboxDailyCap}/day each · ${queueStatus.perInboxHourlyCap}/hr each`
+                    ? ` · ${queueStatus.perInboxDailyCap}/day · ${queueStatus.perInboxHourlyCap}/hr each`
                     : ''}
                 </div>
                 <div className="smtp-queue-accounts-grid">
-                  {queueStatus.smtpAccounts.filter((a) => a.enabled).map((account) => {
-                    const cooling = account.exhaustedUntil && new Date(account.exhaustedUntil) > new Date()
-                    const effectiveDailyCap = account.warmupEnabled
-                      ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
-                      : queueStatus.perInboxDailyCap
-                    const atCap =
-                      effectiveDailyCap != null &&
-                      account.sendsToday >= effectiveDailyCap
-                    return (
-                      <div
-                        key={account.id}
-                        className={`smtp-queue-account${cooling ? ' smtp-queue-account--cooling' : atCap ? ' smtp-queue-account--capped' : ''}`}
-                      >
-                        <div className="smtp-queue-account-email">
-                          {account.label || account.email}
-                        </div>
-                        <div className="smtp-queue-account-stats">
-                          {account.sendsToday}/
-                          {account.warmupEnabled
-                            ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—')
-                            : (queueStatus.perInboxDailyCap ?? '—')}{' '}
-                          today ·{' '}
-                          {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
-                          {account.warmupEnabled && account.warmupDay != null && account.warmupDay <= 7 && (
-                            <> · warmup day {account.warmupDay}</>
+                  {queueStatus.smtpAccounts
+                    .filter((a) => a.enabled)
+                    .map((account) => {
+                      const cooling =
+                        account.exhaustedUntil && new Date(account.exhaustedUntil) > new Date()
+                      const effectiveDailyCap = account.warmupEnabled
+                        ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
+                        : queueStatus.perInboxDailyCap
+                      const atCap =
+                        effectiveDailyCap != null && account.sendsToday >= effectiveDailyCap
+                      return (
+                        <div
+                          key={account.id}
+                          className={`smtp-queue-account${cooling ? ' smtp-queue-account--cooling' : atCap ? ' smtp-queue-account--capped' : ''}`}
+                        >
+                          <div className="smtp-queue-account-email">
+                            {account.label || account.email}
+                          </div>
+                          <div className="smtp-queue-account-stats">
+                            {account.sendsToday}/
+                            {account.warmupEnabled
+                              ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—')
+                              : (queueStatus.perInboxDailyCap ?? '—')}{' '}
+                            today · {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
+                            {account.warmupEnabled &&
+                              account.warmupDay != null &&
+                              account.warmupDay <= 7 && <> · day {account.warmupDay}</>}
+                          </div>
+                          {cooling && <div className="smtp-queue-account-status">Cooling down</div>}
+                          {!cooling && atCap && (
+                            <div className="smtp-queue-account-status">Daily cap</div>
                           )}
                         </div>
-                        {cooling && (
-                          <div className="smtp-queue-account-status">Cooling down</div>
-                        )}
-                        {!cooling && atCap && (
-                          <div className="smtp-queue-account-status">Daily cap</div>
-                        )}
-                      </div>
-                    )
-                  })}
+                      )
+                    })}
                 </div>
-              </div>
-            )}
-
-            {queueStatus.currentJob && (
-              <div className="current-job">
-                <span className="job-label">Current:</span>
-                <span className="job-email">{queueStatus.currentJob.email}</span>
-                <span className="job-step">
-                  {queueStatus.currentJob.status === 'completing'
-                    ? 'Done — removing from queue'
-                    : queueStatus.currentJob.status === 'waiting_delay'
-                      ? `Waiting for follow-up — Step ${queueStatus.currentJob.stepOrder}`
-                      : `Step ${queueStatus.currentJob.stepOrder}`}
-                </span>
-              </div>
-            )}
-
-            {queueStatus.failedInSession > 0 && queueStatus.processedInSession > 0 && (
-              <p className="queue-cron-hint">
-                {queueStatus.sendsToday} emails delivered today (check Gmail Sent). SMTP errors are retry/rate-limit attempts — not unsent emails.
-              </p>
-            )}
-
-            {queueStatus.lastError && (
-              <div className="queue-error">{queueStatus.lastError}</div>
-            )}
-          </div>
-
-          {/* Campaign Select */}
-          <div className="queue-campaign-select">
-            <div className="field">
-              <label className="mini-label">Campaign</label>
-              <select
-                className="input"
-                value={queueCampaignId || ''}
-                onChange={(e) => onQueueCampaignChange(e.target.value ? parseInt(e.target.value) : null)}
-              >
-                <option value="">Select campaign...</option>
-                {campaigns.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            {stats && (
-              <div className="campaign-stats">
-                Sendable: {stats.sendable} · Blocked: {stats.blocked} · Steps: {stats.stepCount} ·
-                Sent: {stats.emailsSent} · Started: {stats.leadsStarted} · Completed: {stats.leadsCompleted}
-                {(stats.repliedCount ?? 0) > 0 ? ` · Replied: ${stats.repliedCount}` : ''}
-                {(stats.unsubscribedCount ?? 0) > 0 ? ` · Unsubscribed: ${stats.unsubscribedCount}` : ''}
-                {(stats.waitingOnDelay ?? 0) > 0 ? ` · Waiting: ${stats.waitingOnDelay}` : ''}
               </div>
             )}
           </div>
@@ -563,7 +660,11 @@ export default function StepQueue({
       <footer className="step-footer">
         <div className="footer-left">
           <span className="footer-text">
-            {stats ? `${stats.sendable} sendable · ${stats.blocked} blocked (not verified)` : '0 leads in campaign'}
+            {activeCampaignIds.length > 0
+              ? `${activeCampaignIds.length} in queue · ${dueNow} due now · ${queueStatus.sendsToday} sent today`
+              : selectedIds.size > 0
+                ? `${selectedIds.size} selected — click Start Queue`
+                : 'Select campaigns above to begin'}
           </span>
         </div>
         <div className="footer-right">

@@ -4,6 +4,7 @@ import { parseFile } from '@/lib/parser'
 import { verifyEmailBasic } from '@/lib/verify'
 import { Prisma } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 const INSERT_BATCH_SIZE = 100

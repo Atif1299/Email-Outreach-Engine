@@ -29,20 +29,34 @@ If outbound at {{current_employer}} is leaking replies, you're also leaking meet
 
 {{pitch_block}}
 
-Open to a quick call to see if this fits?
+Worth a quick look — or not a priority right now?
 
 {{sender_info}}`
 
 const DEFAULT_STEP2_SUBJECT = 'Re: {{first_name}} — {{current_employer}}'
 const DEFAULT_STEP2_BODY = `Hi {{first_name}},
 
-Following up on my note to {{current_employer}} — one additional angle for {{current_title}} teams:
+Following up on my note to {{current_employer}} — one pattern I see for {{current_title}} teams in {{industry}}:
 
-[Reference the prior email topic — add one new proof point or consequence; do not re-introduce the company]
+[One insight, benchmark, or consequence tied to step 1's pain — something useful even without a call]
 
-Open to a 15-minute benchmark?
+[Optional one-sentence bridge to your solution from the pitch block]
+
+Want me to send the benchmark — or skip for now?
 
 {{sender_info}}`
+
+const DEFAULT_STEP3_SUBJECT = 'Re: {{first_name}} — {{current_employer}}'
+const DEFAULT_STEP3_BODY = `Hi {{first_name}},
+
+Totally understand if timing's off — [one specific pain/workflow from step 1 or 2] at {{current_employer}} is what I had in mind when I wrote last week.
+
+If [offer from pitch — plain language, e.g. a short workflow review] is still useful for your team, I'm happy to run it — otherwise I'll close this out on my side, no worries.
+
+{{sender_info}}`
+
+const DEFAULT_AI_INSTRUCTIONS =
+  'Peer tone, no buzzwords. One question max per email. Never say "hope this finds you well" or "just circling back". Name the lead company or industry in every email.'
 
 const DEFAULT_PITCH_BLOCK = `Product: 
 For: 
@@ -99,6 +113,12 @@ function AutoResizeTextarea({
   )
 }
 
+function stepRoleLabel(stepOrder: number): string {
+  if (stepOrder <= 1) return 'Observation'
+  if (stepOrder === 2) return 'Insight / proof'
+  return 'Close loop'
+}
+
 function defaultStep(stepOrder: number): CampaignStep {
   if (stepOrder <= 1) {
     return {
@@ -109,11 +129,20 @@ function defaultStep(stepOrder: number): CampaignStep {
       useAi: true,
     }
   }
+  if (stepOrder === 2) {
+    return {
+      stepOrder: 2,
+      delayHoursAfterPrevious: 72,
+      subjectTemplate: DEFAULT_STEP2_SUBJECT,
+      bodyTemplate: DEFAULT_STEP2_BODY,
+      useAi: true,
+    }
+  }
   return {
     stepOrder,
     delayHoursAfterPrevious: 72,
-    subjectTemplate: DEFAULT_STEP2_SUBJECT,
-    bodyTemplate: DEFAULT_STEP2_BODY,
+    subjectTemplate: DEFAULT_STEP3_SUBJECT,
+    bodyTemplate: DEFAULT_STEP3_BODY,
     useAi: true,
   }
 }
@@ -172,7 +201,7 @@ export default function StepCampaign({
       pitchBlock: DEFAULT_PITCH_BLOCK,
       senderInfo: DEFAULT_SENDER_SIGNOFF,
       aiVoice: 'founder',
-      aiInstructions: '',
+      aiInstructions: DEFAULT_AI_INSTRUCTIONS,
       outputLanguage: 'en',
       fewShotStep1: [],
       fewShotStep2: [],
@@ -695,7 +724,7 @@ export default function StepCampaign({
                     {draft.steps.map((step, i) => (
                       <div key={i} className="step-item">
                         <div className="step-item-head">
-                          <span className="step-item-title">Step {step.stepOrder}</span>
+                          <span className="step-item-title">Step {step.stepOrder} · {stepRoleLabel(step.stepOrder)}</span>
                           <div className="step-item-controls">
                             <label style={{ fontSize: '0.72rem', color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                               <input

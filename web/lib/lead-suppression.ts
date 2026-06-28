@@ -1,4 +1,5 @@
 import prisma from '@/lib/db'
+import { removeLeadFromActiveQueues } from '@/lib/queue-active'
 
 export type SuppressReason = 'unsubscribed' | 'manual' | 'bounce'
 
@@ -54,24 +55,7 @@ export async function countDoNotContactInList(leadIds: number[]): Promise<number
 
 /** Remove lead from active queue when globally suppressed. */
 export async function removeLeadFromQueue(leadId: number) {
-  const state = await prisma.queueState.findUnique({ where: { id: 1 } })
-  if (!state) return
-
-  const activeIds: number[] = JSON.parse(state.activeLeadIdsJson || '[]')
-  if (!activeIds.includes(leadId)) return
-
-  const skippedIds: number[] = JSON.parse(state.skippedLeadIdsJson || '[]')
-  const newActive = activeIds.filter((id) => id !== leadId)
-  const newSkipped = skippedIds.includes(leadId) ? skippedIds : [...skippedIds, leadId]
-
-  await prisma.queueState.update({
-    where: { id: 1 },
-    data: {
-      activeLeadIdsJson: JSON.stringify(newActive),
-      skippedLeadIdsJson: JSON.stringify(newSkipped),
-      updatedAt: new Date(),
-    },
-  })
+  await removeLeadFromActiveQueues(leadId)
 }
 
 export async function suppressLeadForBounce(

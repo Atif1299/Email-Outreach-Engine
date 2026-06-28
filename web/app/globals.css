@@ -1597,17 +1597,6 @@
   flex-wrap: wrap;
 }
 
-.current-job
-{
-  margin-top: 0.75rem;
-  padding: 0.5rem;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: var(--r);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
 .job-label
 {
   font-size: 0.75rem;
@@ -1626,17 +1615,6 @@
   font-size: 0.72rem;
   color: var(--accent-bright);
   font-family: var(--mono);
-}
-
-.queue-error
-{
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: var(--r);
-  color: #fca5a5;
-  font-size: 0.8rem;
 }
 
 .queue-cron-hint
@@ -1719,7 +1697,7 @@
 
 .campaign-progress-bar-wrap
 {
-  height: 0.45rem;
+  height: 0.55rem;
   background: rgba(255, 255, 255, 0.06);
   border-radius: 999px;
   overflow: hidden;
@@ -1766,6 +1744,315 @@
   justify-content: space-between;
   font-size: 0.72rem;
   color: var(--dim);
+}
+
+/* Queue layout sections */
+.queue-section
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.queue-section-title
+{
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.queue-section-header
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+}
+
+.queue-section-hint
+{
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.queue-progress-stack
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.stat-card--highlight
+{
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.stat-card--highlight .stat-value
+{
+  color: #93c5fd;
+}
+
+.campaign-progress-chips
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.queue-stat-chip
+{
+  font-size: 0.72rem;
+  color: var(--dim);
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.queue-stat-chip--accent
+{
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.queue-campaign-list
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.queue-campaign-row
+{
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--r);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.12);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.queue-campaign-row--active
+{
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.queue-campaign-row--viewing
+{
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+}
+
+.queue-campaign-summary
+{
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.queue-stat-box
+{
+  width: 4.5rem;
+  flex-shrink: 0;
+  padding: 0.35rem 0.25rem;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.queue-stat-box-value
+{
+  display: block;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.queue-stat-box-label
+{
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+  line-height: 1.2;
+}
+
+.queue-stat-box--zero .queue-stat-box-value
+{
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.queue-stat-box--ready
+{
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.queue-stat-box--ready .queue-stat-box-value
+{
+  color: #93c5fd;
+}
+
+.queue-stat-box--ready .queue-stat-box-label
+{
+  color: rgba(147, 197, 253, 0.75);
+}
+
+.queue-stat-box--loading
+{
+  opacity: 0.5;
+}
+
+.queue-campaign-check
+{
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.queue-campaign-check input
+{
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-bright);
+  cursor: pointer;
+}
+
+.queue-campaign-name
+{
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.15rem 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.35;
+  flex: 0 0 11.5rem;
+  max-width: 11.5rem;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.queue-campaign-name:hover
+{
+  color: var(--accent-bright);
+}
+
+.queue-campaign-actions
+{
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex: 0 0 11.5rem;
+  max-width: 11.5rem;
+}
+
+.queue-empty-hint
+{
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--dim);
+  padding: 0.5rem 0;
+}
+
+.campaign-stats-detail
+{
+  margin-top: 0.35rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.campaign-stats-detail-label
+{
+  color: var(--dim);
+  margin-right: 0.35rem;
+}
+
+.queue-status-header
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.queue-status-header .queue-controls
+{
+  margin-top: 0;
+}
+
+.current-job
+{
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.current-job-row
+{
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+}
+
+.current-job-row--detail
+{
+  padding-top: 0.15rem;
+}
+
+.job-campaign
+{
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-bright);
+}
+
+.queue-error
+{
+  margin-top: 0.65rem;
+  margin-bottom: 0;
+  padding: 0.55rem 0.65rem;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--r);
+  color: #fcd34d;
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .verify-pill
@@ -1876,5 +2163,44 @@
   .queue-stats-row--caps
   {
     max-width: 100%;
+  }
+
+  .queue-campaign-row
+  {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .queue-campaign-name
+  {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .queue-campaign-summary
+  {
+    flex: 1 1 100%;
+  }
+
+  .queue-campaign-actions
+  {
+    margin-left: auto;
+  }
+
+  .queue-status-header
+  {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .queue-status-header .queue-controls
+  {
+    width: 100%;
+  }
+
+  .queue-status-header .queue-controls .btn
+  {
+    flex: 1;
+    min-width: 0;
   }
 }

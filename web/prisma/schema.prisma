@@ -249,6 +249,8 @@ model QueueState {
   activeCampaignId     Int?     @map("active_campaign_id")
   activeLeadIdsJson    String   @default("[]") @map("active_lead_ids_json")
   skippedLeadIdsJson   String   @default("[]") @map("skipped_lead_ids_json")
+  activeCampaignsJson  String   @default("[]") @map("active_campaigns_json")
+  lastServedCampaignId Int?     @map("last_served_campaign_id")
   processingLockUntil  DateTime? @map("processing_lock_until")
   nextSendAllowedAt    DateTime? @map("next_send_allowed_at")
   updatedAt            DateTime @default(now()) @map("updated_at")

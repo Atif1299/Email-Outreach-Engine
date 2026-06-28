@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { parseFewShotJson, serializeFewShotJson } from '@/lib/few-shot'
 
+export const dynamic = 'force-dynamic'
+
 function mapCampaign(c: {
   id: number
   name: string

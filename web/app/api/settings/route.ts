@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { ensureSettings, toPublicSettings } from '@/lib/settings'
 import { Prisma } from '@prisma/client'
+
+export const dynamic = 'force-dynamic'
 import {
   ensureSmtpAccounts,
   saveSmtpAccounts,
