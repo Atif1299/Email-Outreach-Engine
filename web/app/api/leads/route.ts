@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       campaignId?: number
     } = {
       leadId: { in: leadIds },
-      status: { in: ['replied', 'unsubscribed'] },
+      status: { in: ['replied', 'unsubscribed', 'out_of_office'] },
     }
     if (campaignId) engagementWhere.campaignId = campaignId
 
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       }),
     }))
 
-    if (engagement === 'replied' || engagement === 'unsubscribed') {
+    if (engagement === 'replied' || engagement === 'unsubscribed' || engagement === 'out_of_office') {
       result = result.filter((l) => l.engagementStatus === engagement)
     }
 

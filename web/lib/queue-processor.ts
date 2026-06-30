@@ -14,7 +14,6 @@ import { ensureSettings } from '@/lib/settings'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
 import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds } from '@/lib/queue-schedule'
 import {
-  computeSendDelayMs,
   countSuccessfulSendsSince,
   evaluateGlobalDailyCap,
   evaluateSendGate,
@@ -28,9 +27,11 @@ import {
 } from '@/lib/send-limits'
 import {
   assignLeadToAccount,
+  countInboxesAvailableForSend,
   createAccountTransporter,
   formatFromAddress,
   getEnabledSmtpAccounts,
+  getNextInboxAvailableAt,
   markAccountExhausted,
   resolveAccountForSend,
   touchAccountUsed,
@@ -70,7 +71,7 @@ async function pauseQueueForDeliveryIssue(opts: {
   })
 }
 
-export async function processQueueBatch(maxEmails = 1) {
+export async function processQueueBatch(maxEmails?: number) {
   const acquired = await acquireQueueLock()
   if (!acquired) {
     return { status: 'busy' as const }
@@ -127,12 +128,30 @@ async function claimSendSlot(leadId: number, campaignId: number, stepOrder: numb
 }
 
 async function applySendGate(
-  state: { nextSendAllowedAt: Date | null },
   limitSettings: ReturnType<typeof toSendLimitSettings>,
-  enabledAccountCount: number
+  enabledAccountCount: number,
+  excludeAccountIds: Set<number> = new Set()
 ) {
-  const gate = await evaluateSendGate(limitSettings, state.nextSendAllowedAt)
+  const gate = await evaluateSendGate(limitSettings)
   if (!gate.allowed) return formatGateResult(gate)
+
+  const available = await countInboxesAvailableForSend(limitSettings, excludeAccountIds)
+  if (available === 0) {
+    const nextAt = await getNextInboxAvailableAt(limitSettings, excludeAccountIds)
+    const waitingAccount = (await getEnabledSmtpAccounts()).find((a) => {
+      if (excludeAccountIds.has(a.id)) return false
+      return a.lastUsedAt && limitSettings.sendDelayMinMs > 0
+    })
+    const email = waitingAccount?.email ?? 'Inbox'
+    return formatGateResult({
+      allowed: false,
+      status: 'throttled',
+      message: nextAt
+        ? `${email} waiting between sends`
+        : 'All inboxes at cap or cooling down',
+      nextSendAllowedAt: nextAt ?? undefined,
+    })
+  }
 
   const dailyGate = await evaluateGlobalDailyCap(limitSettings, enabledAccountCount)
   if (!dailyGate.allowed) return formatGateResult(dailyGate)
@@ -261,18 +280,10 @@ async function prepareNextLeadForSend(opts: {
       }
     }
     if (step1Blocked && !hasDueFollowUp) {
-      return {
-        ok: false,
-        reason: 'type_cap',
-        message: `Step 1 daily cap (${limitSettings.dailyStep1Cap}) reached — remaining Step 1 leads continue tomorrow`,
-      }
+      return { ok: false, reason: 'waiting' }
     }
     if (followUpBlocked && !hasDueStep1) {
-      return {
-        ok: false,
-        reason: 'type_cap',
-        message: `Follow-up daily cap (${limitSettings.dailyFollowUpCap}) reached — remaining follow-ups continue tomorrow`,
-      }
+      return { ok: false, reason: 'waiting' }
     }
 
     for (let i = 0; i < activeLeadIds.length; i++) {
@@ -318,11 +329,11 @@ async function pickJobAcrossCampaigns(opts: {
   lastServedCampaignId: number | null
 }): Promise<
   | {
-      ok: true
-      campaign: CampaignWithSteps
-      entry: ActiveCampaignEntry
-      prepared: PreparedLead
-    }
+    ok: true
+    campaign: CampaignWithSteps
+    entry: ActiveCampaignEntry
+    prepared: PreparedLead
+  }
   | { ok: false; reason: 'empty' | 'waiting' | 'type_cap'; message?: string }
 > {
   const candidates: Array<{
@@ -364,13 +375,21 @@ async function pickJobAcrossCampaigns(opts: {
   }
 
   if (candidates.length === 0) {
-    if (typeCapMessage) return { ok: false, reason: 'type_cap', message: typeCapMessage }
     const hasLeads = opts.activeEntries.some((e) => e.leadIds.length > 0)
-    return { ok: false, reason: hasLeads ? 'waiting' : 'empty' }
+    if (hasLeads) {
+      const step1CapOpen = isStepTypeCapAvailable(opts.limitSettings, 1, opts.stepTypeCounts)
+      if (typeCapMessage && step1CapOpen) {
+        return { ok: false, reason: 'waiting' }
+      }
+      if (typeCapMessage) return { ok: false, reason: 'type_cap', message: typeCapMessage }
+      return { ok: false, reason: 'waiting' }
+    }
+    return { ok: false, reason: 'empty' }
   }
 
   const followUps = candidates.filter((c) => c.stepOrder > 1)
-  const pool = followUps.length > 0 ? followUps : candidates
+  const step1Only = candidates.filter((c) => c.stepOrder === 1)
+  const pool = followUps.length > 0 ? followUps : step1Only
 
   pool.sort((a, b) => {
     if (a.stepOrder !== b.stepOrder) return b.stepOrder - a.stepOrder
@@ -411,7 +430,7 @@ async function inspectLeadForSend(
   }
 }
 
-async function processQueueBatchInner(maxEmails = 1) {
+async function processQueueBatchInner(maxEmails?: number) {
   const state = await prisma.queueState.findUnique({ where: { id: 1 } })
 
   let activeEntries = parseActiveCampaigns(state)
@@ -442,7 +461,7 @@ async function processQueueBatchInner(maxEmails = 1) {
     return { status: 'error' as const, error: 'No SMTP accounts configured' }
   }
 
-  const gateResult = await applySendGate(state, limitSettings, enabledAccounts.length)
+  const gateResult = await applySendGate(limitSettings, enabledAccounts.length)
   if (gateResult) return gateResult
 
   const campaignIds = activeEntries.map((e) => e.campaignId)
@@ -467,22 +486,20 @@ async function processQueueBatchInner(maxEmails = 1) {
   let processed = 0
   let failed = 0
   let consecutiveFailures = state.consecutiveFailures
-  let nextSendAllowedAt = state.nextSendAllowedAt
+  let nextSendAllowedAt: Date | null = null
   let lastServedCampaignId = state.lastServedCampaignId ?? null
   const stepTypeCounts = await getStepTypeSendCounts(limitSettings)
+  const batchLimit = Math.max(1, Math.min(maxEmails ?? enabledAccounts.length, enabledAccounts.length))
+  const accountsUsedThisBatch = new Set<number>()
 
-  for (let i = 0; i < maxEmails; i++) {
+  for (let i = 0; i < batchLimit; i++) {
     const currentState = await prisma.queueState.findUnique({ where: { id: 1 } })
     if (!currentState?.running || currentState.paused) break
 
-    activeEntries = parseActiveCampaigns(currentState).filter((e) => e.leadIds.length > 0)
+    activeEntries = activeEntries.filter((e) => e.leadIds.length > 0)
     if (activeEntries.length === 0) break
 
-    const innerGate = await applySendGate(
-      { nextSendAllowedAt: nextSendAllowedAt ?? currentState.nextSendAllowedAt },
-      limitSettings,
-      enabledAccounts.length
-    )
+    const innerGate = await applySendGate(limitSettings, enabledAccounts.length, accountsUsedThisBatch)
     if (innerGate) break
 
     const jobPick = await pickJobAcrossCampaigns({
@@ -495,17 +512,32 @@ async function processQueueBatchInner(maxEmails = 1) {
 
     if (!jobPick.ok) {
       if (jobPick.reason === 'type_cap' && jobPick.message) {
-        await prisma.queueState.update({
-          where: { id: 1 },
-          data: { lastError: jobPick.message },
-        })
+        const step1CapOpen = isStepTypeCapAvailable(limitSettings, 1, stepTypeCounts)
+        if (!step1CapOpen) {
+          await prisma.queueState.update({
+            where: { id: 1 },
+            data: { lastError: jobPick.message },
+          })
+        }
+      } else if (jobPick.reason === 'waiting') {
+        const followUpCapHit =
+          limitSettings.dailyFollowUpCap > 0 &&
+          stepTypeCounts.followUpSentToday >= limitSettings.dailyFollowUpCap
+        const step1CapOpen = isStepTypeCapAvailable(limitSettings, 1, stepTypeCounts)
+        if (followUpCapHit && step1CapOpen) {
+          await prisma.queueState.update({
+            where: { id: 1 },
+            data: {
+              lastError: `Follow-up daily cap (${limitSettings.dailyFollowUpCap}) reached — Step 1 sends continue`,
+            },
+          })
+        }
       }
       break
     }
 
     const { campaign, entry, prepared } = jobPick
     const activeLeadIds = entry.leadIds
-    let skippedLeadIds = entry.skippedLeadIds
     const maxStepOrder = getMaxStepOrder(campaign.steps)
     const blockedLeadIds = await loadBlockedLeadIds(campaign.id, activeLeadIds)
     const { lead, nextStepOrder, nextStep } = prepared
@@ -515,8 +547,8 @@ async function processQueueBatchInner(maxEmails = 1) {
 
     const stepTypeGate = await evaluateStepTypeDailyCap(limitSettings, nextStepOrder, stepTypeCounts)
     if (!stepTypeGate.allowed) {
-      const gateResult = await formatGateResult(stepTypeGate)
-      if (gateResult) break
+      activeLeadIds.shift()
+      activeLeadIds.push(leadId)
       continue
     }
 
@@ -525,6 +557,7 @@ async function processQueueBatchInner(maxEmails = 1) {
       campaignId: campaign.id,
       stepOrder: nextStepOrder,
       limitSettings,
+      excludeIds: accountsUsedThisBatch,
     })
 
     if (accountResult.status === 'unavailable') {
@@ -535,10 +568,11 @@ async function processQueueBatchInner(maxEmails = 1) {
           where: { id: 1 },
           data: { lastError: accountResult.message },
         })
-        break
+        continue
       }
 
       if (accountResult.reason === 'all_unavailable') {
+        if (processed > 0) break
         await prisma.queueState.update({
           where: { id: 1 },
           data: { lastError: accountResult.message },
@@ -687,14 +721,9 @@ async function processQueueBatchInner(maxEmails = 1) {
         processed++
         consecutiveFailures = 0
         sendCompleted = true
+        accountsUsedThisBatch.add(account.id)
         if (nextStepOrder <= 1) stepTypeCounts.step1SentToday++
         else stepTypeCounts.followUpSentToday++
-
-        const delayMs = Math.max(
-          computeSendDelayMs(limitSettings),
-          consecutiveFailures > 0 ? FAILURE_BACKOFF_MS : 0
-        )
-        nextSendAllowedAt = new Date(Date.now() + delayMs)
 
         if (nextStepOrder >= maxStepOrder) {
           activeLeadIds.shift()
@@ -749,7 +778,7 @@ async function processQueueBatchInner(maxEmails = 1) {
           await suppressLeadForBounce(leadId, 'smtp')
           blockedLeadIds.add(leadId)
           activeLeadIds.shift()
-          skippedLeadIds = addToSkipped(skippedLeadIds, leadId)
+          entry.skippedLeadIds = addToSkipped(entry.skippedLeadIds, leadId)
           consecutiveFailures = 0
           sendCompleted = true
         } else if (halt) {
@@ -837,9 +866,6 @@ async function processQueueBatchInner(maxEmails = 1) {
     }
   }
 
-  const freshState = await prisma.queueState.findUnique({ where: { id: 1 } })
-  activeEntries = parseActiveCampaigns(freshState)
-
   const dayStart = getDayStartInTimezone(limitSettings.sendTimezone)
   const sendsToday = await countSuccessfulSendsSince(dayStart)
   const effectiveDailyCap = limitSettings.dailyCap * enabledAccounts.length
@@ -856,6 +882,8 @@ async function processQueueBatchInner(maxEmails = 1) {
     })
     return { status: 'completed' as const }
   }
+
+  nextSendAllowedAt = await getNextInboxAvailableAt(limitSettings)
 
   await persistActiveCampaigns(activeEntries, {
     processed,

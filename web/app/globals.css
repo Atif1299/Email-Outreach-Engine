@@ -2204,3 +2204,321 @@
     min-width: 0;
   }
 }
+
+/* Replies page */
+.replies-panel .step-header
+{
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.replies-summary-chips
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.replies-chip
+{
+  font-size: 0.75rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text-muted, #94a3b8);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.replies-section
+{
+  margin-top: 1.5rem;
+}
+
+.replies-section-title
+{
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+}
+
+.replies-stats-table-wrap
+{
+  overflow-x: auto;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+}
+
+.replies-stats-table
+{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.replies-stats-table th,
+.replies-stats-table td
+{
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+}
+
+.replies-stats-table th
+{
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.replies-campaign-name
+{
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-rate-cell
+{
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 6rem;
+}
+
+.reply-rate-bar
+{
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.reply-rate-bar-fill
+{
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+}
+
+.replies-toolbar
+{
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.replies-toolbar .replies-section-title
+{
+  margin: 0;
+}
+
+.replies-filters
+{
+  display: flex;
+  gap: 0.5rem;
+}
+
+.replies-bulk-bar
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.replies-list
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.replies-empty
+{
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted, #94a3b8);
+  font-size: 0.875rem;
+}
+
+.reply-row
+{
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.reply-row.is-expanded
+{
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.reply-row-main
+{
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.reply-row-main input[type="checkbox"]
+{
+  margin: auto 0 auto 0.75rem;
+}
+
+.reply-row-toggle
+{
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.625rem 0.75rem;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.reply-row-toggle:hover
+{
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.reply-email
+{
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-inbox
+{
+  font-size: 0.75rem;
+  color: #93c5fd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-inbox-line
+{
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.reply-gmail-link
+{
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+.reply-gmail-link:hover
+{
+  color: #93c5fd;
+}
+
+.reply-campaign
+{
+  font-size: 0.8125rem;
+  color: var(--text-muted, #94a3b8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-date
+{
+  font-size: 0.75rem;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+}
+
+.reply-status-pill
+{
+  font-size: 0.6875rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.reply-status-pill--replied
+{
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.reply-status-pill--unsubscribed
+{
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.reply-status-pill--out_of_office
+{
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+}
+
+.reply-row-detail
+{
+  padding: 0.75rem 1rem 1rem 2.25rem;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.reply-subject
+{
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.reply-snippet
+{
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.reply-actions
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.engagement-pill--out_of_office
+{
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+}
+
+@media (max-width: 768px)
+{
+  .reply-row-toggle
+  {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+}

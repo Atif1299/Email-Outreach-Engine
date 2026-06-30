@@ -131,8 +131,9 @@ model SmtpAccount {
   warmupEnabled      Boolean   @default(false) @map("warmup_enabled")
   createdAt          DateTime  @default(now()) @map("created_at")
 
-  assignments LeadSmtpAssignment[]
-  sends       LeadSend[]
+  assignments  LeadSmtpAssignment[]
+  sends        LeadSend[]
+  engagements  LeadCampaignEngagement[]
 
   @@unique([email])
   @@index([enabled, sortOrder])
@@ -154,18 +155,20 @@ model LeadSmtpAssignment {
 }
 
 model LeadCampaignEngagement {
-  leadId         Int       @map("lead_id")
-  campaignId     Int       @map("campaign_id")
-  status         String    @default("active")
-  repliedAt      DateTime? @map("replied_at")
-  unsubscribedAt DateTime? @map("unsubscribed_at")
-  replySubject   String?   @map("reply_subject")
-  replySnippet   String?   @map("reply_snippet")
-  detectedVia    String?   @map("detected_via")
-  updatedAt      DateTime  @default(now()) @map("updated_at")
+  leadId          Int       @map("lead_id")
+  campaignId      Int       @map("campaign_id")
+  status          String    @default("active")
+  repliedAt       DateTime? @map("replied_at")
+  unsubscribedAt  DateTime? @map("unsubscribed_at")
+  replySubject    String?   @map("reply_subject")
+  replySnippet    String?   @map("reply_snippet")
+  detectedVia     String?   @map("detected_via")
+  inboxAccountId  Int?      @map("inbox_account_id")
+  updatedAt       DateTime  @default(now()) @map("updated_at")
 
-  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  inboxAccount SmtpAccount? @relation(fields: [inboxAccountId], references: [id], onDelete: SetNull)
 
   @@id([leadId, campaignId])
   @@index([campaignId, status])

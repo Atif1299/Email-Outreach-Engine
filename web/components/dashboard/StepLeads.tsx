@@ -32,6 +32,7 @@ function EngagementPill({ status }: { status: string | null | undefined }) {
     dnc: 'DNC',
     replied: 'replied',
     unsubscribed: 'unsubscribed',
+    out_of_office: 'OOO',
   }
   const cls = `engagement-pill engagement-pill--${status}`
   return <span className={cls}>{labels[status] ?? status}</span>
@@ -241,6 +242,7 @@ export default function StepLeads({
             <option value="dnc">Do not contact</option>
             <option value="replied">Replied</option>
             <option value="unsubscribed">Unsubscribed</option>
+            <option value="out_of_office">Out of office</option>
           </select>
         </div>
       </div>

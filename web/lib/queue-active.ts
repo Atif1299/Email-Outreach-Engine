@@ -137,12 +137,12 @@ export async function upsertActiveCampaign(
       activeCampaignsJson: serializeActiveCampaigns(nextEntries),
       ...(resetSession
         ? {
-            processedInSession: 0,
-            failedInSession: 0,
-            consecutiveFailures: 0,
-            lastError: null,
-            nextSendAllowedAt: null,
-          }
+          processedInSession: 0,
+          failedInSession: 0,
+          consecutiveFailures: 0,
+          lastError: null,
+          nextSendAllowedAt: null,
+        }
         : {}),
       processingLockUntil: null,
       updatedAt: new Date(),
@@ -304,56 +304,49 @@ export async function pickNextDueJob(
     const skippedSet = new Set(entry.skippedLeadIds)
     const blockedLeadIds = await loadBlockedLeadIds(entry.campaignId, entry.leadIds)
     const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
+    const lastSends = await loadLastSuccessfulSends(entry.campaignId, entry.leadIds)
+    const passes: Array<'followup' | 'step1'> = ['followup', 'step1']
+    let entryCandidate: DueJobCandidate | null = null
 
-    while (entry.leadIds.length > 0) {
-      const leadId = entry.leadIds[0]
-      if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) {
-        entry.leadIds.shift()
-        entry.skippedLeadIds = addToSkipped(entry.skippedLeadIds, leadId)
-        continue
-      }
+    for (const pass of passes) {
+      for (let i = 0; i < entry.leadIds.length; i++) {
+        const leadId = entry.leadIds[i]
+        if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
 
-      const lastSends = await loadLastSuccessfulSends(entry.campaignId, [leadId])
-      const lastSend = lastSends.get(leadId) ?? null
-      const status = getLeadQueueStatus(
-        leadId,
-        sortedSteps,
-        lastSend,
-        skippedSet,
-        blockedLeadIds
-      )
+        const lastSend = lastSends.get(leadId) ?? null
+        const status = getLeadQueueStatus(
+          leadId,
+          sortedSteps,
+          lastSend,
+          skippedSet,
+          blockedLeadIds
+        )
+        if (status !== 'sending') continue
 
-      if (status === 'completing') {
-        entry.leadIds.shift()
-        continue
-      }
+        const nextStepOrder = getNextStepOrder(lastSend)
+        if (pass === 'followup' && nextStepOrder <= 1) continue
+        if (pass === 'step1' && nextStepOrder !== 1) continue
+        if (!isStepTypeCapAvailable(limitSettings, nextStepOrder, stepTypeCounts)) continue
 
-      if (status === 'waiting_delay') {
-        entry.leadIds.shift()
-        entry.leadIds.push(leadId)
-        break
-      }
-
-      const nextStepOrder = getNextStepOrder(lastSend)
-      if (!isStepTypeCapAvailable(limitSettings, nextStepOrder, stepTypeCounts)) {
-        entry.leadIds.shift()
-        entry.leadIds.push(leadId)
-        break
-      }
-
-      const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
-      const delayElapsedAt = lastSend
-        ? new Date(lastSend.sentAt).getTime() +
+        const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
+        const delayElapsedAt = lastSend
+          ? new Date(lastSend.sentAt).getTime() +
           (nextStep?.delayHoursAfterPrevious ?? 0) * 60 * 60 * 1000
-        : 0
+          : 0
 
-      candidates.push({
-        campaignId: entry.campaignId,
-        leadId,
-        stepOrder: nextStepOrder,
-        delayElapsedAt,
-      })
-      break
+        entryCandidate = {
+          campaignId: entry.campaignId,
+          leadId,
+          stepOrder: nextStepOrder,
+          delayElapsedAt,
+        }
+        break
+      }
+      if (entryCandidate) break
+    }
+
+    if (entryCandidate) {
+      candidates.push(entryCandidate)
     }
   }
 

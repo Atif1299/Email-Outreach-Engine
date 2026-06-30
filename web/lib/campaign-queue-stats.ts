@@ -54,12 +54,19 @@ export async function computeCampaignQueueStats(
     activeEntry.skippedLeadIds.forEach((id) => skippedLeadIds.add(id))
   }
 
+  /** When in queue, stats reflect only leads in the active session — not the whole campaign. */
+  const statsLeadIds =
+    activeEntry && activeEntry.leadIds.length > 0 ? activeEntry.leadIds : validLeadIds
+
+  const lastSendsForStats = await loadLastSuccessfulSends(campaignId, statsLeadIds)
+  const blockedForStats = await loadBlockedLeadIds(campaignId, statsLeadIds)
+
   const dueJobs = computeDueJobs(
-    validLeadIds,
+    statsLeadIds,
     campaign.steps,
-    lastSendsByLead,
+    lastSendsForStats,
     skippedLeadIds,
-    blockedLeadIds
+    blockedForStats
   )
   const leadsStarted = lastSendsByLead.size
   const leadsCompleted = [...lastSendsByLead.values()].filter((s) => s.stepOrder >= maxStepOrder).length
@@ -79,10 +86,10 @@ export async function computeCampaignQueueStats(
   let notStarted = 0
   let followUpEligible = 0
 
-  for (const leadId of validLeadIds) {
-    if (blockedLeadIds.has(leadId) || skippedLeadIds.has(leadId)) continue
+  for (const leadId of statsLeadIds) {
+    if (blockedForStats.has(leadId) || skippedLeadIds.has(leadId)) continue
 
-    const last = lastSendsByLead.get(leadId)
+    const last = lastSendsForStats.get(leadId)
     if (!last) {
       notStarted++
       continue
@@ -111,13 +118,16 @@ export async function computeCampaignQueueStats(
     due: dueByStep.get(step.stepOrder) || 0,
   }))
 
-  const [repliedCount, unsubscribedCount, priorCampaignContacts, doNotContactExcluded] =
+  const [repliedCount, unsubscribedCount, outOfOfficeCount, priorCampaignContacts, doNotContactExcluded] =
     await Promise.all([
       prisma.leadCampaignEngagement.count({
         where: { campaignId, status: 'replied' },
       }),
       prisma.leadCampaignEngagement.count({
         where: { campaignId, status: 'unsubscribed' },
+      }),
+      prisma.leadCampaignEngagement.count({
+        where: { campaignId, status: 'out_of_office' },
       }),
       countPriorCampaignContacts(campaignId, validLeadIds),
       countDoNotContactInList(validLeadIds),
@@ -136,6 +146,7 @@ export async function computeCampaignQueueStats(
     dueNow: dueJobs.length,
     repliedCount,
     unsubscribedCount,
+    outOfOfficeCount,
     priorCampaignContacts,
     doNotContactExcluded,
     step1: { sent: step1Sent, eligible: sendable },

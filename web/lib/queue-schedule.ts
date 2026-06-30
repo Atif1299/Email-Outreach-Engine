@@ -2,6 +2,7 @@ import prisma from '@/lib/db'
 import { loadDoNotContactLeadIds } from '@/lib/lead-suppression'
 
 export const ENGAGED_STATUSES = ['replied', 'unsubscribed'] as const
+export const BLOCKED_ENGAGEMENT_STATUSES = ['replied', 'unsubscribed', 'out_of_office'] as const
 
 export interface CampaignStepLike {
   stepOrder: number
@@ -124,7 +125,7 @@ export async function loadEngagedLeadIds(
     where: {
       campaignId,
       leadId: { in: leadIds },
-      status: { in: [...ENGAGED_STATUSES] },
+      status: { in: [...BLOCKED_ENGAGEMENT_STATUSES] },
     },
     select: { leadId: true },
   })

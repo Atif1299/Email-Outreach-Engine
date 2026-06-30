@@ -9,7 +9,7 @@ export async function runQueueCron(maxRuntimeMs = 50_000) {
   let remaining = 0
 
   while (Date.now() - started < maxRuntimeMs) {
-    const result = await processQueueBatch(1)
+    const result = await processQueueBatch()
     lastStatus = result.status
 
     if (result.status === 'processed') {
@@ -17,12 +17,17 @@ export async function runQueueCron(maxRuntimeMs = 50_000) {
       totalFailed += result.failed ?? 0
       remaining = result.remaining ?? 0
       if (remaining === 0) break
+      if ((result.processed ?? 0) === 0) break
       continue
     }
 
     if (result.status === 'busy') {
       await new Promise((r) => setTimeout(r, 2000))
       continue
+    }
+
+    if (result.status === 'throttled') {
+      break
     }
 
     break

@@ -199,18 +199,9 @@ export async function evaluateStepTypeDailyCap(
 
 export async function evaluateSendGate(
   settings: SendLimitSettings,
-  nextSendAllowedAt: Date | null | undefined,
+  _nextSendAllowedAt?: Date | null,
   now = new Date()
 ): Promise<SendGateResult> {
-  if (nextSendAllowedAt && now < nextSendAllowedAt) {
-    return {
-      allowed: false,
-      status: 'throttled',
-      message: `Waiting between sends — next email after ${nextSendAllowedAt.toISOString()}`,
-      nextSendAllowedAt,
-    }
-  }
-
   if (!isWithinSendWindow(settings, now)) {
     return {
       allowed: false,

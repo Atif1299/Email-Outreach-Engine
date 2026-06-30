@@ -19,7 +19,9 @@ export async function GET() {
 
     return NextResponse.json({
       campaigns: list,
-      aggregateDueNow: list.reduce((sum, s) => sum + (s?.dueNow ?? 0), 0),
+      aggregateDueNow: list
+        .filter((s) => s?.isActiveCampaign)
+        .reduce((sum, s) => sum + (s?.dueNow ?? 0), 0),
     })
   } catch (error) {
     console.error('Failed to get all campaign stats:', error)

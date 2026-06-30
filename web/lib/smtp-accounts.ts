@@ -38,7 +38,7 @@ export type AccountSendGateResult =
   | { allowed: true }
   | {
     allowed: false
-    reason: 'exhausted' | 'daily_cap' | 'hourly_cap' | 'disabled' | 'no_password'
+    reason: 'exhausted' | 'daily_cap' | 'hourly_cap' | 'disabled' | 'no_password' | 'throttled'
     message: string
   }
 
@@ -118,6 +118,17 @@ export async function evaluateAccountSendGate(
       allowed: false,
       reason: 'exhausted',
       message: `${account.email} cooling down until ${account.exhaustedUntil!.toISOString()}`,
+    }
+  }
+
+  if (account.lastUsedAt && limitSettings.sendDelayMinMs > 0) {
+    const elapsed = now.getTime() - account.lastUsedAt.getTime()
+    if (elapsed < limitSettings.sendDelayMinMs) {
+      return {
+        allowed: false,
+        reason: 'throttled',
+        message: `${account.email} waiting between sends`,
+      }
     }
   }
 
@@ -242,17 +253,25 @@ export async function pickBestAvailableAccount(
   excludeIds: Set<number> = new Set()
 ): Promise<SmtpAccount | null> {
   const accounts = await getEnabledSmtpAccounts()
-  const candidates: { account: SmtpAccount; sendsToday: number }[] = []
+  const eligible: SmtpAccount[] = []
 
   for (const account of accounts) {
     if (excludeIds.has(account.id)) continue
     const gate = await evaluateAccountSendGate(account, limitSettings)
-    if (!gate.allowed) continue
-    const { sendsToday } = await getAccountSendCounts(account.id, limitSettings)
-    candidates.push({ account, sendsToday })
+    if (gate.allowed) eligible.push(account)
   }
 
-  if (candidates.length === 0) return null
+  if (eligible.length === 0) return null
+
+  const sendCountsMap = await getBatchAccountSendCounts(
+    eligible.map((a) => a.id),
+    limitSettings
+  )
+
+  const candidates = eligible.map((account) => ({
+    account,
+    sendsToday: sendCountsMap.get(account.id)?.sendsToday ?? 0,
+  }))
 
   candidates.sort((a, b) => {
     if (a.sendsToday !== b.sendsToday) return a.sendsToday - b.sendsToday
@@ -268,6 +287,44 @@ export async function pickBestAvailableAccount(
 export async function hasAnySendReadyAccount(limitSettings: SendLimitSettings): Promise<boolean> {
   const picked = await pickBestAvailableAccount(limitSettings)
   return picked !== null
+}
+
+export async function countInboxesAvailableForSend(
+  limitSettings: SendLimitSettings,
+  excludeIds: Set<number> = new Set()
+): Promise<number> {
+  const accounts = await getEnabledSmtpAccounts()
+  let count = 0
+  for (const account of accounts) {
+    if (excludeIds.has(account.id)) continue
+    const gate = await evaluateAccountSendGate(account, limitSettings)
+    if (gate.allowed) count++
+  }
+  return count
+}
+
+/** When every inbox is spacing/capped, earliest time any inbox can send again. */
+export async function getNextInboxAvailableAt(
+  limitSettings: SendLimitSettings,
+  excludeIds: Set<number> = new Set()
+): Promise<Date | null> {
+  const accounts = await getEnabledSmtpAccounts()
+  const now = Date.now()
+  let earliest: Date | null = null
+
+  for (const account of accounts) {
+    if (excludeIds.has(account.id)) continue
+    const gate = await evaluateAccountSendGate(account, limitSettings)
+    if (gate.allowed) return null
+    if (gate.reason === 'throttled' && account.lastUsedAt && limitSettings.sendDelayMinMs > 0) {
+      const at = account.lastUsedAt.getTime() + limitSettings.sendDelayMinMs
+      if (at > now && (!earliest || at < earliest.getTime())) {
+        earliest = new Date(at)
+      }
+    }
+  }
+
+  return earliest
 }
 
 export async function getLeadSmtpAssignment(leadId: number, campaignId: number) {

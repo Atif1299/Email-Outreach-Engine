@@ -7,6 +7,7 @@ import StepLeads from '@/components/dashboard/StepLeads'
 import StepCampaign from '@/components/dashboard/StepCampaign'
 import StepPreview from '@/components/dashboard/StepPreview'
 import StepQueue from '@/components/dashboard/StepQueue'
+import StepReplies from '@/components/dashboard/StepReplies'
 
 export interface SmtpAccountStatus {
   id: number
@@ -140,6 +141,7 @@ const STEPS = [
   { id: 3, icon: '3', label: 'Campaign' },
   { id: 4, icon: '4', label: 'Preview' },
   { id: 5, icon: '5', label: 'Queue' },
+  { id: 6, icon: '6', label: 'Replies' },
 ]
 
 export default function DashboardPage() {
@@ -180,6 +182,7 @@ export default function DashboardPage() {
     if (currentStep === 3) { loadBatches(); loadCampaigns() }
     if (currentStep === 4) loadCampaigns()
     if (currentStep === 5) { loadCampaigns(); loadQueueStatus() }
+    if (currentStep === 6) loadCampaigns()
   }, [currentStep])
 
   // Load leads whenever filters change (abort stale requests)
@@ -389,6 +392,8 @@ export default function DashboardPage() {
                 onBackToPreview={() => setCurrentStep(4)}
               />
             )}
+
+            {currentStep === 6 && <StepReplies campaigns={campaigns} />}
           </div>
         </main>
       </div>

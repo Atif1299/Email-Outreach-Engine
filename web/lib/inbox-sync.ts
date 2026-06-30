@@ -17,13 +17,14 @@ const IMAP_PORT = 993
 const DEFAULT_LOOKBACK_DAYS = 7
 const MAX_MESSAGES_PER_RUN = 100
 
-const ENGAGED_STATUSES = new Set(['replied', 'unsubscribed'])
+const ENGAGED_STATUSES = new Set(['replied', 'unsubscribed', 'out_of_office'])
 
 export interface InboxSyncResult {
   checked: number
   matched: number
   replied: number
   unsubscribed: number
+  outOfOffice: number
   bounces: number
   skipped: number
   errors: string[]
@@ -228,10 +229,11 @@ async function resolveCampaignForReply(
 async function recordEngagement(opts: {
   leadId: number
   campaignId: number
-  status: 'replied' | 'unsubscribed'
+  status: 'replied' | 'unsubscribed' | 'out_of_office'
   replySubject: string
   replySnippet: string
   replyDate: Date
+  inboxAccountId: number
 }): Promise<boolean> {
   const existing = await prisma.leadCampaignEngagement.findUnique({
     where: {
@@ -242,6 +244,7 @@ async function recordEngagement(opts: {
   if (existing?.status === 'unsubscribed') return false
   if (existing?.status === opts.status) return false
   if (existing?.status === 'replied' && opts.status === 'replied') return false
+  if (existing?.status === 'out_of_office' && opts.status === 'out_of_office') return false
 
   await prisma.leadCampaignEngagement.upsert({
     where: {
@@ -251,18 +254,23 @@ async function recordEngagement(opts: {
       leadId: opts.leadId,
       campaignId: opts.campaignId,
       status: opts.status,
-      repliedAt: opts.status === 'replied' ? opts.replyDate : null,
+      repliedAt:
+        opts.status === 'replied' || opts.status === 'out_of_office' ? opts.replyDate : null,
       unsubscribedAt: opts.status === 'unsubscribed' ? opts.replyDate : null,
       replySubject: opts.replySubject.slice(0, 500),
       replySnippet: opts.replySnippet.slice(0, 500),
       detectedVia: 'imap',
+      inboxAccountId: opts.inboxAccountId,
     },
     update: {
       status: opts.status,
-      ...(opts.status === 'replied' ? { repliedAt: opts.replyDate } : { unsubscribedAt: opts.replyDate }),
+      ...(opts.status === 'replied' || opts.status === 'out_of_office'
+        ? { repliedAt: opts.replyDate }
+        : { unsubscribedAt: opts.replyDate }),
       replySubject: opts.replySubject.slice(0, 500),
       replySnippet: opts.replySnippet.slice(0, 500),
       detectedVia: 'imap',
+      inboxAccountId: opts.inboxAccountId,
       updatedAt: new Date(),
     },
   })
@@ -277,11 +285,20 @@ async function recordEngagement(opts: {
 
 async function processMessage(
   parsed: ParsedMail,
-  queueState: QueueStateLike | null
-): Promise<{ matched: boolean; replied: boolean; unsubscribed: boolean; skipped: boolean }> {
+  queueState: QueueStateLike | null,
+  receivingAccount: { id: number; email: string }
+): Promise<{
+  matched: boolean
+  replied: boolean
+  unsubscribed: boolean
+  outOfOffice: boolean
+  skipped: boolean
+}> {
   const fromRaw = parsed.from?.value?.[0]?.address || parsed.from?.text || ''
   const fromEmail = normalizeEmail(fromRaw)
-  if (!fromEmail) return { matched: false, replied: false, unsubscribed: false, skipped: true }
+  if (!fromEmail) {
+    return { matched: false, replied: false, unsubscribed: false, outOfOffice: false, skipped: true }
+  }
 
   const headers = new Map<string, string>()
   if (parsed.headers) {
@@ -291,16 +308,13 @@ async function processMessage(
   }
 
   const subject = parsed.subject || ''
-  if (isAutoReply(headers, subject)) {
-    return { matched: false, replied: false, unsubscribed: false, skipped: true }
-  }
 
   const lead = await prisma.lead.findFirst({
     where: { email: { equals: fromEmail, mode: 'insensitive' } },
     select: { id: true, doNotContact: true },
   })
   if (!lead || lead.doNotContact) {
-    return { matched: false, replied: false, unsubscribed: false, skipped: true }
+    return { matched: false, replied: false, unsubscribed: false, outOfOffice: false, skipped: true }
   }
 
   const replyDate = parsed.date || new Date()
@@ -310,16 +324,38 @@ async function processMessage(
   ]
 
   const campaignId = await resolveCampaignForReply(lead.id, replyDate, inReplyToIds, queueState)
-  if (!campaignId) return { matched: false, replied: false, unsubscribed: false, skipped: true }
+  if (!campaignId) {
+    return { matched: false, replied: false, unsubscribed: false, outOfOffice: false, skipped: true }
+  }
 
   const existing = await prisma.leadCampaignEngagement.findUnique({
     where: { leadId_campaignId: { leadId: lead.id, campaignId } },
   })
   if (existing && ENGAGED_STATUSES.has(existing.status)) {
-    return { matched: true, replied: false, unsubscribed: false, skipped: true }
+    return { matched: true, replied: false, unsubscribed: false, outOfOffice: false, skipped: true }
   }
 
   const bodyText = (parsed.text || parsed.html?.replace(/<[^>]+>/g, ' ') || '').slice(0, 2000)
+
+  if (isAutoReply(headers, subject)) {
+    const recorded = await recordEngagement({
+      leadId: lead.id,
+      campaignId,
+      status: 'out_of_office',
+      replySubject: subject,
+      replySnippet: bodyText.slice(0, 200),
+      replyDate,
+      inboxAccountId: receivingAccount.id,
+    })
+    return {
+      matched: true,
+      replied: false,
+      unsubscribed: false,
+      outOfOffice: recorded,
+      skipped: !recorded,
+    }
+  }
+
   const status: 'replied' | 'unsubscribed' = isUnsubscribeRequest(bodyText) ? 'unsubscribed' : 'replied'
 
   const recorded = await recordEngagement({
@@ -329,12 +365,14 @@ async function processMessage(
     replySubject: subject,
     replySnippet: bodyText.slice(0, 200),
     replyDate,
+    inboxAccountId: receivingAccount.id,
   })
 
   return {
     matched: true,
     replied: recorded && status === 'replied',
     unsubscribed: recorded && status === 'unsubscribed',
+    outOfOffice: false,
     skipped: !recorded,
   }
 }
@@ -382,10 +420,14 @@ async function syncAccountInbox(
             continue
           }
 
-          const outcome = await processMessage(parsed, queueState)
+          const outcome = await processMessage(parsed, queueState, {
+            id: account.id,
+            email: account.email,
+          })
           if (outcome.matched) result.matched++
           if (outcome.replied) result.replied++
           if (outcome.unsubscribed) result.unsubscribed++
+          if (outcome.outOfOffice) result.outOfOffice++
           if (outcome.skipped) result.skipped++
         } catch (msgErr) {
           const msg = msgErr instanceof Error ? msgErr.message : 'Message parse failed'
@@ -427,6 +469,7 @@ export async function syncInbox(): Promise<InboxSyncResult> {
     matched: 0,
     replied: 0,
     unsubscribed: 0,
+    outOfOffice: 0,
     bounces: 0,
     skipped: 0,
     errors: [],
