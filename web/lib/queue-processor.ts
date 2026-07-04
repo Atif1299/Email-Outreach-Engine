@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client'
 import prisma from '@/lib/db'
 import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
+import { buildMailContent } from '@/lib/email-html'
+import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 import { getDeliveryHaltError, isHardBounceError } from '@/lib/verify'
 import { suppressLeadForBounce } from '@/lib/lead-suppression'
 import {
@@ -106,10 +108,14 @@ async function cleanupStaleSendingRecords(leadId: number, campaignId: number, st
   })
 }
 
-async function claimSendSlot(leadId: number, campaignId: number, stepOrder: number): Promise<boolean> {
+async function claimSendSlot(
+  leadId: number,
+  campaignId: number,
+  stepOrder: number
+): Promise<{ ok: true; sendId: number } | { ok: false }> {
   await cleanupStaleSendingRecords(leadId, campaignId, stepOrder)
   try {
-    await prisma.leadSend.create({
+    const created = await prisma.leadSend.create({
       data: {
         leadId,
         campaignId,
@@ -117,11 +123,12 @@ async function claimSendSlot(leadId: number, campaignId: number, stepOrder: numb
         subject: 'SENDING',
         error: null,
       },
+      select: { id: true },
     })
-    return true
+    return { ok: true, sendId: created.id }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      return false
+      return { ok: false }
     }
     throw error
   }
@@ -598,12 +605,13 @@ async function processQueueBatchInner(maxEmails?: number) {
     }
 
     const claimed = await claimSendSlot(leadId, campaign.id, nextStepOrder)
-    if (!claimed) {
+    if (!claimed.ok) {
       if (nextStepOrder >= maxStepOrder) {
         activeLeadIds.shift()
       }
       continue
     }
+    let leadSendId = claimed.sendId
 
     const triedAccountIds = new Set<number>()
     let sendCompleted = false
@@ -671,7 +679,14 @@ async function processQueueBatchInner(maxEmails?: number) {
         }
 
         const from = formatFromAddress(settings.smtpFromName, account)
-        const mailOptions: nodemailer.SendMailOptions = { from, to: lead.email, subject, text: body }
+        const mailContent = buildMailContent(body, leadSendId)
+        const mailOptions: nodemailer.SendMailOptions = {
+          from,
+          to: lead.email,
+          subject,
+          text: mailContent.text,
+          html: mailContent.html,
+        }
 
         if (nextStepOrder > 1) {
           const priorSend = await prisma.leadSend.findFirst({
@@ -755,7 +770,10 @@ async function processQueueBatchInner(maxEmails?: number) {
 
           if (retryResult.status === 'ok') {
             const reclaimed = await claimSendSlot(leadId, campaign.id, nextStepOrder)
-            if (reclaimed) continue
+            if (reclaimed.ok) {
+              leadSendId = reclaimed.sendId
+              continue
+            }
           }
         }
 
@@ -814,7 +832,8 @@ async function processQueueBatchInner(maxEmails?: number) {
                 },
               })
               const reclaimed = await claimSendSlot(leadId, campaign.id, nextStepOrder)
-              if (reclaimed) {
+              if (reclaimed.ok) {
+                leadSendId = reclaimed.sendId
                 failed--
                 continue
               }
@@ -893,6 +912,8 @@ async function processQueueBatchInner(maxEmails?: number) {
     lastServedCampaignId,
     clearLastError: processed > 0,
   })
+
+  if (processed > 0) invalidateAllCampaignStatsCache()
 
   return {
     status: 'processed' as const,

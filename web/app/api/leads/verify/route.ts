@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { verifyEmailBasic, verifyEmailZeroBounce } from '@/lib/verify'
 import { ensureSettings } from '@/lib/settings'
+import { appendLeadsToActiveCampaigns } from '@/lib/import-queue-sync'
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,8 +23,10 @@ export async function POST(request: NextRequest) {
 
     const counts = { valid: 0, invalid: 0, risky: 0, unknown: 0 }
     let verified = 0
+    const newlyValidLeadIds: number[] = []
 
     for (const lead of leads) {
+      const wasValid = lead.verificationStatus === 'valid'
       let result
 
       if (provider === 'zerobounce' && settings.verificationApiKey) {
@@ -42,11 +45,35 @@ export async function POST(request: NextRequest) {
         },
       })
 
+      if (!wasValid && result.status === 'valid') {
+        newlyValidLeadIds.push(lead.id)
+      }
+
       counts[result.status as keyof typeof counts] = (counts[result.status as keyof typeof counts] || 0) + 1
       verified++
     }
 
-    return NextResponse.json({ verified, counts })
+    let addedToActiveCampaigns = 0
+    if (newlyValidLeadIds.length > 0) {
+      const leadsWithBatch = await prisma.lead.findMany({
+        where: { id: { in: newlyValidLeadIds } },
+        select: { id: true, importBatchId: true },
+      })
+
+      const byBatch = new Map<number, number[]>()
+      for (const lead of leadsWithBatch) {
+        if (lead.importBatchId == null) continue
+        const ids = byBatch.get(lead.importBatchId) ?? []
+        ids.push(lead.id)
+        byBatch.set(lead.importBatchId, ids)
+      }
+
+      for (const [syncBatchId, ids] of byBatch) {
+        addedToActiveCampaigns += await appendLeadsToActiveCampaigns(syncBatchId, ids)
+      }
+    }
+
+    return NextResponse.json({ verified, counts, addedToActiveCampaigns })
   } catch (error) {
     console.error('Verification failed:', error)
     return NextResponse.json({ error: 'Verification failed' }, { status: 500 })

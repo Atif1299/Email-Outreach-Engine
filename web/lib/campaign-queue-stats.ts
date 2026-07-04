@@ -5,6 +5,7 @@ import {
   isCampaignActive,
   type QueueStateLike,
 } from '@/lib/queue-active'
+import { withPrismaRetry } from '@/lib/prisma-retry'
 import {
   computeDueJobs,
   countPriorCampaignContacts,
@@ -15,6 +16,13 @@ import {
 } from '@/lib/queue-schedule'
 
 export async function computeCampaignQueueStats(
+  campaignId: number,
+  queueState: QueueStateLike | null
+) {
+  return withPrismaRetry(() => computeCampaignQueueStatsInner(campaignId, queueState))
+}
+
+async function computeCampaignQueueStatsInner(
   campaignId: number,
   queueState: QueueStateLike | null
 ) {
@@ -33,7 +41,10 @@ export async function computeCampaignQueueStats(
     where.importBatchId = { in: campaign.targetBatches.map((tb) => tb.importBatchId) }
   }
 
-  const leads = await prisma.lead.findMany({ where })
+  const leads = await prisma.lead.findMany({
+    where,
+    select: { id: true, verificationStatus: true },
+  })
   const sendable = leads.filter((l) => l.verificationStatus === 'valid').length
   const blocked = leads.length - sendable
 
@@ -46,10 +57,10 @@ export async function computeCampaignQueueStats(
   })
 
   const lastSendsByLead = await loadLastSuccessfulSends(campaignId, validLeadIds)
-  const skippedLeadIds = new Set<number>()
   const blockedLeadIds = await loadBlockedLeadIds(campaignId, validLeadIds)
 
   const activeEntry = findActiveEntry(queueState, campaignId)
+  const skippedLeadIds = new Set<number>()
   if (activeEntry) {
     activeEntry.skippedLeadIds.forEach((id) => skippedLeadIds.add(id))
   }
@@ -58,7 +69,12 @@ export async function computeCampaignQueueStats(
   const statsLeadIds =
     activeEntry && activeEntry.leadIds.length > 0 ? activeEntry.leadIds : validLeadIds
 
-  const lastSendsForStats = await loadLastSuccessfulSends(campaignId, statsLeadIds)
+  const lastSendsForStats = new Map<number, { stepOrder: number; sentAt: Date }>()
+  for (const leadId of statsLeadIds) {
+    const last = lastSendsByLead.get(leadId)
+    if (last) lastSendsForStats.set(leadId, last)
+  }
+
   const blockedForStats = await loadBlockedLeadIds(campaignId, statsLeadIds)
 
   const dueJobs = computeDueJobs(

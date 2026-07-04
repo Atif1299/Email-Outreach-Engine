@@ -104,6 +104,7 @@ model LeadSend {
   smtpMessageId String?  @map("smtp_message_id")
   smtpAccountId Int?     @map("smtp_account_id")
   sentAt        DateTime @default(now()) @map("sent_at")
+  openedAt      DateTime? @map("opened_at")
   error         String?
 
   lead        Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)

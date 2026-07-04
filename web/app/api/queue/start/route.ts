@@ -1,47 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { countDoNotContactInList } from '@/lib/lead-suppression'
-import {
-  countPriorCampaignContacts,
-  getIncompleteLeadIds,
-  getMaxStepOrder,
-} from '@/lib/queue-schedule'
+import { resolveLeadIdsForCampaign } from '@/lib/campaign-leads'
 import { upsertActiveCampaign, isCampaignActive } from '@/lib/queue-active'
 
 export const dynamic = 'force-dynamic'
-
-async function resolveLeadIdsForCampaign(campaignId: number) {
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: campaignId },
-    include: { targetBatches: true, steps: true },
-  })
-
-  if (!campaign) return { error: 'Campaign not found', status: 404 as const }
-  if (campaign.steps.length === 0) return { error: 'Campaign has no steps', status: 400 as const }
-
-  const where: { verificationStatus: string; importBatchId?: { in: number[] } } = {
-    verificationStatus: 'valid',
-  }
-  if (campaign.targetBatches.length > 0) {
-    where.importBatchId = { in: campaign.targetBatches.map((tb) => tb.importBatchId) }
-  }
-
-  const leads = await prisma.lead.findMany({ where, select: { id: true } })
-  const validLeadIds = leads.map((l) => l.id)
-  const maxStepOrder = getMaxStepOrder(campaign.steps)
-
-  const [leadIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
-    getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder),
-    countPriorCampaignContacts(campaignId, validLeadIds),
-    countDoNotContactInList(validLeadIds),
-  ])
-
-  if (leadIds.length === 0) {
-    return { error: 'No sendable leads remaining for this campaign', status: 400 as const }
-  }
-
-  return { leadIds, priorCampaignContacts, doNotContactExcluded }
-}
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Campaign, QueueStatus } from '@/app/dashboard/page'
+import CampaignAnalytics from '@/components/dashboard/CampaignAnalytics'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -97,6 +98,8 @@ export default function StepQueue({
   const [campaignStatsById, setCampaignStatsById] = useState<Record<number, CampaignStats>>({})
   const [inboxStatus, setInboxStatus] = useState<InboxStatus | null>(null)
   const [loading, setLoading] = useState(false)
+  const [analyticsCampaignId, setAnalyticsCampaignId] = useState<number | null>(null)
+  const statsInFlightRef = useRef(false)
   const startFlash = useButtonFlash()
   const { hint: queueHint, showHint: showQueueHint } = useInlineHint()
 
@@ -109,6 +112,8 @@ export default function StepQueue({
   }, [activeCampaignIds.join(',')])
 
   const loadAllCampaignStats = useCallback(async () => {
+    if (statsInFlightRef.current) return
+    statsInFlightRef.current = true
     try {
       const res = await fetch('/api/queue/stats/all')
       if (res.ok) {
@@ -121,6 +126,8 @@ export default function StepQueue({
       }
     } catch (e) {
       console.error('Failed to load campaign stats:', e)
+    } finally {
+      statsInFlightRef.current = false
     }
   }, [])
 
@@ -147,13 +154,14 @@ export default function StepQueue({
     loadQueueStatus()
     loadInboxStatus()
     loadAllCampaignStats()
+    const statsIntervalMs = queueStatus.running && !queueStatus.paused ? 8000 : 20000
     const interval = setInterval(() => {
       loadQueueStatus()
       loadInboxStatus()
       loadAllCampaignStats()
-    }, 5000)
+    }, statsIntervalMs)
     return () => clearInterval(interval)
-  }, [loadQueueStatus, loadInboxStatus, loadAllCampaignStats])
+  }, [loadQueueStatus, loadInboxStatus, loadAllCampaignStats, queueStatus.running, queueStatus.paused])
 
   useEffect(() => {
     if (USE_CRON_WORKER) return
@@ -456,6 +464,13 @@ export default function StepQueue({
                       </button>
                       <CampaignRowStats stats={campaignStatsById[c.id]} />
                       <div className="queue-campaign-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-analytics"
+                          onClick={() => setAnalyticsCampaignId(c.id)}
+                        >
+                          Analytics
+                        </button>
                         {isActive && queueStatus.running && (
                           <span className="status-pill status-pill--running">In queue</span>
                         )}
@@ -673,6 +688,15 @@ export default function StepQueue({
           </button>
         </div>
       </footer>
+
+      {analyticsCampaignId != null && (
+        <CampaignAnalytics
+          campaignId={analyticsCampaignId}
+          queueRunning={queueStatus.running}
+          queuePaused={queueStatus.paused}
+          onClose={() => setAnalyticsCampaignId(null)}
+        />
+      )}
     </section>
   )
 }

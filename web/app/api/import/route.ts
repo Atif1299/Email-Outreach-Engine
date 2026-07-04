@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { parseFile } from '@/lib/parser'
 import { verifyEmailBasic } from '@/lib/verify'
+import { appendLeadsToActiveCampaigns } from '@/lib/import-queue-sync'
 import { Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const file = formData.get('file') as File
     const mappingStr = formData.get('mapping') as string
+    const targetBatchIdStr = formData.get('targetBatchId') as string | null
 
     if (!file || !mappingStr) {
       return NextResponse.json({ error: 'Missing file or mapping' }, { status: 400 })
@@ -28,9 +30,30 @@ export async function POST(request: NextRequest) {
 
     const rows = await parseFile(file)
 
-    const batch = await prisma.importBatch.create({
-      data: { filename: file.name },
-    })
+    let batch: { id: number }
+    let extended = false
+
+    if (targetBatchIdStr) {
+      const targetBatchId = parseInt(targetBatchIdStr, 10)
+      if (Number.isNaN(targetBatchId)) {
+        return NextResponse.json({ error: 'Invalid target batch ID' }, { status: 400 })
+      }
+
+      const existingBatch = await prisma.importBatch.findUnique({
+        where: { id: targetBatchId },
+        select: { id: true },
+      })
+      if (!existingBatch) {
+        return NextResponse.json({ error: 'Target batch not found' }, { status: 404 })
+      }
+
+      batch = existingBatch
+      extended = true
+    } else {
+      batch = await prisma.importBatch.create({
+        data: { filename: file.name },
+      })
+    }
 
     const seen = new Set<string>()
     const candidates: Array<{
@@ -100,6 +123,20 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    let insertedLeadIds: number[] = []
+    if (toInsert.length > 0) {
+      const inserted = await prisma.lead.findMany({
+        where: {
+          importBatchId: batch.id,
+          email: { in: toInsert.map((l) => l.email) },
+        },
+        select: { id: true },
+      })
+      insertedLeadIds = inserted.map((l) => l.id)
+    }
+
+    const addedToActiveCampaigns = await appendLeadsToActiveCampaigns(batch.id, insertedLeadIds)
+
     return NextResponse.json({
       imported: toInsert.length,
       skippedNoEmail,
@@ -107,6 +144,8 @@ export async function POST(request: NextRequest) {
       skippedExistingInApp,
       verification,
       batchId: batch.id,
+      extended,
+      addedToActiveCampaigns,
     })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientInitializationError) {

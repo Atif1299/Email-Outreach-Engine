@@ -22,6 +22,8 @@ interface ImportPreview {
 
 const FIELD_NAMES = ['email', 'first_name', 'last_name', 'current_employer', 'current_title', 'industry', 'location', 'phone']
 
+type ImportMode = 'new' | 'extend'
+
 function formatDate(iso: string) {
   const d = new Date(iso)
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -34,6 +36,7 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
   const [dragOver, setDragOver] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [importMode, setImportMode] = useState<ImportMode>('new')
   const importFlash = useButtonFlash()
   const { hint: importHint, showHint: showImportHint } = useInlineHint()
   const { hint: listHint, showHint: showListHint } = useInlineHint()
@@ -88,11 +91,15 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
 
   async function handleImport() {
     if (!file || !preview || importing) return
+    if (importMode === 'extend' && !selectedBatchId) return
     setImporting(true)
 
     const formData = new FormData()
     formData.append('file', file)
     formData.append('mapping', JSON.stringify(preview.mapping))
+    if (importMode === 'extend' && selectedBatchId) {
+      formData.append('targetBatchId', String(selectedBatchId))
+    }
 
     try {
       const res = await fetch('/api/import', {
@@ -102,10 +109,19 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
       if (res.ok) {
         const result = await res.json()
         const v = result.verification || {}
-        showImportHint(
-          `${result.imported} imported · ${v.valid || 0} valid · ${v.invalid || 0} invalid · ${v.risky || 0} risky`,
-          'ok'
-        )
+        const parts = [
+          `${result.imported} imported`,
+          `${v.valid || 0} valid`,
+          `${v.invalid || 0} invalid`,
+          `${v.risky || 0} risky`,
+        ]
+        if (result.skippedNoEmail > 0) parts.push(`${result.skippedNoEmail} no email`)
+        if (result.duplicatesSkipped > 0) parts.push(`${result.duplicatesSkipped} dupes in file`)
+        if (result.skippedExistingInApp > 0) parts.push(`${result.skippedExistingInApp} already in app`)
+        if (result.addedToActiveCampaigns > 0) {
+          parts.push(`${result.addedToActiveCampaigns} added to running queue`)
+        }
+        showImportHint(parts.join(' · '), 'ok')
         importFlash.flashDone()
         setPreview(null)
         setFile(null)
@@ -152,6 +168,7 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
   }
 
   const mappedCols = preview ? Object.keys(preview.mapping).filter(k => preview.mapping[k]) : []
+  const canImport = preview?.mapping.email && !(importMode === 'extend' && !selectedBatchId)
 
   return (
     <section className="step-view">
@@ -209,22 +226,43 @@ export default function StepImport({ batches, selectedBatchId, onSelectBatch, on
                   Import Leads
                   <InlineHint hint={importHint} />
                 </div>
-                <div className="editor-sub">Upload CSV or Excel file with email addresses</div>
+                <div className="editor-sub">
+                  {importMode === 'extend' && selectedBatch
+                    ? `Adding to: ${selectedBatch.filename} (${selectedBatch.leadCount} leads)`
+                    : 'Upload CSV or Excel file with email addresses'}
+                </div>
               </div>
               <button
                 type="button"
                 className="btn primary btn-sm"
-                disabled={!preview?.mapping.email || importing}
+                disabled={!canImport || importing}
                 onClick={handleImport}
               >
                 {importing
                   ? `Importing ${preview?.totalRows ?? 0} rows...`
                   : importFlash.flash === 'done'
-                    ? 'Imported'
+                    ? importMode === 'extend' ? 'Added' : 'Imported'
                     : importFlash.flash === 'error'
                       ? 'Failed'
-                      : 'Import'}
+                      : importMode === 'extend' ? 'Add to Batch' : 'Import'}
               </button>
+            </div>
+            <div className="mapping-head" style={{ marginTop: '0.75rem' }}>
+              <label className="mini-label" style={{ marginRight: '0.5rem' }}>Import mode</label>
+              <select
+                className="input"
+                style={{ width: 'auto', display: 'inline-block' }}
+                value={importMode}
+                onChange={(e) => setImportMode(e.target.value as ImportMode)}
+              >
+                <option value="new">New batch</option>
+                <option value="extend">Add to selected batch</option>
+              </select>
+              {importMode === 'extend' && !selectedBatchId && (
+                <span className="mapping-count" style={{ marginLeft: '0.75rem' }}>
+                  Select a batch on the left
+                </span>
+              )}
             </div>
           </div>
 
