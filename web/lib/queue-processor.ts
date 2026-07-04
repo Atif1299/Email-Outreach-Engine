@@ -3,6 +3,7 @@ import prisma from '@/lib/db'
 import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
 import { buildMailContent } from '@/lib/email-html'
+import { getAppBaseUrl } from '@/lib/track-token'
 import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 import { getDeliveryHaltError, isHardBounceError } from '@/lib/verify'
 import { suppressLeadForBounce } from '@/lib/lead-suppression'
@@ -679,7 +680,7 @@ async function processQueueBatchInner(maxEmails?: number) {
         }
 
         const from = formatFromAddress(settings.smtpFromName, account)
-        const mailContent = buildMailContent(body, leadSendId)
+        const mailContent = buildMailContent(body, leadSendId, getAppBaseUrl())
         const mailOptions: nodemailer.SendMailOptions = {
           from,
           to: lead.email,

@@ -78,6 +78,7 @@ export default function StepReplies({ campaigns }: Props) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const { hint, showHint } = useInlineHint()
 
   const loadStats = useCallback(async () => {
@@ -207,6 +208,29 @@ export default function StepReplies({ campaigns }: Props) {
     }
   }
 
+  async function syncInboxNow() {
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/inbox/sync', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json()
+        showHint(err.error || 'Inbox sync failed', 'err')
+        return
+      }
+      const data = await res.json()
+      showHint(
+        `Inbox synced · ${data.checked ?? 0} checked · ${data.replied ?? 0} new replies`,
+        data.errors?.length ? 'warn' : 'ok'
+      )
+      await loadStats()
+      await loadReplies()
+    } catch {
+      showHint('Inbox sync failed', 'err')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="step-panel replies-panel">
       <div className="step-header">
@@ -217,14 +241,24 @@ export default function StepReplies({ campaigns }: Props) {
             automatically.
           </p>
         </div>
-        {summary && (
-          <div className="replies-summary-chips">
-            <span className="replies-chip">{summary.newRepliesToday} new today</span>
-            <span className="replies-chip">{summary.totalReplied} replied</span>
-            <span className="replies-chip">{summary.totalUnsubscribed} unsubscribed</span>
-            <span className="replies-chip">{summary.totalOutOfOffice} out of office</span>
-          </div>
-        )}
+        <div className="replies-header-actions">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            disabled={syncing}
+            onClick={() => void syncInboxNow()}
+          >
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+          {summary && (
+            <div className="replies-summary-chips">
+              <span className="replies-chip">{summary.newRepliesToday} new today</span>
+              <span className="replies-chip">{summary.totalReplied} replied</span>
+              <span className="replies-chip">{summary.totalUnsubscribed} unsubscribed</span>
+              <span className="replies-chip">{summary.totalOutOfOffice} out of office</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <InlineHint hint={hint} />

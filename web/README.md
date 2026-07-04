@@ -42,8 +42,14 @@ OPENAI_API_KEY="sk-..."
 # SMTP (your email provider)
 SMTP_PASSWORD="your-app-password"
 
-# Cron security (generate a random string)
+# Cron security (generate a random string — required for Vercel cron jobs)
 CRON_SECRET="random-secret-string"
+
+# Open tracking (HMAC for email open pixels; can match CRON_SECRET)
+TRACKING_SECRET="random-secret-string"
+
+# Public app URL for open-tracking pixels in sent emails (required for local sends)
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
 # Email Verification (optional)
 ZEROBOUNCE_API_KEY=""
@@ -83,7 +89,9 @@ Open [http://localhost:3000](http://localhost:3000)
    - `DATABASE_URL` - Neon connection string
    - `OPENAI_API_KEY` - Your OpenAI API key
    - `SMTP_PASSWORD` - Your SMTP password/app password
-   - `CRON_SECRET` - Random string for cron job authentication
+   - `CRON_SECRET` - Random string for cron job authentication (required)
+   - `TRACKING_SECRET` - Random string for open-tracking pixel tokens (or reuse `CRON_SECRET`)
+   - `NEXT_PUBLIC_APP_URL` - Production URL e.g. `https://your-app.vercel.app` (for open tracking pixels)
 4. Deploy!
 
 ### 3. Run Database Migration
@@ -95,11 +103,38 @@ npx prisma db push
 
 Or use Vercel's build command: `npx prisma db push && next build`
 
-## Cron Job
+## Cron Jobs (external scheduler recommended)
 
-The app includes a Vercel Cron job that runs every minute to process the email queue. This is configured in `vercel.json`.
+On **Vercel Hobby**, built-in cron is limited to **once per day**, so use an **external cron platform** (cron-job.org, EasyCron, Uptime Robot, etc.) to call these endpoints at whatever interval you want.
 
-The cron endpoint is protected by `CRON_SECRET` - Vercel automatically passes this header.
+| URL | Suggested schedule | Purpose |
+|-----|-------------------|---------|
+| `GET https://your-app.vercel.app/api/cron/process-queue` | Every 1–5 minutes | Process email queue (when `NEXT_PUBLIC_USE_CRON_WORKER=true`) |
+| `GET https://your-app.vercel.app/api/cron/check-inbox` | Every 5–15 minutes | Sync Gmail inboxes for replies/unsubs/bounces |
+
+**Auth header (required):**
+
+```
+Authorization: Bearer <CRON_SECRET>
+```
+
+Set `CRON_SECRET` in Vercel environment variables. Use the same value in your external cron job’s custom header.
+
+**Alternatives:**
+
+- **Queue without cron:** leave `NEXT_PUBLIC_USE_CRON_WORKER` unset — the queue runs from the browser tab via `/api/queue/tick` while the dashboard is open.
+- **Inbox without cron:** use **Sync now** on the Replies or Queue step, or `POST /api/inbox/sync`.
+
+Vercel Pro can use `crons` in `vercel.json` instead of an external scheduler if you prefer.
+
+## Open Tracking
+
+Queue sends include a 1×1 tracking pixel in the HTML part. Opens are recorded on `lead_sends.opened_at` via `GET /api/track/open`.
+
+Required for reliable tracking in production:
+
+- `NEXT_PUBLIC_APP_URL` — absolute URL for pixel links (falls back to `VERCEL_URL` on Vercel)
+- `TRACKING_SECRET` or `CRON_SECRET` — HMAC signing key (required in production)
 
 ## Project Structure
 

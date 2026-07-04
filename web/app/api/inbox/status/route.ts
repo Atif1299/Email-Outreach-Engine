@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
+import { withPrismaRetry } from '@/lib/prisma-retry'
 import { ensureSettings } from '@/lib/settings'
 import { toSendLimitSettings } from '@/lib/send-limits'
 import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
@@ -8,35 +9,33 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const campaignId = parseInt(searchParams.get('campaignId') || '0')
+    return await withPrismaRetry(async () => {
+      const { searchParams } = new URL(request.url)
+      const campaignId = parseInt(searchParams.get('campaignId') || '0')
 
-    const syncState = await prisma.inboxSyncState.findUnique({ where: { id: 1 } })
-    const settings = await ensureSettings()
-    const limitSettings = toSendLimitSettings(settings)
-    const accounts = await ensureSmtpAccounts()
-    const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
+      const syncState = await prisma.inboxSyncState.findUnique({ where: { id: 1 } })
+      const settings = await ensureSettings()
+      const limitSettings = toSendLimitSettings(settings)
+      const accounts = await ensureSmtpAccounts()
+      const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
-    let repliedCount = 0
-    let unsubscribedCount = 0
-
-    if (campaignId) {
-      ;[repliedCount, unsubscribedCount] = await Promise.all([
+      const engagementWhere = campaignId ? { campaignId } : {}
+      const [repliedCount, unsubscribedCount] = await Promise.all([
         prisma.leadCampaignEngagement.count({
-          where: { campaignId, status: 'replied' },
+          where: { ...engagementWhere, status: 'replied' },
         }),
         prisma.leadCampaignEngagement.count({
-          where: { campaignId, status: 'unsubscribed' },
+          where: { ...engagementWhere, status: 'unsubscribed' },
         }),
       ])
-    }
 
-    return NextResponse.json({
-      lastCheckedAt: syncState?.lastCheckedAt ?? null,
-      lastError: syncState?.lastError ?? null,
-      repliedCount,
-      unsubscribedCount,
-      smtpAccounts,
+      return NextResponse.json({
+        lastCheckedAt: syncState?.lastCheckedAt ?? null,
+        lastError: syncState?.lastError ?? null,
+        repliedCount,
+        unsubscribedCount,
+        smtpAccounts,
+      })
     })
   } catch (error) {
     console.error('Failed to get inbox status:', error)

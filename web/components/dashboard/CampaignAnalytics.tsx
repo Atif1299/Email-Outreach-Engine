@@ -208,7 +208,12 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
               </div>
               <div className="campaign-analytics-detail">
                 <span className="campaign-analytics-detail-label">Opened</span>
-                <span>{data.metrics.openedCount}</span>
+                <span>
+                  {data.metrics.openedCount}
+                  {data.metrics.emailsSent > 0
+                    ? ` (${Math.round((data.metrics.openedCount / data.metrics.emailsSent) * 100)}%)`
+                    : ''}
+                </span>
               </div>
               <div className="campaign-analytics-detail">
                 <span className="campaign-analytics-detail-label">Started</span>

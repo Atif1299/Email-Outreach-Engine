@@ -59,7 +59,8 @@ export async function getCampaignAnalytics(campaignId: number) {
 
     const totalLeads = stats.sendable
     const sent = stats.leadsStarted
-    const progressPct = totalLeads > 0 ? Math.round((sent / totalLeads) * 100) : 0
+    const progressPct =
+      totalLeads > 0 ? Math.round((stats.leadsCompleted / totalLeads) * 100) : 0
 
     const [successCount, failedCount, recentSends, engagements] = await Promise.all([
       prisma.leadSend.count({
@@ -155,7 +156,7 @@ export async function getCampaignAnalytics(campaignId: number) {
         dueNow: stats.dueNow,
         emailsSent: stats.emailsSent,
         failedSends: failedCount,
-        openedCount: recentSends.filter((s) => s.openedAt != null).length,
+        openedCount: stats.openedCount ?? 0,
       },
       sendDelay: formatDelayRange(settings.sendDelayMinMs, settings.sendDelayMaxMs),
       steps: campaign.steps.map((step) => ({

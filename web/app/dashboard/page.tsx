@@ -389,6 +389,7 @@ export default function DashboardPage() {
                 queueStatus={queueStatus}
                 onQueueCampaignChange={setQueueCampaignId}
                 onQueueStatusChange={setQueueStatus}
+                onCampaignsChanged={loadCampaigns}
                 onBackToPreview={() => setCurrentStep(4)}
               />
             )}

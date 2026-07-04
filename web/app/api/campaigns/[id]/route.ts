@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { parseFewShotJson, serializeFewShotJson } from '@/lib/few-shot'
+import { deactivateCampaign } from '@/lib/queue-active'
+import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -135,7 +137,9 @@ export async function DELETE(
 ) {
   try {
     const id = parseInt(params.id)
+    await deactivateCampaign(id)
     await prisma.campaign.delete({ where: { id } })
+    invalidateAllCampaignStatsCache()
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Failed to delete campaign:', error)

@@ -65,27 +65,36 @@ async function computeCampaignQueueStatsInner(
     activeEntry.skippedLeadIds.forEach((id) => skippedLeadIds.add(id))
   }
 
-  /** When in queue, stats reflect only leads in the active session — not the whole campaign. */
-  const statsLeadIds =
-    activeEntry && activeEntry.leadIds.length > 0 ? activeEntry.leadIds : validLeadIds
+  const isActiveInQueue = isCampaignActive(queueState, campaignId)
+  /** Due-now counts only leads still in the running queue session; all other metrics are campaign-wide. */
+  const schedulingLeadIds =
+    isActiveInQueue && activeEntry && activeEntry.leadIds.length > 0
+      ? activeEntry.leadIds
+      : validLeadIds
 
-  const lastSendsForStats = new Map<number, { stepOrder: number; sentAt: Date }>()
-  for (const leadId of statsLeadIds) {
+  const lastSendsForScheduling = new Map<number, { stepOrder: number; sentAt: Date }>()
+  for (const leadId of schedulingLeadIds) {
     const last = lastSendsByLead.get(leadId)
-    if (last) lastSendsForStats.set(leadId, last)
+    if (last) lastSendsForScheduling.set(leadId, last)
   }
 
-  const blockedForStats = await loadBlockedLeadIds(campaignId, statsLeadIds)
+  const blockedForScheduling = await loadBlockedLeadIds(campaignId, schedulingLeadIds)
 
   const dueJobs = computeDueJobs(
-    statsLeadIds,
+    schedulingLeadIds,
     campaign.steps,
-    lastSendsForStats,
+    lastSendsForScheduling,
     skippedLeadIds,
-    blockedForStats
+    blockedForScheduling
   )
-  const leadsStarted = lastSendsByLead.size
-  const leadsCompleted = [...lastSendsByLead.values()].filter((s) => s.stepOrder >= maxStepOrder).length
+
+  const leadsStarted = validLeadIds.filter((id) => lastSendsByLead.has(id)).length
+  const leadsCompleted = validLeadIds.filter((id) => {
+    const s = lastSendsByLead.get(id)
+    return s != null && s.stepOrder >= maxStepOrder
+  }).length
+  const queueRemaining =
+    isActiveInQueue && activeEntry ? activeEntry.leadIds.length : 0
 
   const sendsByStep = new Map<number, number>()
   for (const send of sends) {
@@ -102,10 +111,10 @@ async function computeCampaignQueueStatsInner(
   let notStarted = 0
   let followUpEligible = 0
 
-  for (const leadId of statsLeadIds) {
-    if (blockedForStats.has(leadId) || skippedLeadIds.has(leadId)) continue
+  for (const leadId of validLeadIds) {
+    if (blockedLeadIds.has(leadId) || skippedLeadIds.has(leadId)) continue
 
-    const last = lastSendsForStats.get(leadId)
+    const last = lastSendsByLead.get(leadId)
     if (!last) {
       notStarted++
       continue
@@ -134,7 +143,7 @@ async function computeCampaignQueueStatsInner(
     due: dueByStep.get(step.stepOrder) || 0,
   }))
 
-  const [repliedCount, unsubscribedCount, outOfOfficeCount, priorCampaignContacts, doNotContactExcluded] =
+  const [repliedCount, unsubscribedCount, outOfOfficeCount, priorCampaignContacts, doNotContactExcluded, openedCount] =
     await Promise.all([
       prisma.leadCampaignEngagement.count({
         where: { campaignId, status: 'replied' },
@@ -147,6 +156,14 @@ async function computeCampaignQueueStatsInner(
       }),
       countPriorCampaignContacts(campaignId, validLeadIds),
       countDoNotContactInList(validLeadIds),
+      prisma.leadSend.count({
+        where: {
+          campaignId,
+          openedAt: { not: null },
+          error: null,
+          subject: { notIn: ['SENDING', 'FAILED'] },
+        },
+      }),
     ])
 
   return {
@@ -159,6 +176,7 @@ async function computeCampaignQueueStatsInner(
     emailsSent: sends.length,
     leadsStarted,
     leadsCompleted,
+    queueRemaining,
     dueNow: dueJobs.length,
     repliedCount,
     unsubscribedCount,
@@ -171,5 +189,6 @@ async function computeCampaignQueueStatsInner(
     notStarted,
     blockedEngaged,
     stepBreakdown,
+    openedCount,
   }
 }

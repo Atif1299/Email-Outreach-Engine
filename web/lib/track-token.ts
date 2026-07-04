@@ -1,7 +1,20 @@
 import crypto from 'crypto'
 
+export function getAppBaseUrl(): string | undefined {
+  const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || '').replace(/\/$/, '')
+  if (!origin) return undefined
+  return origin.startsWith('http') ? origin : `https://${origin}`
+}
+
 function trackingSecret(): string {
-  return process.env.TRACKING_SECRET || process.env.CRON_SECRET || process.env.DATABASE_URL || 'dev-tracking-secret'
+  const secret = process.env.TRACKING_SECRET || process.env.CRON_SECRET
+  if (process.env.NODE_ENV === 'production') {
+    if (!secret) {
+      throw new Error('TRACKING_SECRET or CRON_SECRET must be set in production')
+    }
+    return secret
+  }
+  return secret || 'dev-tracking-secret'
 }
 
 export function signLeadSendToken(leadSendId: number): string {
@@ -30,8 +43,7 @@ export function verifyLeadSendToken(token: string): number | null {
 }
 
 export function buildOpenTrackingUrl(leadSendId: number, baseUrl?: string): string {
-  const origin = (baseUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || '').replace(/\/$/, '')
-  const host = origin.startsWith('http') ? origin : origin ? `https://${origin}` : ''
+  const host = (baseUrl || getAppBaseUrl() || '').replace(/\/$/, '')
   const token = signLeadSendToken(leadSendId)
   if (!host) return `/api/track/open?t=${encodeURIComponent(token)}`
   return `${host}/api/track/open?t=${encodeURIComponent(token)}`
