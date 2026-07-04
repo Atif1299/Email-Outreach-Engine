@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { serializeActiveCampaigns } from '@/lib/queue-active'
+import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,7 @@ export async function POST() {
         updatedAt: new Date(),
       },
     })
+    invalidateAllCampaignStatsCache()
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Failed to stop queue:', error)

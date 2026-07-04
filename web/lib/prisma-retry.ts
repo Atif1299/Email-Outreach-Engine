@@ -1,6 +1,6 @@
 ﻿import { Prisma } from '@prisma/client'
 
-const RETRYABLE_CODES = new Set(['P1001', 'P1008', 'P1017'])
+const RETRYABLE_CODES = new Set(['P1001', 'P1008', 'P1017', 'P2024'])
 
 function isRetryableError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

@@ -195,20 +195,22 @@ function CampaignCard({
           <button type="button" className="camp-row__icon-btn" onClick={onAnalytics} title="Analytics">
             Analytics
           </button>
-          {queueRunning ? (
+          {isActive ? (
             <button
               type="button"
-              className={`camp-row__queue-btn ${isActive ? 'camp-row__queue-btn--muted' : 'camp-row__queue-btn--add'}`}
+              className="camp-row__queue-btn camp-row__queue-btn--muted"
               onClick={onToggleActive}
             >
-              {isActive ? 'Remove' : 'Add'}
+              Remove
             </button>
           ) : (
-            <span
-              className={`camp-row__queue-btn camp-row__queue-btn--idle${isSelected ? ' camp-row__queue-btn--selected' : ''}`}
+            <button
+              type="button"
+              className="camp-row__queue-btn camp-row__queue-btn--add"
+              onClick={onToggleActive}
             >
-              {isSelected ? 'Selected' : ''}
-            </span>
+              Add
+            </button>
           )}
           <button
             type="button"
@@ -451,6 +453,14 @@ export default function StepQueue({
   }
 
   async function pauseQueue() {
+    if (!queueStatus.running) {
+      showQueueHint('Queue is not running', 'warn')
+      return
+    }
+    if (queueStatus.paused) {
+      showQueueHint('Already paused', 'warn')
+      return
+    }
     try {
       await fetch('/api/queue/pause', { method: 'POST' })
       await loadQueueStatus()
@@ -461,6 +471,14 @@ export default function StepQueue({
   }
 
   async function resumeQueue() {
+    if (!queueStatus.running) {
+      showQueueHint('Queue is not running', 'warn')
+      return
+    }
+    if (!queueStatus.paused) {
+      showQueueHint('Queue is not paused', 'warn')
+      return
+    }
     try {
       await fetch('/api/queue/resume', { method: 'POST' })
       await loadQueueStatus()
@@ -555,8 +573,7 @@ export default function StepQueue({
     (sum, id) => sum + (campaignStatsById[id]?.dueNow ?? 0),
     0
   )
-  const canStart =
-    selectedIds.size > 0 && selectedDueNow > 0 && !queueStatus.running
+  const canStart = selectedIds.size > 0 && !queueStatus.running
 
   const inQueueNames = activeCampaignIds
     .map((id) => campaigns.find((c) => c.id === id)?.name)
@@ -758,7 +775,6 @@ export default function StepQueue({
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
-                    disabled={!queueStatus.running || queueStatus.paused}
                     onClick={pauseQueue}
                   >
                     Pause
@@ -766,7 +782,6 @@ export default function StepQueue({
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
-                    disabled={!queueStatus.running || !queueStatus.paused}
                     onClick={resumeQueue}
                   >
                     Resume
@@ -774,10 +789,9 @@ export default function StepQueue({
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
-                    disabled={!queueStatus.running}
                     onClick={stopQueue}
                   >
-                    Stop
+                    {queueStatus.running || activeCampaignIds.length > 0 ? 'Stop' : 'Clear queue'}
                   </button>
                 </div>
               </div>

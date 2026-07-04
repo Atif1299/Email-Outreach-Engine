@@ -2,19 +2,22 @@ import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { computeCampaignQueueStats } from '@/lib/campaign-queue-stats'
 import { withPrismaRetry } from '@/lib/prisma-retry'
-import { getCachedAllCampaignStats, setCachedAllCampaignStats } from '@/lib/stats-cache'
+import {
+  getCachedAllCampaignStats,
+  getStaleAllCampaignStats,
+  setCachedAllCampaignStats,
+} from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
-const BATCH_SIZE = 2
+type AllCampaignStatsResult = {
+  campaigns: NonNullable<Awaited<ReturnType<typeof computeCampaignQueueStats>>>[]
+  aggregateDueNow: number
+}
 
-async function computeAllCampaignStats() {
-  const cached = getCachedAllCampaignStats<{
-    campaigns: Awaited<ReturnType<typeof computeCampaignQueueStats>>[]
-    aggregateDueNow: number
-  }>()
-  if (cached) return cached
+let computeInFlight: Promise<AllCampaignStatsResult> | null = null
 
+async function computeAllCampaignStatsFresh(): Promise<AllCampaignStatsResult> {
   const [queueState, campaigns] = await withPrismaRetry(() =>
     Promise.all([
       prisma.queueState.findUnique({ where: { id: 1 } }),
@@ -22,19 +25,14 @@ async function computeAllCampaignStats() {
     ])
   )
 
-  const list: NonNullable<Awaited<ReturnType<typeof computeCampaignQueueStats>>>[] = []
+  const list: AllCampaignStatsResult['campaigns'] = []
 
-  for (let i = 0; i < campaigns.length; i += BATCH_SIZE) {
-    const batch = campaigns.slice(i, i + BATCH_SIZE)
-    const batchStats = await Promise.all(
-      batch.map((c) => computeCampaignQueueStats(c.id, queueState))
-    )
-    for (const stat of batchStats) {
-      if (stat) list.push(stat)
-    }
+  for (const campaign of campaigns) {
+    const stat = await computeCampaignQueueStats(campaign.id, queueState)
+    if (stat) list.push(stat)
   }
 
-  const result = {
+  const result: AllCampaignStatsResult = {
     campaigns: list,
     aggregateDueNow: list
       .filter((s) => s.isActiveCampaign)
@@ -45,12 +43,29 @@ async function computeAllCampaignStats() {
   return result
 }
 
+async function computeAllCampaignStats(): Promise<AllCampaignStatsResult> {
+  const cached = getCachedAllCampaignStats<AllCampaignStatsResult>()
+  if (cached) return cached
+
+  if (!computeInFlight) {
+    computeInFlight = computeAllCampaignStatsFresh().finally(() => {
+      computeInFlight = null
+    })
+  }
+
+  return computeInFlight
+}
+
 export async function GET() {
   try {
     const result = await computeAllCampaignStats()
     return NextResponse.json(result)
   } catch (error) {
     console.error('Failed to get all campaign stats:', error)
+    const stale = getStaleAllCampaignStats<AllCampaignStatsResult>()
+    if (stale) {
+      return NextResponse.json({ ...stale, stale: true })
+    }
     return NextResponse.json({ error: 'Failed to get campaign stats' }, { status: 500 })
   }
 }

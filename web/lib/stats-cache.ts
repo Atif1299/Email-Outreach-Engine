@@ -6,6 +6,7 @@ interface CacheEntry<T> {
 }
 
 let allCampaignStatsCache: CacheEntry<unknown> | null = null
+let lastGoodAllCampaignStats: unknown | null = null
 
 export function getCachedAllCampaignStats<T>(): T | null {
   if (!allCampaignStatsCache) return null
@@ -16,11 +17,17 @@ export function getCachedAllCampaignStats<T>(): T | null {
   return allCampaignStatsCache.data as T
 }
 
+export function getStaleAllCampaignStats<T>(): T | null {
+  if (allCampaignStatsCache) return allCampaignStatsCache.data as T
+  return lastGoodAllCampaignStats as T | null
+}
+
 export function setCachedAllCampaignStats<T>(data: T): void {
   allCampaignStatsCache = {
     data,
     expiresAt: Date.now() + CACHE_TTL_MS,
   }
+  lastGoodAllCampaignStats = data
 }
 
 export function invalidateAllCampaignStatsCache(): void {

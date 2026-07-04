@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deactivateCampaign } from '@/lib/queue-active'
+import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     await deactivateCampaign(parseInt(String(campaignId), 10))
+    invalidateAllCampaignStatsCache()
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Failed to deactivate campaign:', error)

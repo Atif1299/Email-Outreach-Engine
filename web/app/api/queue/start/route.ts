@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 import { resolveLeadIdsForCampaign } from '@/lib/campaign-leads'
-import { upsertActiveCampaign, isCampaignActive } from '@/lib/queue-active'
+import { findActiveEntry, upsertActiveCampaign, isCampaignActive } from '@/lib/queue-active'
+import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,9 +34,16 @@ export async function POST(request: NextRequest) {
     let totalPriorContacts = 0
     let totalDncExcluded = 0
 
+    let stateSnapshot = existing
+
     for (const id of ids) {
-      if (isCampaignActive(existing, id) && !force) {
-        results.push({ campaignId: id, skipped: true, error: 'Already active' })
+      if (isCampaignActive(stateSnapshot, id) && !force) {
+        const entry = findActiveEntry(stateSnapshot, id)
+        results.push({
+          campaignId: id,
+          leadCount: entry?.leadIds.length ?? 0,
+          skipped: true,
+        })
         continue
       }
 
@@ -51,13 +59,20 @@ export async function POST(request: NextRequest) {
       })
 
       if (alreadyActive && !force) {
-        results.push({ campaignId: id, skipped: true, error: 'Already active' })
+        stateSnapshot = await prisma.queueState.findUnique({ where: { id: 1 } })
+        const entry = findActiveEntry(stateSnapshot, id)
+        results.push({
+          campaignId: id,
+          leadCount: entry?.leadIds.length ?? 0,
+          skipped: true,
+        })
         continue
       }
 
       totalPriorContacts += resolved.priorCampaignContacts
       totalDncExcluded += resolved.doNotContactExcluded
       results.push({ campaignId: id, leadCount: resolved.leadIds.length })
+      stateSnapshot = await prisma.queueState.findUnique({ where: { id: 1 } })
     }
 
     const started = results.filter((r) => r.leadCount != null)
@@ -65,6 +80,18 @@ export async function POST(request: NextRequest) {
       const firstError = results.find((r) => r.error)?.error ?? 'No campaigns started'
       return NextResponse.json({ error: firstError, results }, { status: 400 })
     }
+
+    await prisma.queueState.update({
+      where: { id: 1 },
+      data: {
+        running: true,
+        paused: false,
+        processingLockUntil: null,
+        updatedAt: new Date(),
+      },
+    })
+
+    invalidateAllCampaignStatsCache()
 
     return NextResponse.json({
       success: true,
