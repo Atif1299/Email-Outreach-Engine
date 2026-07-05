@@ -200,7 +200,7 @@ export async function getAiBulkJobStatus(campaignId: number, stepOrder: number) 
       where: {
         campaignId,
         stepOrder,
-        status: { in: ['running', 'pausing', 'completed'] },
+        status: { in: ['running', 'pausing', 'completed', 'cancelled'] },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -209,6 +209,10 @@ export async function getAiBulkJobStatus(campaignId: number, stepOrder: number) 
 
     const pub = toPublic(job)
     if (job.status === 'completed' && job.completedAt) {
+      const ageMs = Date.now() - job.completedAt.getTime()
+      if (ageMs > 120_000) return { active: false as const, job: pub }
+    }
+    if (job.status === 'cancelled' && job.completedAt) {
       const ageMs = Date.now() - job.completedAt.getTime()
       if (ageMs > 120_000) return { active: false as const, job: pub }
     }

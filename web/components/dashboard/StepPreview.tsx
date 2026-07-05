@@ -76,9 +76,10 @@ export default function StepPreview({
   const activeBulkJob = activeBulkJobs.find(
     (j) => j.campaignId === previewCampaignId && j.stepOrder === stepOrder
   )
-  const bulkGenerating =
-    bulkStarting ||
-    Boolean(activeBulkJob && (activeBulkJob.status === 'running' || activeBulkJob.status === 'pausing'))
+  const bulkActive = Boolean(
+    activeBulkJob && (activeBulkJob.status === 'running' || activeBulkJob.status === 'pausing')
+  )
+  const bulkGenerating = bulkStarting || bulkActive
   const [savedCount, setSavedCount] = useState(0)
   const [generatedOverrides, setGeneratedOverrides] = useState<OverrideItem[]>([])
   const [failedLeadIds, setFailedLeadIds] = useState<Set<number>>(new Set())
@@ -90,6 +91,7 @@ export default function StepPreview({
   const subjectRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const completedJobIdRef = useRef<number | null>(null)
+  const hadActiveBulkJobRef = useRef(false)
   const testSendSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [testSendTo, setTestSendTo] = useState('')
   const [testSendLoading, setTestSendLoading] = useState(false)
@@ -159,6 +161,13 @@ export default function StepPreview({
           job.failed > 0 ? 'warn' : 'ok'
         )
         await loadPreviewLeads()
+        return
+      }
+
+      if (job?.status === 'cancelled' && completedJobIdRef.current !== job.id) {
+        completedJobIdRef.current = job.id
+        setBulkStarting(false)
+        await loadPreviewLeads()
       }
     } catch {
       // ignore transient poll errors
@@ -166,7 +175,17 @@ export default function StepPreview({
   }
 
   useEffect(() => {
-    if (!activeBulkJob) return
+    if (!activeBulkJob) {
+      setBulkStarting(false)
+      if (hadActiveBulkJobRef.current) {
+        hadActiveBulkJobRef.current = false
+        void syncBulkJobStatus()
+        void loadPreviewLeads()
+      }
+      return
+    }
+
+    hadActiveBulkJobRef.current = true
     setBulkStarting(false)
     setBulkPhase(activeBulkJob.status === 'pausing' ? 'pausing' : 'generating')
     if (activeBulkJob.batchPauseUntil) {
@@ -770,7 +789,7 @@ export default function StepPreview({
       </div>
 
       <footer className="step-footer">
-        {bulkGenerating && (
+        {bulkActive && (
           <div className="bulk-progress bulk-progress--footer">
             <div className="progress-head">
               <span className="progress-label">

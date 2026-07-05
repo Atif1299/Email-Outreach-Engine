@@ -373,7 +373,7 @@ export default function DashboardPage() {
               />
             )}
 
-            {currentStep === 4 && (
+            <div style={{ display: currentStep === 4 ? 'block' : 'none' }} className="h-full">
               <StepPreview
                 campaigns={campaigns}
                 previewCampaignId={previewCampaignId}
@@ -386,7 +386,7 @@ export default function DashboardPage() {
                   }
                 }}
               />
-            )}
+            </div>
 
             {currentStep === 5 && (
               <StepQueue

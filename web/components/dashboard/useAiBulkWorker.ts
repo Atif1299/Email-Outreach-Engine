@@ -73,7 +73,8 @@ export function useAiBulkWorker(): ActiveAiBulkJob[] {
               break
             }
             if (tick.status === 'cancelled') break
-            if (tick.status === 'idle' || tick.status === 'completed') break
+            if (tick.status === 'idle') break
+            if (tick.status === 'completed') continue
             if (tick.status === 'busy') {
               await sleep(500)
               break
@@ -82,7 +83,9 @@ export function useAiBulkWorker(): ActiveAiBulkJob[] {
 
           inFlightRef.current = false
 
-          if (ticks === 0) {
+          if (list.length > 0) {
+            await sleep(300)
+          } else if (ticks === 0) {
             await sleep(2000)
           }
         } catch {
