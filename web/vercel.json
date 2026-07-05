@@ -1,11 +1,5 @@
 {
   "buildCommand": "npx prisma db push && npx prisma generate && next build",
   "framework": "nextjs",
-  "installCommand": "npm install",
-  "crons": [
-    {
-      "path": "/api/cron/process-queue",
-      "schedule": "* * * * *"
-    }
-  ]
+  "installCommand": "npm install"
 }
