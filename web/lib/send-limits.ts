@@ -89,13 +89,30 @@ export function computeSendDelayMs(settings: SendLimitSettings): number {
   return Math.floor(Math.random() * (max - usualMax + 1)) + usualMax
 }
 
-export async function countSuccessfulSendsSince(since: Date, smtpAccountId?: number): Promise<number> {
+export type SendCountFilter = {
+  smtpAccountId?: number
+  campaignIds?: number[]
+  stepOrder?: number
+}
+
+function normalizeSendCountFilter(filter?: number | SendCountFilter): SendCountFilter | undefined {
+  if (filter === undefined) return undefined
+  return typeof filter === 'number' ? { smtpAccountId: filter } : filter
+}
+
+export async function countSuccessfulSendsSince(
+  since: Date,
+  filter?: number | SendCountFilter
+): Promise<number> {
+  const opts = normalizeSendCountFilter(filter)
   return prisma.leadSend.count({
     where: {
       sentAt: { gte: since },
       error: null,
       subject: { notIn: ['SENDING', 'FAILED'] },
-      ...(smtpAccountId ? { smtpAccountId } : {}),
+      ...(opts?.smtpAccountId ? { smtpAccountId: opts.smtpAccountId } : {}),
+      ...(opts?.campaignIds?.length ? { campaignId: { in: opts.campaignIds } } : {}),
+      ...(opts?.stepOrder !== undefined ? { stepOrder: opts.stepOrder } : {}),
     },
   })
 }
@@ -121,11 +138,15 @@ export async function countSuccessfulSendsForAccountSince(
   return countSuccessfulSendsSince(since, smtpAccountId)
 }
 
-export async function countFailedSendsSince(since: Date): Promise<number> {
+export async function countFailedSendsSince(
+  since: Date,
+  filter?: Pick<SendCountFilter, 'campaignIds'>
+): Promise<number> {
   return prisma.leadSend.count({
     where: {
       sentAt: { gte: since },
       subject: 'FAILED',
+      ...(filter?.campaignIds?.length ? { campaignId: { in: filter.campaignIds } } : {}),
     },
   })
 }

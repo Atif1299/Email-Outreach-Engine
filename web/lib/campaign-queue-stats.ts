@@ -88,7 +88,7 @@ async function computeCampaignQueueStatsInner(
     blockedForScheduling
   )
 
-  const leadsStarted = validLeadIds.filter((id) => lastSendsByLead.has(id)).length
+  const leadsStarted = new Set(sends.map((s) => s.leadId)).size
   const leadsCompleted = validLeadIds.filter((id) => {
     const s = lastSendsByLead.get(id)
     return s != null && s.stepOrder >= maxStepOrder

@@ -18,19 +18,22 @@ type AllCampaignStatsResult = {
 let computeInFlight: Promise<AllCampaignStatsResult> | null = null
 
 async function computeAllCampaignStatsFresh(): Promise<AllCampaignStatsResult> {
-  const [queueState, campaigns] = await withPrismaRetry(() =>
-    Promise.all([
-      prisma.queueState.findUnique({ where: { id: 1 } }),
-      prisma.campaign.findMany({ select: { id: true }, orderBy: { id: 'asc' } }),
-    ])
+  const [queueState, campaigns] = await withPrismaRetry(
+    () =>
+      Promise.all([
+        prisma.queueState.findUnique({ where: { id: 1 } }),
+        prisma.campaign.findMany({ select: { id: true }, orderBy: { id: 'asc' } }),
+      ]),
+    { retries: 3 }
   )
 
-  const list: AllCampaignStatsResult['campaigns'] = []
-
-  for (const campaign of campaigns) {
-    const stat = await computeCampaignQueueStats(campaign.id, queueState)
-    if (stat) list.push(stat)
-  }
+  const list = (
+    await Promise.all(
+      campaigns.map((campaign) =>
+        withPrismaRetry(() => computeCampaignQueueStats(campaign.id, queueState), { retries: 3 })
+      )
+    )
+  ).filter((stat): stat is NonNullable<typeof stat> => stat != null)
 
   const result: AllCampaignStatsResult = {
     campaigns: list,

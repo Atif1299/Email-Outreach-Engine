@@ -441,9 +441,31 @@ export function createAccountTransporter(
   })
 }
 
-export function formatFromAddress(fromName: string, account: SmtpAccount): string {
+/** Brand display name for outbound mail — global fromName wins over per-inbox label. */
+export function resolveSenderDisplayName(
+  fromName: string,
+  account: SmtpAccount,
+  allAccounts?: SmtpAccount[]
+): string {
+  const global = fromName.trim()
+  if (global) return global
+
+  const brandAccount = allAccounts?.find((a) => /visions\s*craft/i.test(a.label))
+  if (brandAccount?.label.trim()) return brandAccount.label.trim()
+
+  return account.label.trim()
+}
+
+export function formatFromAddress(
+  fromName: string,
+  account: SmtpAccount,
+  allAccounts?: SmtpAccount[]
+): string {
   const email = account.email.trim()
-  return fromName ? `${fromName} <${email}>` : email
+  const name = resolveSenderDisplayName(fromName, account, allAccounts)
+  if (!name) return email
+  const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return `"${escaped}" <${email}>`
 }
 
 export interface SmtpAccountInput {

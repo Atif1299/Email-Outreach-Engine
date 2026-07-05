@@ -674,7 +674,7 @@ async function processQueueBatchInner(maxEmails?: number) {
           body = rendered.body
         }
 
-        const from = formatFromAddress(settings.smtpFromName, account)
+        const from = formatFromAddress(settings.smtpFromName, account, enabledAccounts)
         const mailContent = buildMailContent(body, leadSendId, getAppBaseUrl(), normalizeBodyFormat(nextStep.bodyFormat))
         const mailOptions: nodemailer.SendMailOptions = {
           from,

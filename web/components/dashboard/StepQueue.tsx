@@ -93,6 +93,7 @@ function campaignBadgeLabel(state: CampaignCardState): string {
 interface CampaignCardProps {
   campaign: Campaign
   stats: CampaignStats | undefined
+  liveMetrics?: { step1Sent: number; leadsStarted: number }
   isActive: boolean
   isSelected: boolean
   isViewing: boolean
@@ -109,6 +110,7 @@ interface CampaignCardProps {
 function CampaignCard({
   campaign,
   stats,
+  liveMetrics,
   isActive,
   isSelected,
   isViewing,
@@ -126,7 +128,8 @@ function CampaignCard({
     campaign.steps.find((s) => s.stepOrder === 1)?.subjectTemplate || 'No subject template'
   const sendable = stats?.sendable ?? 0
   const completed = stats?.leadsCompleted ?? 0
-  const started = stats?.leadsStarted ?? 0
+  const started =
+    liveMetrics?.step1Sent ?? stats?.step1?.sent ?? stats?.leadsStarted ?? 0
   const useStartedProgress =
     cardState === 'sending' || cardState === 'paused' || cardState === 'in_queue'
   const progressPct =
@@ -316,7 +319,7 @@ export default function StepQueue({
   useEffect(() => {
     void refreshQueueData()
     const idle = queueStatus.outsideWindow || queueStatus.paused || !queueStatus.running
-    const intervalMs = idle ? 30000 : queueStatus.running ? 12000 : 20000
+    const intervalMs = idle ? 30000 : queueStatus.running ? 5000 : 20000
     const interval = setInterval(() => {
       void refreshQueueData()
     }, intervalMs)
@@ -949,6 +952,7 @@ export default function StepQueue({
                     key={c.id}
                     campaign={c}
                     stats={campaignStatsById[c.id]}
+                    liveMetrics={queueStatus.activeCampaignMetrics?.find((m) => m.campaignId === c.id)}
                     isActive={activeCampaignIds.includes(c.id)}
                     isSelected={selectedIds.has(c.id)}
                     isViewing={queueCampaignId === c.id}

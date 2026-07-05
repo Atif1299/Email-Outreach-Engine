@@ -46,15 +46,34 @@ export async function GET() {
       const hourAgo = new Date(Date.now() - 60 * 60 * 1000)
       const sessionStart = state.sessionStartedAt ?? dayStart
 
-      const [sendsToday, sendsThisHour, failedSendsToday, stepTypeCounts, sendsThisSession, failedThisSession] =
-        await Promise.all([
-          countSuccessfulSendsSince(dayStart),
-          countSuccessfulSendsSince(hourAgo),
-          countFailedSendsSince(dayStart),
-          getStepTypeSendCounts(limitSettings),
-          countSuccessfulSendsSince(sessionStart),
-          countFailedSendsSince(sessionStart),
-        ])
+      const activeEntries = parseActiveCampaigns(state)
+      const activeCampaignIds = getActiveCampaignIds(state)
+      const activeScope =
+        state.running && activeCampaignIds.length > 0
+          ? { campaignIds: activeCampaignIds }
+          : undefined
+
+      const [
+        sendsToday,
+        sendsThisHour,
+        failedSendsToday,
+        stepTypeCounts,
+        sendsThisSession,
+        failedThisSession,
+        activeSendsToday,
+        activeSendsThisHour,
+        activeSendsThisSession,
+      ] = await Promise.all([
+        countSuccessfulSendsSince(dayStart),
+        countSuccessfulSendsSince(hourAgo),
+        countFailedSendsSince(dayStart),
+        getStepTypeSendCounts(limitSettings),
+        countSuccessfulSendsSince(sessionStart),
+        countFailedSendsSince(sessionStart),
+        activeScope ? countSuccessfulSendsSince(dayStart, activeScope) : Promise.resolve(0),
+        activeScope ? countSuccessfulSendsSince(hourAgo, activeScope) : Promise.resolve(0),
+        activeScope ? countSuccessfulSendsSince(sessionStart, activeScope) : Promise.resolve(0),
+      ])
 
       const stepTypeCapsEnabled = isStepTypeCapsEnabled(limitSettings)
 
@@ -67,9 +86,6 @@ export async function GET() {
       const outsideWindow = state.running && !isWithinSendWindow(limitSettings)
 
       const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
-
-      const activeEntries = parseActiveCampaigns(state)
-      const activeCampaignIds = getActiveCampaignIds(state)
 
       const campaigns = await prisma.campaign.findMany({
         where: { id: { in: activeCampaignIds } },
@@ -84,6 +100,42 @@ export async function GET() {
       }))
 
       const aggregateDueNow = await computeAggregateDueNow(activeEntries)
+
+      let activeCampaignMetrics: Array<{
+        campaignId: number
+        step1Sent: number
+        leadsStarted: number
+      }> = []
+
+      if (activeCampaignIds.length > 0) {
+        activeCampaignMetrics = await Promise.all(
+          activeCampaignIds.map(async (campaignId) => {
+            const [step1Sent, leadGroups] = await Promise.all([
+              prisma.leadSend.count({
+                where: {
+                  campaignId,
+                  stepOrder: 1,
+                  error: null,
+                  subject: { notIn: ['SENDING', 'FAILED'] },
+                },
+              }),
+              prisma.leadSend.groupBy({
+                by: ['leadId'],
+                where: {
+                  campaignId,
+                  error: null,
+                  subject: { notIn: ['SENDING', 'FAILED'] },
+                },
+              }),
+            ])
+            return {
+              campaignId,
+              step1Sent,
+              leadsStarted: leadGroups.length,
+            }
+          })
+        )
+      }
 
       let currentJob: {
         campaignId: number
@@ -180,10 +232,13 @@ export async function GET() {
         activeCampaigns,
         aggregateDueNow,
         lastError: state.lastError,
-        processedInSession: sendsThisSession,
+        processedInSession: activeScope ? activeSendsThisSession : sendsThisSession,
         failedInSession: failedThisSession,
-        sendsToday,
-        sendsThisHour,
+        sendsToday: activeScope ? activeSendsToday : sendsToday,
+        sendsThisHour: activeScope ? activeSendsThisHour : sendsThisHour,
+        sendsTodayAll: sendsToday,
+        sendsThisHourAll: sendsThisHour,
+        activeCampaignMetrics,
         failedSendsToday,
         dailyCap: effectiveDailyCap,
         hourlyCap: effectiveHourlyCap,

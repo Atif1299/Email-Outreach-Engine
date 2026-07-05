@@ -1,4 +1,4 @@
-const CACHE_TTL_MS = 12000
+const CACHE_TTL_MS = 5000
 
 interface CacheEntry<T> {
   data: T

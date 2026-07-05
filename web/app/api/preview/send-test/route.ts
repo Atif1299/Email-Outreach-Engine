@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     const html = buildPreviewHtml(emailBody, effectiveFormat)
     const text = effectiveFormat === 'html' ? htmlToPlainText(emailBody) : emailBody
     const transporter = createAccountTransporter(account, settings)
-    const from = formatFromAddress(settings.smtpFromName, account)
+    const from = formatFromAddress(settings.smtpFromName, account, accounts)
 
     await transporter.sendMail({
       from,

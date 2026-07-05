@@ -122,6 +122,13 @@ export interface QueueStatus {
   followUpSentToday?: number
   dailyStep1Cap?: number
   dailyFollowUpCap?: number
+  activeCampaignMetrics?: Array<{
+    campaignId: number
+    step1Sent: number
+    leadsStarted: number
+  }>
+  sendsTodayAll?: number
+  sendsThisHourAll?: number
   currentJob: {
     campaignId?: number
     campaignName?: string

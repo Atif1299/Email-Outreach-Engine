@@ -3,7 +3,7 @@ import nodemailer from 'nodemailer'
 import prisma from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
 import { assertGmailSmtpUsername, enhanceSmtpError } from '@/lib/smtp'
-import { createAccountTransporter } from '@/lib/smtp-accounts'
+import { createAccountTransporter, formatFromAddress, getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
@@ -55,7 +55,16 @@ export async function POST(request: NextRequest) {
     await transporter.verify()
 
     if (body.testEmail?.includes('@')) {
-      const from = fromName ? `${fromName} <${user}>` : user
+      const allAccounts = await getEnabledSmtpAccounts()
+      const account =
+        allAccounts.find((a) => a.email === user) ??
+        (body.accountId ? allAccounts.find((a) => a.id === body.accountId) : undefined) ??
+        allAccounts[0]
+      const from = account
+        ? formatFromAddress(fromName, account, allAccounts)
+        : fromName
+          ? `"${fromName.replace(/"/g, '\\"')}" <${user}>`
+          : user
       await transporter.sendMail({
         from,
         to: body.testEmail.trim(),
