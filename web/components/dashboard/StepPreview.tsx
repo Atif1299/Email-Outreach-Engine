@@ -154,7 +154,7 @@ export default function StepPreview({
       void loadPreviewLeads(true).then(() => {
         lastSyncedGeneratedRef.current = target
       })
-    }, 1500)
+    }, 800)
   }
 
   async function syncBulkJobStatus() {
@@ -245,7 +245,7 @@ export default function StepPreview({
   useEffect(() => {
     if (!previewCampaignId || !isVisible || (!activeBulkJob && !bulkStarting)) return
     const startDelay = setTimeout(() => void syncBulkJobStatus(), 1500)
-    const interval = setInterval(() => void syncBulkJobStatus(), 5000)
+    const interval = setInterval(() => void syncBulkJobStatus(), 2000)
     return () => {
       clearTimeout(startDelay)
       clearInterval(interval)

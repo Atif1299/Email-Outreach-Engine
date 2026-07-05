@@ -7,9 +7,6 @@ const BATCH_PAUSE_MS = 30_000
 const LOCK_MS = 120_000
 /** Parallel AI requests per batch — matches original Preview bulk flow. */
 const BULK_CONCURRENCY = 3
-const DELAY_BETWEEN_BATCHES_MS = 500
-/** Max work per serverless tick (stay under 60s limit). */
-const TICK_MAX_MS = 48_000
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -295,100 +292,94 @@ export async function processAiBulkTick() {
     let failedLeadIds = parseIds(job.failedLeadIdsJson)
     let batchWindowStartedAt = job.batchWindowStartedAt
     let lastError: string | null = job.lastError
-    const tickStarted = Date.now()
 
-    while (pending.length > 0 && Date.now() - tickStarted < TICK_MAX_MS) {
-      if (!(await jobIsActive(job.id))) {
+    if (!(await jobIsActive(job.id))) {
+      await prisma.aiBulkJob.update({
+        where: { id: job.id },
+        data: {
+          pendingLeadIdsJson: '[]',
+          failedLeadIdsJson: JSON.stringify(failedLeadIds),
+          generated,
+          failed,
+          processed,
+          processingLockUntil: null,
+        },
+      })
+      return { status: 'cancelled' as const, jobId: job.id, generated, failed, processed }
+    }
+
+    const tickNow = new Date()
+
+    if (batchWindowStartedAt) {
+      const windowAge = tickNow.getTime() - batchWindowStartedAt.getTime()
+      if (windowAge >= BATCH_ACTIVE_MS) {
+        const pauseUntil = new Date(tickNow.getTime() + BATCH_PAUSE_MS)
         await prisma.aiBulkJob.update({
           where: { id: job.id },
           data: {
-            pendingLeadIdsJson: '[]',
+            pendingLeadIdsJson: JSON.stringify(pending),
             failedLeadIdsJson: JSON.stringify(failedLeadIds),
             generated,
             failed,
             processed,
+            leadsInWindow: 0,
+            batchWindowStartedAt: null,
+            batchPauseUntil: pauseUntil,
+            status: 'pausing',
+            lastError,
             processingLockUntil: null,
           },
         })
-        return { status: 'cancelled' as const, jobId: job.id, generated, failed }
+        return {
+          status: 'processed' as const,
+          jobId: job.id,
+          remaining: pending.length,
+          generated,
+          failed,
+          processed,
+        }
       }
+    }
 
-      const tickNow = new Date()
+    const batch = pending.slice(0, BULK_CONCURRENCY)
+    pending = pending.slice(batch.length)
+    if (!batchWindowStartedAt) batchWindowStartedAt = new Date()
 
-      if (batchWindowStartedAt) {
-        const windowAge = tickNow.getTime() - batchWindowStartedAt.getTime()
-        if (windowAge >= BATCH_ACTIVE_MS) {
-          const pauseUntil = new Date(tickNow.getTime() + BATCH_PAUSE_MS)
-          await prisma.aiBulkJob.update({
-            where: { id: job.id },
-            data: {
-              pendingLeadIdsJson: JSON.stringify(pending),
-              failedLeadIdsJson: JSON.stringify(failedLeadIds),
-              generated,
-              failed,
-              processed,
-              leadsInWindow: 0,
-              batchWindowStartedAt: null,
-              batchPauseUntil: pauseUntil,
-              status: 'pausing',
-              lastError,
-              processingLockUntil: null,
-            },
+    const results = await Promise.all(
+      batch.map(async (leadId) => {
+        try {
+          const result = await generateAiForLead({
+            leadId,
+            campaignId: job.campaignId,
+            stepOrder: job.stepOrder,
           })
+          await saveLeadOverride({
+            leadId,
+            campaignId: job.campaignId,
+            stepOrder: job.stepOrder,
+            subject: result.subject,
+            body: result.body,
+          })
+          return { ok: true as const, leadId }
+        } catch (error) {
           return {
-            status: 'processed' as const,
-            jobId: job.id,
-            remaining: pending.length,
-            generated,
-            failed,
+            ok: false as const,
+            leadId,
+            error: error instanceof Error ? error.message : 'AI generation failed',
           }
         }
-      }
+      })
+    )
 
-      const batch = pending.slice(0, BULK_CONCURRENCY)
-      pending = pending.slice(batch.length)
-      if (!batchWindowStartedAt) batchWindowStartedAt = new Date()
-
-      const results = await Promise.all(
-        batch.map(async (leadId) => {
-          try {
-            const result = await generateAiForLead({
-              leadId,
-              campaignId: job.campaignId,
-              stepOrder: job.stepOrder,
-            })
-            await saveLeadOverride({
-              leadId,
-              campaignId: job.campaignId,
-              stepOrder: job.stepOrder,
-              subject: result.subject,
-              body: result.body,
-            })
-            return { ok: true as const, leadId }
-          } catch (error) {
-            return {
-              ok: false as const,
-              leadId,
-              error: error instanceof Error ? error.message : 'AI generation failed',
-            }
-          }
-        })
-      )
-
-      for (const result of results) {
-        processed++
-        if (result.ok) {
-          generated++
-          lastError = null
-        } else {
-          failed++
-          failedLeadIds = [...failedLeadIds, result.leadId]
-          lastError = result.error
-        }
-      }
-
-      if (pending.length > 0) {
-        await sleep(DELAY_BETWEEN_BATCHES_MS)
+    for (const result of results) {
+      processed++
+      if (result.ok) {
+        generated++
+        lastError = null
+      } else {
+        failed++
+        failedLeadIds = [...failedLeadIds, result.leadId]
+        lastError = result.error
       }
     }
 
@@ -416,6 +407,7 @@ export async function processAiBulkTick() {
       remaining: pending.length,
       generated,
       failed,
+      processed,
     }
   })
 }

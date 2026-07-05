@@ -28,6 +28,24 @@ async function fetchActiveJobs(): Promise<ActiveAiBulkJob[]> {
   return jobs ?? []
 }
 
+function applyTickToJobs(
+  jobs: ActiveAiBulkJob[],
+  tick: { jobId?: number; generated?: number; processed?: number; failed?: number; remaining?: number }
+): ActiveAiBulkJob[] {
+  if (tick.jobId == null || tick.generated == null) return jobs
+  return jobs.map((j) =>
+    j.id === tick.jobId
+      ? {
+          ...j,
+          generated: tick.generated ?? j.generated,
+          processed: tick.processed ?? j.processed,
+          failed: tick.failed ?? j.failed,
+          remaining: tick.remaining ?? j.remaining,
+        }
+      : j
+  )
+}
+
 /** Keeps server-side AI bulk jobs running while the dashboard is open. */
 export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJob[] {
   const enabled = options?.enabled ?? true
@@ -41,6 +59,19 @@ export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJo
     }
 
     let cancelled = false
+
+    const pollProgress = async () => {
+      while (!cancelled) {
+        await sleep(1500)
+        if (cancelled) break
+        try {
+          const list = await fetchActiveJobs()
+          if (list.length) setActiveJobs(list)
+        } catch {
+          // ignore transient poll errors
+        }
+      }
+    }
 
     const loop = async () => {
       while (!cancelled) {
@@ -68,6 +99,7 @@ export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJo
 
             const tick = await tickRes.json()
             ticks++
+            setActiveJobs((prev) => applyTickToJobs(prev.length ? prev : list, tick))
             setActiveJobs(await fetchActiveJobs())
 
             if (tick.status === 'pausing') {
@@ -102,6 +134,7 @@ export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJo
     }
 
     void loop()
+    void pollProgress()
     return () => {
       cancelled = true
     }
