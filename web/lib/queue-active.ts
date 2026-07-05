@@ -126,6 +126,7 @@ export async function upsertActiveCampaign(
       skippedLeadIdsJson: '[]',
       processedInSession: 0,
       failedInSession: 0,
+      sessionStartedAt: new Date(),
       consecutiveFailures: 0,
       lastError: null,
       processingLockUntil: null,
@@ -139,6 +140,7 @@ export async function upsertActiveCampaign(
         ? {
           processedInSession: 0,
           failedInSession: 0,
+          sessionStartedAt: new Date(),
           consecutiveFailures: 0,
           lastError: null,
           nextSendAllowedAt: null,

@@ -127,7 +127,12 @@ function CampaignCard({
   const sendable = stats?.sendable ?? 0
   const completed = stats?.leadsCompleted ?? 0
   const started = stats?.leadsStarted ?? 0
-  const progressPct = sendable > 0 ? Math.round((completed / sendable) * 100) : 0
+  const useStartedProgress =
+    cardState === 'sending' || cardState === 'paused' || cardState === 'in_queue'
+  const progressPct =
+    sendable > 0
+      ? Math.round(((useStartedProgress ? started : completed) / sendable) * 100)
+      : 0
   const emailsSent = stats?.emailsSent ?? 0
   const openedCount = stats?.openedCount ?? 0
   const openRate = emailsSent > 0 ? Math.round((openedCount / emailsSent) * 100) : 0

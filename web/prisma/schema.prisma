@@ -247,6 +247,7 @@ model QueueState {
   lastError            String?  @map("last_error")
   processedInSession   Int      @default(0) @map("processed_in_session")
   failedInSession      Int      @default(0) @map("failed_in_session")
+  sessionStartedAt     DateTime? @map("session_started_at")
   consecutiveFailures  Int      @default(0) @map("consecutive_failures")
   activeCampaignId     Int?     @map("active_campaign_id")
   activeLeadIdsJson    String   @default("[]") @map("active_lead_ids_json")

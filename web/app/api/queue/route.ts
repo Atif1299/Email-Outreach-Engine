@@ -44,13 +44,17 @@ export async function GET() {
 
       const dayStart = getDayStartInTimezone(limitSettings.sendTimezone)
       const hourAgo = new Date(Date.now() - 60 * 60 * 1000)
+      const sessionStart = state.sessionStartedAt ?? dayStart
 
-      const [sendsToday, sendsThisHour, failedSendsToday, stepTypeCounts] = await Promise.all([
-        countSuccessfulSendsSince(dayStart),
-        countSuccessfulSendsSince(hourAgo),
-        countFailedSendsSince(dayStart),
-        getStepTypeSendCounts(limitSettings),
-      ])
+      const [sendsToday, sendsThisHour, failedSendsToday, stepTypeCounts, sendsThisSession, failedThisSession] =
+        await Promise.all([
+          countSuccessfulSendsSince(dayStart),
+          countSuccessfulSendsSince(hourAgo),
+          countFailedSendsSince(dayStart),
+          getStepTypeSendCounts(limitSettings),
+          countSuccessfulSendsSince(sessionStart),
+          countFailedSendsSince(sessionStart),
+        ])
 
       const stepTypeCapsEnabled = isStepTypeCapsEnabled(limitSettings)
 
@@ -176,8 +180,8 @@ export async function GET() {
         activeCampaigns,
         aggregateDueNow,
         lastError: state.lastError,
-        processedInSession: state.processedInSession,
-        failedInSession: state.failedInSession,
+        processedInSession: sendsThisSession,
+        failedInSession: failedThisSession,
         sendsToday,
         sendsThisHour,
         failedSendsToday,

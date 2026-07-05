@@ -9,6 +9,9 @@ export async function POST() {
         paused: false,
         consecutiveFailures: 0,
         lastError: null,
+        processedInSession: 0,
+        failedInSession: 0,
+        sessionStartedAt: new Date(),
         updatedAt: new Date(),
       },
     })
