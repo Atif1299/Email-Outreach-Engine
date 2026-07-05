@@ -12,7 +12,10 @@
     "db:migrate": "prisma migrate deploy"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "@prisma/adapter-neon": "^5.22.0",
     "@prisma/client": "5.22.0",
+    "bufferutil": "^4.1.0",
     "imapflow": "^1.4.2",
     "mailparser": "^3.9.11",
     "next": "14.2.18",
@@ -21,6 +24,8 @@
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "utf-8-validate": "^6.0.6",
+    "ws": "^8.21.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -30,6 +35,7 @@
     "@types/papaparse": "^5.3.15",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^8",
     "eslint-config-next": "14.2.18",

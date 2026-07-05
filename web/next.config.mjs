@@ -6,6 +6,21 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  experimental: {
+    serverComponentsExternalPackages: [
+      'ws',
+      'bufferutil',
+      'utf-8-validate',
+      '@neondatabase/serverless',
+      '@prisma/adapter-neon',
+    ],
+  },
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals.push('ws', 'bufferutil', 'utf-8-validate')
+    }
+    return config
+  },
 }
 
 export default nextConfig

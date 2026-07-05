@@ -1,8 +1,8 @@
 import { PrismaClient, Prisma } from '@prisma/client'
+import { PrismaNeonHTTP } from '@prisma/adapter-neon'
+import { neon } from '@neondatabase/serverless'
 
 const PLACEHOLDER_HOSTS = ['host', 'localhost', '127.0.0.1']
-export const WARMUP_ATTEMPTS = 8
-export const DB_OPERATION_ATTEMPTS = 6
 
 function assertDatabaseUrl() {
   const url = process.env.DATABASE_URL?.trim()
@@ -25,23 +25,12 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-function augmentDatabaseUrl(url: string): string {
+function getConnectionString(): string {
+  const url = process.env.DATABASE_URL || ''
   try {
     const parsed = new URL(url)
-    if (!parsed.searchParams.has('connection_limit')) {
-      parsed.searchParams.set('connection_limit', '10')
-    }
-    if (!parsed.searchParams.has('pool_timeout')) {
-      parsed.searchParams.set('pool_timeout', '60')
-    }
-    if (!parsed.searchParams.has('connect_timeout')) {
-      parsed.searchParams.set('connect_timeout', '60')
-    }
     if (!parsed.searchParams.has('sslmode')) {
       parsed.searchParams.set('sslmode', 'require')
-    }
-    if (parsed.hostname.includes('-pooler') && !parsed.searchParams.has('pgbouncer')) {
-      parsed.searchParams.set('pgbouncer', 'true')
     }
     return parsed.toString()
   } catch {
@@ -49,14 +38,12 @@ function augmentDatabaseUrl(url: string): string {
   }
 }
 
+/** Neon HTTP driver — works through HTTPS; safe inside Next.js (no ws bundling). */
 function createPrismaClient(): PrismaClient {
-  const url = augmentDatabaseUrl(process.env.DATABASE_URL || '')
-  return new PrismaClient({
-    datasources: {
-      db: { url },
-    },
-    log: process.env.NODE_ENV === 'development' ? [] : [],
-  })
+  const connectionString = getConnectionString()
+  const sql = neon(connectionString)
+  const adapter = new PrismaNeonHTTP(sql)
+  return new PrismaClient({ adapter })
 }
 
 let prisma = globalForPrisma.prisma ?? createPrismaClient()
@@ -66,13 +53,13 @@ if (process.env.NODE_ENV !== 'production') {
 
 function isRetriableDbError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return error.code === 'P1017' || error.code === 'P2024' || error.code === 'P1001'
+    return error.code === 'P1017' || error.code === 'P2024'
   }
   if (error instanceof Prisma.PrismaClientInitializationError) {
     return true
   }
   const message = error instanceof Error ? error.message : String(error)
-  return /Can't reach database server|server has closed the connection|connection terminated|ECONNRESET|connection pool/i.test(message)
+  return /server has closed the connection|connection terminated|ECONNRESET|connection pool/i.test(message)
 }
 
 function isStaleConnectionError(error: unknown): boolean {
@@ -83,87 +70,39 @@ function isStaleConnectionError(error: unknown): boolean {
     return true
   }
   const message = error instanceof Error ? error.message : String(error)
-  return /Can't reach database server|server has closed the connection|connection terminated|ECONNRESET/i.test(message)
+  return /server has closed the connection|connection terminated|ECONNRESET/i.test(message)
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export function warmupBackoffMs(attempt: number): number {
-  return Math.min(3000 * (attempt + 1), 15000)
-}
-
-/** One shared warmup so parallel page-load requests don't stampede Neon on cold start. */
-let warmupPromise: Promise<void> | null = null
-
-export async function ensurePrismaWarm(): Promise<void> {
-  if (!warmupPromise) {
-    warmupPromise = (async () => {
-      for (let attempt = 0; attempt < WARMUP_ATTEMPTS; attempt++) {
-        try {
-          await prisma.$queryRaw`SELECT 1`
-          return
-        } catch (error) {
-          if (attempt >= WARMUP_ATTEMPTS - 1) throw error
-          await sleep(warmupBackoffMs(attempt))
-          await tryReconnectPrisma()
-        }
-      }
-    })().catch((error) => {
-      warmupPromise = null
-      throw error
-    })
-  }
-  await warmupPromise
-}
-
-/** Reconnect after Neon/serverless idle disconnect (P1017). */
 export async function reconnectPrisma(): Promise<PrismaClient> {
   await prisma.$disconnect().catch(() => { })
   prisma = createPrismaClient()
   if (process.env.NODE_ENV !== 'production') {
     globalForPrisma.prisma = prisma
   }
-  try {
-    await prisma.$connect()
-  } catch (error) {
-    throw error
-  }
   return prisma
 }
 
-/** Reconnect without throwing — used during warmup backoff. */
-export async function tryReconnectPrisma(): Promise<boolean> {
-  try {
-    await reconnectPrisma()
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Run a DB operation; retry on stale connection or pool timeout. */
 export async function withDbRetry<T>(operation: (client: PrismaClient) => Promise<T>): Promise<T> {
-  await ensurePrismaWarm()
-
+  const maxAttempts = 3
   let lastError: unknown
 
-  for (let attempt = 0; attempt < DB_OPERATION_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await operation(prisma)
     } catch (error) {
       lastError = error
-      if (!isRetriableDbError(error) || attempt === DB_OPERATION_ATTEMPTS - 1) {
+      if (!isRetriableDbError(error) || attempt === maxAttempts - 1) {
         throw error
       }
       if (isStaleConnectionError(error)) {
-        if (error instanceof Prisma.PrismaClientInitializationError) {
-          await sleep(warmupBackoffMs(attempt))
-        }
-        await tryReconnectPrisma()
-      } else {
         await sleep(500 * (attempt + 1))
+        await reconnectPrisma()
+      } else {
+        await sleep(250 * (attempt + 1))
       }
     }
   }

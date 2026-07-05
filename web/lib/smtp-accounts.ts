@@ -71,19 +71,49 @@ async function migrateLegacySmtpSettings() {
   )
 }
 
+function parseOptionalDate(value: unknown): Date | null {
+  if (value == null || value === '') return null
+  if (value instanceof Date) return value
+  if (typeof value === 'object' && Object.keys(value as object).length === 0) return null
+  const d = new Date(String(value))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** HTTP driver returns {} for null timestamps — load via raw SQL instead of findMany. */
+async function fetchSmtpAccounts(db: import('@prisma/client').PrismaClient): Promise<SmtpAccount[]> {
+  const rows = await db.$queryRaw<Array<Record<string, unknown>>>`
+    SELECT id, email, password, label, enabled, sort_order, exhausted_until, exhaust_reason,
+           last_used_at, last_inbox_checked_at, last_inbox_error, warmup_started_at, warmup_enabled, created_at
+    FROM smtp_accounts
+    ORDER BY sort_order ASC, id ASC
+  `
+  return rows.map((row) => ({
+    id: Number(row.id),
+    email: String(row.email),
+    password: String(row.password ?? ''),
+    label: String(row.label ?? ''),
+    enabled: Boolean(row.enabled),
+    sortOrder: Number(row.sort_order ?? 0),
+    exhaustedUntil: parseOptionalDate(row.exhausted_until),
+    exhaustReason: row.exhaust_reason != null ? String(row.exhaust_reason) : null,
+    lastUsedAt: parseOptionalDate(row.last_used_at),
+    lastInboxCheckedAt: parseOptionalDate(row.last_inbox_checked_at),
+    lastInboxError: row.last_inbox_error != null ? String(row.last_inbox_error) : null,
+    warmupStartedAt: parseOptionalDate(row.warmup_started_at),
+    warmupEnabled: Boolean(row.warmup_enabled),
+    createdAt: parseOptionalDate(row.created_at) ?? new Date(),
+  }))
+}
+
 export async function ensureSmtpAccounts() {
   await migrateLegacySmtpSettings()
-  return withDbRetry((db) =>
-    db.smtpAccount.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] })
-  )
+  return withDbRetry((db) => fetchSmtpAccounts(db))
 }
 
 export async function getEnabledSmtpAccounts(): Promise<SmtpAccount[]> {
   await migrateLegacySmtpSettings()
-  return prisma.smtpAccount.findMany({
-    where: { enabled: true, password: { not: '' } },
-    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-  })
+  const accounts = await withDbRetry((db) => fetchSmtpAccounts(db))
+  return accounts.filter((a) => a.enabled && a.password !== '')
 }
 
 function isExhausted(account: SmtpAccount, now = new Date()): boolean {
