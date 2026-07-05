@@ -17,7 +17,13 @@ const nextConfig = {
   },
   webpack: (config, { isServer }) => {
     if (isServer) {
-      config.externals.push('ws', 'bufferutil', 'utf-8-validate')
+      const externals = config.externals ?? []
+      config.externals = [
+        ...(Array.isArray(externals) ? externals : [externals]),
+        'ws',
+        'bufferutil',
+        'utf-8-validate',
+      ]
     }
     return config
   },

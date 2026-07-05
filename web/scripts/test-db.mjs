@@ -1,7 +1,10 @@
 import { readFileSync } from 'fs'
 import { PrismaClient } from '@prisma/client'
-import { PrismaNeonHTTP } from '@prisma/adapter-neon'
-import { neon } from '@neondatabase/serverless'
+import { PrismaNeon } from '@prisma/adapter-neon'
+import { Pool, neonConfig } from '@neondatabase/serverless'
+import ws from 'ws'
+
+neonConfig.webSocketConstructor = ws
 
 const env = readFileSync('.env', 'utf8')
 const match = env.match(/^DATABASE_URL="([^"]+)"/m)
@@ -10,16 +13,17 @@ if (!match) {
   process.exit(1)
 }
 
-const sql = neon(match[1])
-const prisma = new PrismaClient({ adapter: new PrismaNeonHTTP(sql) })
+const pool = new Pool({ connectionString: match[1] })
+const prisma = new PrismaClient({ adapter: new PrismaNeon(pool) })
 
 try {
   const settings = await prisma.settings.findUnique({ where: { id: 1 } })
-  const accounts = await prisma.$queryRaw`SELECT id, email FROM smtp_accounts`
+  const accounts = await prisma.smtpAccount.findMany()
   console.log('OK', settings?.smtpFromName, `${accounts.length} smtp account(s)`)
 } catch (e) {
   console.error('FAIL', e.message)
   process.exit(1)
 } finally {
   await prisma.$disconnect()
+  await pool.end()
 }

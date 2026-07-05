@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma } from '@prisma/client'
-import { PrismaNeonHTTP } from '@prisma/adapter-neon'
-import { neon } from '@neondatabase/serverless'
+import { PrismaNeon } from '@prisma/adapter-neon'
+import { Pool, neonConfig } from '@neondatabase/serverless'
 
 const PLACEHOLDER_HOSTS = ['host', 'localhost', '127.0.0.1']
 
@@ -21,8 +21,12 @@ function assertDatabaseUrl() {
 
 assertDatabaseUrl()
 
+// require() keeps ws out of the webpack bundle (see next.config.mjs externals)
+neonConfig.webSocketConstructor = require('ws')
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
+  neonPool: Pool | undefined
 }
 
 function getConnectionString(): string {
@@ -38,12 +42,10 @@ function getConnectionString(): string {
   }
 }
 
-/** Neon HTTP driver — works through HTTPS; safe inside Next.js (no ws bundling). */
 function createPrismaClient(): PrismaClient {
-  const connectionString = getConnectionString()
-  const sql = neon(connectionString)
-  const adapter = new PrismaNeonHTTP(sql)
-  return new PrismaClient({ adapter })
+  const pool = new Pool({ connectionString: getConnectionString() })
+  globalForPrisma.neonPool = pool
+  return new PrismaClient({ adapter: new PrismaNeon(pool) })
 }
 
 let prisma = globalForPrisma.prisma ?? createPrismaClient()
@@ -79,6 +81,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function reconnectPrisma(): Promise<PrismaClient> {
   await prisma.$disconnect().catch(() => { })
+  await globalForPrisma.neonPool?.end().catch(() => { })
   prisma = createPrismaClient()
   if (process.env.NODE_ENV !== 'production') {
     globalForPrisma.prisma = prisma
