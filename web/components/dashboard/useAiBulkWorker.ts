@@ -43,8 +43,6 @@ export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJo
     let cancelled = false
 
     const loop = async () => {
-      await sleep(2500)
-
       while (!cancelled) {
         if (inFlightRef.current) {
           await sleep(500)

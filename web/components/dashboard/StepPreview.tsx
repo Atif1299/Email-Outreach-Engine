@@ -95,6 +95,9 @@ export default function StepPreview({
   const completedJobIdRef = useRef<number | null>(null)
   const hadActiveBulkJobRef = useRef(false)
   const leadsLoadGenRef = useRef(0)
+  const lastSyncedGeneratedRef = useRef(0)
+  const pendingGeneratedRef = useRef(0)
+  const checkmarkSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const testSendSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [testSendTo, setTestSendTo] = useState('')
   const [testSendLoading, setTestSendLoading] = useState(false)
@@ -136,8 +139,23 @@ export default function StepPreview({
 
   useEffect(() => {
     if (!previewCampaignId || !isVisible) return
+    lastSyncedGeneratedRef.current = 0
     void loadPreviewLeads()
   }, [previewCampaignId, stepOrder, isVisible])
+
+  function scheduleCheckmarkSync(generated: number) {
+    if (generated <= lastSyncedGeneratedRef.current) return
+    pendingGeneratedRef.current = Math.max(pendingGeneratedRef.current, generated)
+    if (checkmarkSyncTimerRef.current) clearTimeout(checkmarkSyncTimerRef.current)
+    checkmarkSyncTimerRef.current = setTimeout(() => {
+      checkmarkSyncTimerRef.current = null
+      const target = pendingGeneratedRef.current
+      pendingGeneratedRef.current = 0
+      void loadPreviewLeads(true).then(() => {
+        lastSyncedGeneratedRef.current = target
+      })
+    }, 1500)
+  }
 
   async function syncBulkJobStatus() {
     if (!previewCampaignId) return
@@ -150,10 +168,23 @@ export default function StepPreview({
       const job = data.job as {
         id: number
         status: 'running' | 'pausing' | 'completed' | 'cancelled' | 'failed'
+        total: number
+        processed: number
         generated: number
         failed: number
         skipped: number
       } | null
+
+      if (job && (job.status === 'running' || job.status === 'pausing')) {
+        setBulkProgress({
+          processed: job.processed,
+          total: job.total,
+          generated: job.generated,
+          failed: job.failed,
+          skipped: job.skipped,
+        })
+        scheduleCheckmarkSync(job.generated)
+      }
 
       if (job?.status === 'completed' && completedJobIdRef.current !== job.id) {
         completedJobIdRef.current = job.id
@@ -179,11 +210,11 @@ export default function StepPreview({
 
   useEffect(() => {
     if (!activeBulkJob) {
-      setBulkStarting(false)
       if (hadActiveBulkJobRef.current) {
+        setBulkStarting(false)
         hadActiveBulkJobRef.current = false
         void syncBulkJobStatus()
-        void loadPreviewLeads()
+        void loadPreviewLeads(true)
       }
       return
     }
@@ -208,13 +239,8 @@ export default function StepPreview({
       skipped: activeBulkJob.skipped,
     })
     setFailedLeadIds(new Set(activeBulkJob.failedLeadIds))
+    scheduleCheckmarkSync(activeBulkJob.generated)
   }, [activeBulkJob])
-
-  useEffect(() => {
-    if (!activeBulkJob) return
-    const interval = setInterval(() => void loadPreviewLeads(), 5000)
-    return () => clearInterval(interval)
-  }, [activeBulkJob?.id])
 
   useEffect(() => {
     if (!previewCampaignId || !isVisible || (!activeBulkJob && !bulkStarting)) return
@@ -226,31 +252,47 @@ export default function StepPreview({
     }
   }, [previewCampaignId, stepOrder, activeBulkJob?.id, activeBulkJob?.status, bulkStarting, isVisible])
 
-  async function loadPreviewLeads() {
+  async function loadPreviewLeads(silent = false) {
     if (!previewCampaignId) return
     const gen = ++leadsLoadGenRef.current
-    setLeadsLoading(true)
-    setLeadsError(null)
+    if (!silent) {
+      setLeadsLoading(true)
+      setLeadsError(null)
+    }
     try {
       const res = await fetch(`/api/preview/leads?campaignId=${previewCampaignId}&stepOrder=${stepOrder}`)
       if (gen !== leadsLoadGenRef.current) return
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setLeads([])
-        setSavedCount(0)
-        setLeadsError(data.error || 'Failed to load leads')
+        if (!silent) {
+          setLeads([])
+          setSavedCount(0)
+          setLeadsError(data.error || 'Failed to load leads')
+        }
         return
       }
-      setLeads(data.leads || [])
+      const incoming: PreviewLead[] = data.leads || []
+      setLeads((prev) => {
+        if (silent && prev.length > 0) {
+          const byId = new Map(incoming.map((l) => [l.id, l]))
+          return prev.map((l) => {
+            const fresh = byId.get(l.id)
+            return fresh ? { ...l, hasSaved: fresh.hasSaved } : l
+          })
+        }
+        return incoming
+      })
       setSavedCount(data.savedCount || 0)
     } catch (e) {
       if (gen !== leadsLoadGenRef.current) return
       console.error('Failed to load preview leads:', e)
-      setLeads([])
-      setSavedCount(0)
-      setLeadsError('Failed to load leads — database may be busy. Try again.')
+      if (!silent) {
+        setLeads([])
+        setSavedCount(0)
+        setLeadsError('Failed to load leads — database may be busy. Try again.')
+      }
     } finally {
-      if (gen === leadsLoadGenRef.current) setLeadsLoading(false)
+      if (gen === leadsLoadGenRef.current && !silent) setLeadsLoading(false)
     }
   }
 
@@ -458,6 +500,18 @@ export default function StepPreview({
     }
 
     try {
+      setBulkStarting(true)
+      setBulkPhase('generating')
+      setFailedLeadIds(new Set())
+      lastSyncedGeneratedRef.current = 0
+      setBulkProgress({
+        processed: 0,
+        total: regenerateAll ? leads.length : unsavedCount,
+        generated: 0,
+        failed: 0,
+        skipped: 0,
+      })
+
       const res = await fetch('/api/ai-generate/bulk/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -470,14 +524,12 @@ export default function StepPreview({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
+        setBulkStarting(false)
         showPreviewHint(data.error || 'Failed to start bulk AI', 'err')
         return
       }
 
       completedJobIdRef.current = null
-      setBulkStarting(true)
-      setBulkPhase('generating')
-      setFailedLeadIds(new Set())
       if (data.job) {
         setBulkProgress({
           processed: data.job.processed ?? 0,
@@ -490,6 +542,7 @@ export default function StepPreview({
       showPreviewHint('Bulk AI started — keeps running if you leave this page', 'ok')
       void syncBulkJobStatus()
     } catch {
+      setBulkStarting(false)
       showPreviewHint('Failed to start bulk AI', 'err')
     }
   }
@@ -581,7 +634,7 @@ export default function StepPreview({
             </p>
           )}
           <div className="queue-list">
-            {leadsLoading ? (
+            {leadsLoading && leads.length === 0 ? (
               <div className="queue-item">
                 <div className="queue-item-title" style={{ color: 'var(--dim)' }}>Loading leads…</div>
               </div>
@@ -797,7 +850,7 @@ export default function StepPreview({
       </div>
 
       <footer className="step-footer">
-        {bulkActive && (
+        {bulkGenerating && (
           <div className="bulk-progress bulk-progress--footer">
             <div className="progress-head">
               <span className="progress-label">
