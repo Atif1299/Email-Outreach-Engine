@@ -28,7 +28,7 @@ export function useAiBulkWorker() {
           }
           const { jobs } = await activeRes.json()
           if (!jobs?.length) {
-            await sleep(4000)
+            await sleep(60000)
             continue
           }
 
@@ -45,7 +45,7 @@ export function useAiBulkWorker() {
           if (tick.status === 'pausing') {
             await sleep(3000)
           } else if (tick.status === 'idle') {
-            await sleep(4000)
+            await sleep(60000)
           } else {
             await sleep(1200)
           }
