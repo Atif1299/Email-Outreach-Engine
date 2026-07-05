@@ -7,10 +7,12 @@ import { looksLikeRawPitchMerge } from '@/lib/preview-utils'
 import { buildPreviewHtml, normalizeBodyFormat, type BodyFormat } from '@/lib/email-html'
 import EmailInboxPreview from '@/components/dashboard/EmailInboxPreview'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
+import type { ActiveAiBulkJob } from '@/components/dashboard/useAiBulkWorker'
 
 interface Props {
   campaigns: Campaign[]
   previewCampaignId: number | null
+  activeBulkJobs: ActiveAiBulkJob[]
   onPreviewCampaignChange: (id: number | null) => void
   onNextStep: () => void
 }
@@ -49,6 +51,7 @@ type OverrideItem = { leadId: number; subject: string; body: string }
 export default function StepPreview({
   campaigns,
   previewCampaignId,
+  activeBulkJobs,
   onPreviewCampaignChange,
   onNextStep,
 }: Props) {
@@ -60,7 +63,7 @@ export default function StepPreview({
   const [preview, setPreview] = useState<PreviewContent | null>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
-  const [bulkGenerating, setBulkGenerating] = useState(false)
+  const [bulkStarting, setBulkStarting] = useState(false)
   const [bulkPhase, setBulkPhase] = useState<'generating' | 'pausing'>('generating')
   const [pauseSecondsLeft, setPauseSecondsLeft] = useState(0)
   const [bulkProgress, setBulkProgress] = useState({
@@ -70,6 +73,12 @@ export default function StepPreview({
     failed: 0,
     skipped: 0,
   })
+  const activeBulkJob = activeBulkJobs.find(
+    (j) => j.campaignId === previewCampaignId && j.stepOrder === stepOrder
+  )
+  const bulkGenerating =
+    bulkStarting ||
+    Boolean(activeBulkJob && (activeBulkJob.status === 'running' || activeBulkJob.status === 'pausing'))
   const [savedCount, setSavedCount] = useState(0)
   const [generatedOverrides, setGeneratedOverrides] = useState<OverrideItem[]>([])
   const [failedLeadIds, setFailedLeadIds] = useState<Set<number>>(new Set())
@@ -136,43 +145,14 @@ export default function StepPreview({
       const job = data.job as {
         id: number
         status: 'running' | 'pausing' | 'completed' | 'cancelled' | 'failed'
-        total: number
-        processed: number
         generated: number
         failed: number
         skipped: number
-        failedLeadIds: number[]
-        batchPauseUntil: string | null
       } | null
 
-      if (!job) {
-        setBulkGenerating(false)
-        return
-      }
-
-      const isActive = job.status === 'running' || job.status === 'pausing'
-      setBulkGenerating(isActive)
-      setBulkPhase(job.status === 'pausing' ? 'pausing' : 'generating')
-      if (job.batchPauseUntil) {
-        const sec = Math.max(
-          0,
-          Math.ceil((new Date(job.batchPauseUntil).getTime() - Date.now()) / 1000)
-        )
-        setPauseSecondsLeft(sec)
-      } else {
-        setPauseSecondsLeft(0)
-      }
-      setBulkProgress({
-        processed: job.processed,
-        total: job.total,
-        generated: job.generated,
-        failed: job.failed,
-        skipped: job.skipped,
-      })
-      setFailedLeadIds(new Set(job.failedLeadIds))
-
-      if (job.status === 'completed' && completedJobIdRef.current !== job.id) {
+      if (job?.status === 'completed' && completedJobIdRef.current !== job.id) {
         completedJobIdRef.current = job.id
+        setBulkStarting(false)
         bulkFlash.flashDone()
         showPreviewHint(
           `Done: ${job.generated} generated, ${job.skipped} skipped, ${job.failed} failed`,
@@ -186,9 +166,39 @@ export default function StepPreview({
   }
 
   useEffect(() => {
+    if (!activeBulkJob) return
+    setBulkStarting(false)
+    setBulkPhase(activeBulkJob.status === 'pausing' ? 'pausing' : 'generating')
+    if (activeBulkJob.batchPauseUntil) {
+      const sec = Math.max(
+        0,
+        Math.ceil((new Date(activeBulkJob.batchPauseUntil).getTime() - Date.now()) / 1000)
+      )
+      setPauseSecondsLeft(sec)
+    } else {
+      setPauseSecondsLeft(0)
+    }
+    setBulkProgress({
+      processed: activeBulkJob.processed,
+      total: activeBulkJob.total,
+      generated: activeBulkJob.generated,
+      failed: activeBulkJob.failed,
+      skipped: activeBulkJob.skipped,
+    })
+    setFailedLeadIds(new Set(activeBulkJob.failedLeadIds))
+  }, [activeBulkJob])
+
+  useEffect(() => {
+    if (!activeBulkJob) return
+    void loadPreviewLeads()
+    const interval = setInterval(() => void loadPreviewLeads(), 5000)
+    return () => clearInterval(interval)
+  }, [activeBulkJob?.id, activeBulkJob?.processed])
+
+  useEffect(() => {
     if (!previewCampaignId) return
     void syncBulkJobStatus()
-    const interval = setInterval(() => void syncBulkJobStatus(), 2000)
+    const interval = setInterval(() => void syncBulkJobStatus(), 3000)
     return () => clearInterval(interval)
   }, [previewCampaignId, stepOrder])
 
@@ -436,7 +446,7 @@ export default function StepPreview({
       }
 
       completedJobIdRef.current = null
-      setBulkGenerating(true)
+      setBulkStarting(true)
       setBulkPhase('generating')
       setFailedLeadIds(new Set())
       if (data.job) {
@@ -486,6 +496,7 @@ export default function StepPreview({
         body: JSON.stringify({ campaignId: previewCampaignId, stepOrder }),
       })
       showPreviewHint('Bulk AI stopped', 'warn')
+      setBulkStarting(false)
       void syncBulkJobStatus()
     } catch {
       showPreviewHint('Failed to stop bulk AI', 'err')
@@ -746,36 +757,36 @@ export default function StepPreview({
               </div>
             </div>
           )}
-
-          {bulkGenerating && (
-            <div className="bulk-progress">
-              <div className="progress-head">
-                <span className="progress-label">
-                  {bulkPhase === 'pausing'
-                    ? `Pausing ${pauseSecondsLeft}s until next batch…`
-                    : 'Generating batch (~1.5 min)…'}
-                </span>
-                <span className="progress-count">
-                  {bulkProgress.generated} ok · {bulkProgress.failed} failed · {bulkProgress.skipped} skipped
-                </span>
-              </div>
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${bulkProgress.total ? (bulkProgress.processed / bulkProgress.total) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-              <button type="button" className="btn btn-outline btn-sm bulk-stop-btn" onClick={() => void stopBulkGenerate()}>
-                Stop generating
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
       <footer className="step-footer">
+        {bulkGenerating && (
+          <div className="bulk-progress bulk-progress--footer">
+            <div className="progress-head">
+              <span className="progress-label">
+                Step {stepOrder} ·{' '}
+                {bulkPhase === 'pausing'
+                  ? `Pausing ${pauseSecondsLeft}s until next batch…`
+                  : 'Generating in background…'}
+              </span>
+              <span className="progress-count">
+                {bulkProgress.generated}/{bulkProgress.total} · {bulkProgress.failed} failed
+              </span>
+            </div>
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${bulkProgress.total ? (bulkProgress.processed / bulkProgress.total) * 100 : 0}%`,
+                }}
+              />
+            </div>
+            <button type="button" className="btn btn-outline btn-sm bulk-stop-btn" onClick={() => void stopBulkGenerate()}>
+              Stop generating
+            </button>
+          </div>
+        )}
         <div className="footer-left">
           <span className="footer-text">{savedCount} saved · {unsavedCount} remaining</span>
           <span className="footer-action">

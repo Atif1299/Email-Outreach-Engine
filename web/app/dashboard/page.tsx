@@ -151,7 +151,7 @@ const NAV_STEPS = [
 ] as const
 
 export default function DashboardPage() {
-  useAiBulkWorker()
+  const activeBulkJobs = useAiBulkWorker()
   const [currentStep, setCurrentStep] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [batches, setBatches] = useState<Batch[]>([])
@@ -377,6 +377,7 @@ export default function DashboardPage() {
               <StepPreview
                 campaigns={campaigns}
                 previewCampaignId={previewCampaignId}
+                activeBulkJobs={activeBulkJobs}
                 onPreviewCampaignChange={setPreviewCampaignId}
                 onNextStep={() => {
                   if (previewCampaignId) {
