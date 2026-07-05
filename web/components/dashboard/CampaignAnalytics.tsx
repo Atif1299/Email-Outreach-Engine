@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
+interface AnalyticsStep {
+  stepOrder: number
+  delayHours: number
+  delayDays: number
+  subjectTemplate: string
+  sentCount: number
+  dueCount: number
+  eligible: number
+}
+
 interface AnalyticsData {
   campaign: {
     id: number
@@ -16,6 +26,9 @@ interface AnalyticsData {
     sent: number
     total: number
     progressPct: number
+    progressSent: number
+    progressTotal: number
+    activeStepOrder: number | null
     successRate: number
     inboxCount: number
     dailyCapPerInbox: number
@@ -31,14 +44,7 @@ interface AnalyticsData {
     openedCount: number
   }
   sendDelay: string
-  steps: Array<{
-    stepOrder: number
-    delayHours: number
-    delayDays: number
-    subjectTemplate: string
-    bodyPreview: string
-    sentCount: number
-  }>
+  steps: AnalyticsStep[]
   recentSends: Array<{
     id: number
     leadId: number
@@ -85,6 +91,85 @@ function engagementPill(status: string): string {
   if (status === 'unsubscribed') return 'unsubscribed'
   if (status === 'out_of_office') return 'ooo'
   return 'sent'
+}
+
+function formatStepDelay(step: AnalyticsStep): string {
+  if (step.stepOrder === 1) return 'Sends first — no wait from previous'
+  if (step.delayDays >= 1) {
+    return `${step.delayDays} day${step.delayDays === 1 ? '' : 's'} after step ${step.stepOrder - 1}`
+  }
+  return `${step.delayHours}h after step ${step.stepOrder - 1}`
+}
+
+function stepCompletionPct(step: AnalyticsStep): number {
+  if (step.eligible <= 0) return 0
+  return Math.round((step.sentCount / step.eligible) * 100)
+}
+
+function StepAccordion({
+  steps,
+  activeStepOrder,
+}: {
+  steps: AnalyticsStep[]
+  activeStepOrder: number | null
+}) {
+  const [openStep, setOpenStep] = useState<number | null>(activeStepOrder ?? null)
+
+  useEffect(() => {
+    if (activeStepOrder != null) setOpenStep(activeStepOrder)
+  }, [activeStepOrder])
+
+  return (
+    <div className="campaign-analytics-accordion">
+      {steps.map((step) => {
+        const isOpen = openStep === step.stepOrder
+        const pct = stepCompletionPct(step)
+        const isActive = activeStepOrder === step.stepOrder
+
+        return (
+          <div
+            key={step.stepOrder}
+            className={`campaign-analytics-accordion-item${isOpen ? ' is-open' : ''}${isActive ? ' is-active' : ''}`}
+          >
+            <button
+              type="button"
+              className="campaign-analytics-accordion-trigger"
+              aria-expanded={isOpen}
+              onClick={() => setOpenStep(isOpen ? null : step.stepOrder)}
+            >
+              <span className="campaign-analytics-accordion-step">Step {step.stepOrder}</span>
+              <span className="campaign-analytics-accordion-gap">{formatStepDelay(step)}</span>
+              <span className="campaign-analytics-accordion-pct">{pct}%</span>
+              <span className="campaign-analytics-accordion-chevron" aria-hidden="true">
+                {isOpen ? '−' : '+'}
+              </span>
+            </button>
+            {isOpen && (
+              <div className="campaign-analytics-accordion-body">
+                <div className="campaign-analytics-accordion-stats">
+                  <span>
+                    <strong>{step.sentCount}</strong> sent
+                  </span>
+                  <span>
+                    of <strong>{step.eligible}</strong> eligible
+                  </span>
+                  {step.dueCount > 0 && (
+                    <span className="campaign-analytics-accordion-due">{step.dueCount} due now</span>
+                  )}
+                  {isActive && (
+                    <span className="campaign-analytics-accordion-live">Sending now</span>
+                  )}
+                </div>
+                {step.subjectTemplate && (
+                  <p className="campaign-analytics-accordion-subject">{step.subjectTemplate}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 export default function CampaignAnalytics({ campaignId, onClose }: Props) {
@@ -158,7 +243,11 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
                 <div className="campaign-metric-value">{data.metrics.progressPct}%</div>
                 <div className="campaign-metric-label">Progress</div>
                 <div className="campaign-metric-sub">
-                  {data.status === 'sending' ? 'sending now…' : `${data.metrics.dueNow} ready`}
+                  {data.metrics.activeStepOrder != null
+                    ? `Step ${data.metrics.activeStepOrder}${data.status === 'sending' ? ' · sending now…' : ''}`
+                    : data.status === 'sending'
+                      ? 'sending now…'
+                      : `${data.metrics.dueNow} ready`}
                 </div>
               </div>
               <div className="campaign-metric-card">
@@ -179,7 +268,8 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
               <div className="campaign-analytics-progress-head">
                 <span>Sending progress</span>
                 <span>
-                  {data.metrics.sent} / {data.metrics.total}
+                  {data.metrics.progressSent} / {data.metrics.progressTotal}
+                  {data.metrics.activeStepOrder != null ? ` · Step ${data.metrics.activeStepOrder}` : ''}
                 </span>
               </div>
               <div className="campaign-analytics-progress-bar">
@@ -193,7 +283,7 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
                   {data.metrics.inboxCount} inbox{data.metrics.inboxCount !== 1 ? 'es' : ''} ·{' '}
                   {data.metrics.dailyCapPerInbox}/day · {data.sendDelay}
                 </span>
-                <span>{Math.max(0, data.metrics.total - data.metrics.sent)} remaining</span>
+                <span>{Math.max(0, data.metrics.progressTotal - data.metrics.progressSent)} remaining</span>
               </div>
             </div>
 
@@ -225,27 +315,12 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
 
             <div className="campaign-analytics-section">
               <h3 className="campaign-analytics-section-title">
-                Follow-up sequence <span>{data.steps.length} steps</span>
+                Sequence <span>{data.steps.length} steps</span>
               </h3>
-              <div className="campaign-analytics-steps">
-                {data.steps.map((step) => (
-                  <div key={step.stepOrder} className="campaign-analytics-step">
-                    <div className="campaign-analytics-step-head">
-                      <span className="campaign-analytics-step-num">{step.stepOrder}</span>
-                      <span className="campaign-analytics-step-delay">
-                        {step.stepOrder === 1
-                          ? 'Initial'
-                          : step.delayDays >= 1
-                            ? `Day ${step.delayDays}`
-                            : `${step.delayHours}h delay`}
-                      </span>
-                      <span className="campaign-analytics-step-sent">{step.sentCount} sent</span>
-                    </div>
-                    <div className="campaign-analytics-step-subject">{step.subjectTemplate}</div>
-                    <div className="campaign-analytics-step-body">{step.bodyPreview}</div>
-                  </div>
-                ))}
-              </div>
+              <StepAccordion
+                steps={data.steps}
+                activeStepOrder={data.metrics.activeStepOrder}
+              />
             </div>
 
             <div className="campaign-analytics-section">

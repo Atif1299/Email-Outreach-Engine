@@ -3,6 +3,7 @@ import { computeCampaignQueueStats } from '@/lib/campaign-queue-stats'
 import { isCampaignActive } from '@/lib/queue-active'
 import { withPrismaRetry } from '@/lib/prisma-retry'
 import { ensureSettings } from '@/lib/settings'
+import { computeCampaignProgress } from '@/lib/campaign-progress'
 import { getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
 
 function leadDisplayName(dataJson: string): string {
@@ -59,8 +60,22 @@ export async function getCampaignAnalytics(campaignId: number) {
 
     const totalLeads = stats.sendable
     const sent = stats.leadsStarted
-    const progressPct =
-      totalLeads > 0 ? Math.round((stats.leadsCompleted / totalLeads) * 100) : 0
+    const isActive = isCampaignActive(queueState, campaignId)
+
+    const status = resolveCampaignStatus({
+      isActive,
+      queueRunning: queueState?.running ?? false,
+      queuePaused: queueState?.paused ?? false,
+      sendable: stats.sendable,
+      leadsCompleted: stats.leadsCompleted,
+    })
+
+    const progress = computeCampaignProgress(stats, {
+      isActive,
+      queueRunning: queueState?.running ?? false,
+      queuePaused: queueState?.paused ?? false,
+    })
+    const progressPct = progress.progressPct
 
     const [successCount, failedCount, recentSends, engagements] = await Promise.all([
       prisma.leadSend.count({
@@ -105,7 +120,6 @@ export async function getCampaignAnalytics(campaignId: number) {
 
     const targetBatch = campaign.targetBatches[0]?.importBatch ?? null
     const step1 = campaign.steps.find((s) => s.stepOrder === 1)
-    const isActive = isCampaignActive(queueState, campaignId)
 
     const firstSend = await prisma.leadSend.findFirst({
       where: {
@@ -133,17 +147,14 @@ export async function getCampaignAnalytics(campaignId: number) {
         createdAt: campaign.createdAt.toISOString(),
         startedAt: firstSend?.sentAt.toISOString() ?? null,
       },
-      status: resolveCampaignStatus({
-        isActive,
-        queueRunning: queueState?.running ?? false,
-        queuePaused: queueState?.paused ?? false,
-        sendable: stats.sendable,
-        leadsCompleted: stats.leadsCompleted,
-      }),
+      status,
       metrics: {
         sent,
         total: totalLeads,
         progressPct,
+        progressSent: progress.sent,
+        progressTotal: progress.total,
+        activeStepOrder: progress.activeStepOrder,
         successRate,
         inboxCount: enabledAccounts.length,
         dailyCapPerInbox: perInboxDailyCap,
@@ -159,14 +170,22 @@ export async function getCampaignAnalytics(campaignId: number) {
         openedCount: stats.openedCount ?? 0,
       },
       sendDelay: formatDelayRange(settings.sendDelayMinMs, settings.sendDelayMaxMs),
-      steps: campaign.steps.map((step) => ({
-        stepOrder: step.stepOrder,
-        delayHours: step.delayHoursAfterPrevious,
-        delayDays: Math.round(step.delayHoursAfterPrevious / 24),
-        subjectTemplate: step.subjectTemplate,
-        bodyPreview: step.bodyTemplate.slice(0, 280),
-        sentCount: sendsByStep.get(step.stepOrder) ?? 0,
-      })),
+      steps: campaign.steps.map((step) => {
+        const breakdown = stats.stepBreakdown?.find((b) => b.stepOrder === step.stepOrder)
+        const prevBreakdown = stats.stepBreakdown?.find((b) => b.stepOrder === step.stepOrder - 1)
+        const sentCount = breakdown?.sent ?? 0
+        const eligible =
+          step.stepOrder === 1 ? stats.sendable : (prevBreakdown?.sent ?? 0)
+        return {
+          stepOrder: step.stepOrder,
+          delayHours: step.delayHoursAfterPrevious,
+          delayDays: Math.round(step.delayHoursAfterPrevious / 24),
+          subjectTemplate: step.subjectTemplate,
+          sentCount,
+          dueCount: breakdown?.due ?? 0,
+          eligible,
+        }
+      }),
       recentSends: recentSends.map((send) => ({
         id: send.id,
         leadId: send.leadId,

@@ -3853,6 +3853,76 @@
 }
 
 /* Replies page */
+.replies-step-body
+{
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.replies-panel
+{
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0.75rem 0.5rem 1rem;
+}
+
+.replies-panel .step-header,
+.replies-panel .inline-hint-wrap
+{
+  flex-shrink: 0;
+}
+
+.replies-panel>.replies-section--stats
+{
+  flex-shrink: 0;
+}
+
+.replies-list-panel
+{
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 1rem;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.replies-list-panel .replies-toolbar,
+.replies-list-panel .replies-bulk-bar
+{
+  flex-shrink: 0;
+}
+
+.replies-list-panel .replies-toolbar
+{
+  margin-bottom: 0;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.replies-list-panel .replies-bulk-bar
+{
+  margin: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+}
+
+.replies-list-scroll
+{
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
 .replies-panel .step-header
 {
   display: flex;
@@ -4403,6 +4473,120 @@
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.campaign-analytics-accordion
+{
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.campaign-analytics-accordion-item
+{
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.campaign-analytics-accordion-item.is-active
+{
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.campaign-analytics-accordion-trigger
+{
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 0.9rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.campaign-analytics-accordion-trigger:hover
+{
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.campaign-analytics-accordion-step
+{
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text, #f3f4f6);
+  white-space: nowrap;
+}
+
+.campaign-analytics-accordion-gap
+{
+  font-size: 0.75rem;
+  color: var(--dim, #9ca3af);
+  min-width: 0;
+}
+
+.campaign-analytics-accordion-pct
+{
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+
+.campaign-analytics-accordion-chevron
+{
+  width: 1.25rem;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--dim, #9ca3af);
+}
+
+.campaign-analytics-accordion-body
+{
+  padding: 0 0.9rem 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.campaign-analytics-accordion-stats
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  padding-top: 0.65rem;
+  font-size: 0.8125rem;
+  color: var(--dim, #9ca3af);
+}
+
+.campaign-analytics-accordion-stats strong
+{
+  color: var(--text, #f3f4f6);
+  font-weight: 600;
+}
+
+.campaign-analytics-accordion-due
+{
+  color: #93c5fd;
+}
+
+.campaign-analytics-accordion-live
+{
+  color: #86efac;
+  font-weight: 500;
+}
+
+.campaign-analytics-accordion-subject
+{
+  margin: 0.55rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text, #e5e7eb);
+  line-height: 1.45;
 }
 
 .campaign-analytics-step

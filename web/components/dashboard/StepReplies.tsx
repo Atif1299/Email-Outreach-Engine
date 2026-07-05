@@ -232,252 +232,258 @@ export default function StepReplies({ campaigns }: Props) {
   }
 
   return (
-    <div className="step-panel replies-panel">
-      <div className="step-header">
-        <div>
-          <h2 className="step-title">Replies</h2>
-          <p className="step-desc">
-            Inbox sync scans Gmail every 5 minutes — replies, unsubscribes, and out-of-office are detected
-            automatically.
-          </p>
-        </div>
-        <div className="replies-header-actions">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            disabled={syncing}
-            onClick={() => void syncInboxNow()}
-          >
-            {syncing ? 'Syncing…' : 'Sync now'}
-          </button>
-          {summary && (
-            <div className="replies-summary-chips">
-              <span className="replies-chip">{summary.newRepliesToday} new today</span>
-              <span className="replies-chip">{summary.totalReplied} replied</span>
-              <span className="replies-chip">{summary.totalUnsubscribed} unsubscribed</span>
-              <span className="replies-chip">{summary.totalOutOfOffice} out of office</span>
+    <section className="step-view">
+      <div className="step-body replies-step-body">
+        <div className="replies-panel">
+          <div className="step-header">
+            <div>
+              <h2 className="step-title">Replies</h2>
+              <p className="step-desc">
+                Inbox sync scans Gmail every 5 minutes — replies, unsubscribes, and out-of-office are detected
+                automatically.
+              </p>
             </div>
-          )}
+            <div className="replies-header-actions">
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={syncing}
+                onClick={() => void syncInboxNow()}
+              >
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+              {summary && (
+                <div className="replies-summary-chips">
+                  <span className="replies-chip">{summary.newRepliesToday} new today</span>
+                  <span className="replies-chip">{summary.totalReplied} replied</span>
+                  <span className="replies-chip">{summary.totalUnsubscribed} unsubscribed</span>
+                  <span className="replies-chip">{summary.totalOutOfOffice} out of office</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <InlineHint hint={hint} />
+
+          <section className="replies-section replies-section--stats">
+            <h3 className="replies-section-title">Campaign analytics</h3>
+            <div className="replies-stats-table-wrap">
+              <table className="replies-stats-table">
+                <thead>
+                  <tr>
+                    <th>Campaign</th>
+                    <th>Sent</th>
+                    <th>Replied</th>
+                    <th>Unsubscribed</th>
+                    <th>OOO</th>
+                    <th>Reply rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="replies-empty">
+                        No campaign activity yet
+                      </td>
+                    </tr>
+                  ) : (
+                    stats.map((c) => (
+                      <tr key={c.campaignId}>
+                        <td className="replies-campaign-name">{c.name}</td>
+                        <td>{c.sent}</td>
+                        <td>{c.replied}</td>
+                        <td>{c.unsubscribed}</td>
+                        <td>{c.outOfOffice}</td>
+                        <td>
+                          <div className="reply-rate-cell">
+                            <span>{c.replyRate}%</span>
+                            <div className="reply-rate-bar">
+                              <div
+                                className="reply-rate-bar-fill"
+                                style={{ width: `${Math.min(c.replyRate, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div className="replies-list-panel">
+            <div className="replies-toolbar">
+              <h3 className="replies-section-title">Recent replies ({total})</h3>
+              <div className="replies-filters">
+                <select
+                  className="input input-sm"
+                  value={campaignFilter}
+                  onChange={(e) => setCampaignFilter(e.target.value)}
+                >
+                  <option value="">All campaigns</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="input input-sm"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="">All statuses</option>
+                  <option value="replied">Replied</option>
+                  <option value="unsubscribed">Unsubscribed</option>
+                  <option value="out_of_office">Out of office</option>
+                </select>
+              </div>
+            </div>
+
+            {selected.size > 0 && (
+              <div className="replies-bulk-bar">
+                <span>{selected.size} selected</span>
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('unsubscribed')}>
+                  Mark unsubscribed
+                </button>
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('replied')}>
+                  Mark replied
+                </button>
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('active')}>
+                  Clear / resume
+                </button>
+              </div>
+            )}
+
+            <div className="replies-list-scroll">
+              <div className="replies-list">
+                {loading && replies.length === 0 ? (
+                  <p className="replies-empty">Loading…</p>
+                ) : replies.length === 0 ? (
+                  <p className="replies-empty">
+                    No replies detected yet. Replies appear here after inbox sync runs (every 5 min).
+                  </p>
+                ) : (
+                  replies.map((r) => {
+                    const key = rowKey(r)
+                    const expanded = expandedKey === key
+                    const date = r.unsubscribedAt || r.repliedAt || r.updatedAt
+                    return (
+                      <div key={key} className={`reply-row ${expanded ? 'is-expanded' : ''}`}>
+                        <div className="reply-row-main">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(key)}
+                            onChange={() => toggleSelect(key)}
+                            aria-label={`Select ${r.leadEmail}`}
+                          />
+                          <button type="button" className="reply-row-toggle" onClick={() => toggleExpand(key)}>
+                            <span className="reply-email">{r.leadEmail}</span>
+                            <span className="reply-inbox" title={formatInboxDisplay(r)}>
+                              {r.inboxEmail ? formatInboxDisplay(r) : 'Inbox unknown'}
+                            </span>
+                            <span className="reply-campaign">{r.campaignName}</span>
+                            <span className="reply-date">{formatDate(date)}</span>
+                            <StatusPill status={r.status} />
+                          </button>
+                        </div>
+                        {expanded && (
+                          <div className="reply-row-detail">
+                            <p className="reply-inbox-line">
+                              <strong>Received in:</strong>{' '}
+                              {r.inboxEmail ? (
+                                <>
+                                  {formatInboxDisplay(r)}
+                                  {' · '}
+                                  <a
+                                    href={gmailSearchUrl(r.inboxEmail, r.leadEmail)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="reply-gmail-link"
+                                  >
+                                    Open in Gmail
+                                  </a>
+                                </>
+                              ) : (
+                                'Unknown — check the inbox that originally sent to this lead'
+                              )}
+                            </p>
+                            {r.replySubject && (
+                              <p className="reply-subject">
+                                <strong>Subject:</strong> {r.replySubject}
+                              </p>
+                            )}
+                            {r.replySnippet && (
+                              <pre className="reply-snippet">{r.replySnippet}</pre>
+                            )}
+                            <div className="reply-actions">
+                              {r.status !== 'replied' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  onClick={() =>
+                                    updateStatus(r.leadId, r.campaignId, 'replied', 'Marked as replied')
+                                  }
+                                >
+                                  Mark replied
+                                </button>
+                              )}
+                              {r.status !== 'unsubscribed' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  onClick={() =>
+                                    updateStatus(r.leadId, r.campaignId, 'unsubscribed', 'Marked unsubscribed')
+                                  }
+                                >
+                                  Mark unsubscribed
+                                </button>
+                              )}
+                              {r.status === 'out_of_office' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() =>
+                                    updateStatus(r.leadId, r.campaignId, 'active', 'Lead resumed — can send again')
+                                  }
+                                >
+                                  Resume sending
+                                </button>
+                              )}
+                              {r.doNotContact && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  onClick={() => clearDnc(r.leadId, r.campaignId)}
+                                >
+                                  Clear do-not-contact
+                                </button>
+                              )}
+                              {r.status !== 'active' && r.status !== 'out_of_office' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  onClick={() =>
+                                    updateStatus(r.leadId, r.campaignId, 'active', 'Engagement cleared')
+                                  }
+                                >
+                                  Clear engagement
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-
-      <InlineHint hint={hint} />
-
-      <section className="replies-section">
-        <h3 className="replies-section-title">Campaign analytics</h3>
-        <div className="replies-stats-table-wrap">
-          <table className="replies-stats-table">
-            <thead>
-              <tr>
-                <th>Campaign</th>
-                <th>Sent</th>
-                <th>Replied</th>
-                <th>Unsubscribed</th>
-                <th>OOO</th>
-                <th>Reply rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="replies-empty">
-                    No campaign activity yet
-                  </td>
-                </tr>
-              ) : (
-                stats.map((c) => (
-                  <tr key={c.campaignId}>
-                    <td className="replies-campaign-name">{c.name}</td>
-                    <td>{c.sent}</td>
-                    <td>{c.replied}</td>
-                    <td>{c.unsubscribed}</td>
-                    <td>{c.outOfOffice}</td>
-                    <td>
-                      <div className="reply-rate-cell">
-                        <span>{c.replyRate}%</span>
-                        <div className="reply-rate-bar">
-                          <div
-                            className="reply-rate-bar-fill"
-                            style={{ width: `${Math.min(c.replyRate, 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="replies-section">
-        <div className="replies-toolbar">
-          <h3 className="replies-section-title">Recent replies ({total})</h3>
-          <div className="replies-filters">
-            <select
-              className="input input-sm"
-              value={campaignFilter}
-              onChange={(e) => setCampaignFilter(e.target.value)}
-            >
-              <option value="">All campaigns</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={String(c.id)}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input input-sm"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="">All statuses</option>
-              <option value="replied">Replied</option>
-              <option value="unsubscribed">Unsubscribed</option>
-              <option value="out_of_office">Out of office</option>
-            </select>
-          </div>
-        </div>
-
-        {selected.size > 0 && (
-          <div className="replies-bulk-bar">
-            <span>{selected.size} selected</span>
-            <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('unsubscribed')}>
-              Mark unsubscribed
-            </button>
-            <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('replied')}>
-              Mark replied
-            </button>
-            <button type="button" className="btn btn-sm btn-outline" onClick={() => bulkAction('active')}>
-              Clear / resume
-            </button>
-          </div>
-        )}
-
-        <div className="replies-list">
-          {loading && replies.length === 0 ? (
-            <p className="replies-empty">Loading…</p>
-          ) : replies.length === 0 ? (
-            <p className="replies-empty">
-              No replies detected yet. Replies appear here after inbox sync runs (every 5 min).
-            </p>
-          ) : (
-            replies.map((r) => {
-              const key = rowKey(r)
-              const expanded = expandedKey === key
-              const date = r.unsubscribedAt || r.repliedAt || r.updatedAt
-              return (
-                <div key={key} className={`reply-row ${expanded ? 'is-expanded' : ''}`}>
-                  <div className="reply-row-main">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(key)}
-                      onChange={() => toggleSelect(key)}
-                      aria-label={`Select ${r.leadEmail}`}
-                    />
-                    <button type="button" className="reply-row-toggle" onClick={() => toggleExpand(key)}>
-                      <span className="reply-email">{r.leadEmail}</span>
-                      <span className="reply-inbox" title={formatInboxDisplay(r)}>
-                        {r.inboxEmail ? formatInboxDisplay(r) : 'Inbox unknown'}
-                      </span>
-                      <span className="reply-campaign">{r.campaignName}</span>
-                      <span className="reply-date">{formatDate(date)}</span>
-                      <StatusPill status={r.status} />
-                    </button>
-                  </div>
-                  {expanded && (
-                    <div className="reply-row-detail">
-                      <p className="reply-inbox-line">
-                        <strong>Received in:</strong>{' '}
-                        {r.inboxEmail ? (
-                          <>
-                            {formatInboxDisplay(r)}
-                            {' · '}
-                            <a
-                              href={gmailSearchUrl(r.inboxEmail, r.leadEmail)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="reply-gmail-link"
-                            >
-                              Open in Gmail
-                            </a>
-                          </>
-                        ) : (
-                          'Unknown — check the inbox that originally sent to this lead'
-                        )}
-                      </p>
-                      {r.replySubject && (
-                        <p className="reply-subject">
-                          <strong>Subject:</strong> {r.replySubject}
-                        </p>
-                      )}
-                      {r.replySnippet && (
-                        <pre className="reply-snippet">{r.replySnippet}</pre>
-                      )}
-                      <div className="reply-actions">
-                        {r.status !== 'replied' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline"
-                            onClick={() =>
-                              updateStatus(r.leadId, r.campaignId, 'replied', 'Marked as replied')
-                            }
-                          >
-                            Mark replied
-                          </button>
-                        )}
-                        {r.status !== 'unsubscribed' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline"
-                            onClick={() =>
-                              updateStatus(r.leadId, r.campaignId, 'unsubscribed', 'Marked unsubscribed')
-                            }
-                          >
-                            Mark unsubscribed
-                          </button>
-                        )}
-                        {r.status === 'out_of_office' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            onClick={() =>
-                              updateStatus(r.leadId, r.campaignId, 'active', 'Lead resumed — can send again')
-                            }
-                          >
-                            Resume sending
-                          </button>
-                        )}
-                        {r.doNotContact && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline"
-                            onClick={() => clearDnc(r.leadId, r.campaignId)}
-                          >
-                            Clear do-not-contact
-                          </button>
-                        )}
-                        {r.status !== 'active' && r.status !== 'out_of_office' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline"
-                            onClick={() =>
-                              updateStatus(r.leadId, r.campaignId, 'active', 'Engagement cleared')
-                            }
-                          >
-                            Clear engagement
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })
-          )}
-        </div>
-      </section>
-    </div>
+    </section>
   )
 }

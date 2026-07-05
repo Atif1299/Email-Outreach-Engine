@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Campaign, QueueStatus } from '@/app/dashboard/page'
 import CampaignAnalytics from '@/components/dashboard/CampaignAnalytics'
+import { computeCampaignProgress } from '@/lib/campaign-progress'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -127,15 +128,22 @@ function CampaignCard({
   const subject =
     campaign.steps.find((s) => s.stepOrder === 1)?.subjectTemplate || 'No subject template'
   const sendable = stats?.sendable ?? 0
-  const completed = stats?.leadsCompleted ?? 0
-  const started =
-    liveMetrics?.step1Sent ?? stats?.step1?.sent ?? stats?.leadsStarted ?? 0
-  const useStartedProgress =
-    cardState === 'sending' || cardState === 'paused' || cardState === 'in_queue'
-  const progressPct =
-    sendable > 0
-      ? Math.round(((useStartedProgress ? started : completed) / sendable) * 100)
-      : 0
+  const progress = computeCampaignProgress(
+    {
+      sendable,
+      leadsCompleted: stats?.leadsCompleted ?? 0,
+      stepCount: stats?.stepCount ?? campaign.steps.length,
+      stepBreakdown: stats?.stepBreakdown,
+    },
+    {
+      isActive,
+      queueRunning,
+      queuePaused,
+    }
+  )
+  const progressPct = progress.progressPct
+  const displaySent = progress.phase === 'active' ? progress.sent : (stats?.leadsStarted ?? 0)
+  const displayTotal = progress.phase === 'active' ? progress.total : sendable
   const emailsSent = stats?.emailsSent ?? 0
   const openedCount = stats?.openedCount ?? 0
   const openRate = emailsSent > 0 ? Math.round((openedCount / emailsSent) * 100) : 0
@@ -187,11 +195,11 @@ function CampaignCard({
       <div className="camp-row__aside">
         <div className="camp-row__counts">
           <div className="camp-row__count">
-            <span className="camp-row__count-val">{started}</span>
+            <span className="camp-row__count-val">{displaySent}</span>
             <span className="camp-row__count-lbl">sent</span>
           </div>
           <div className="camp-row__count">
-            <span className="camp-row__count-val">{sendable}</span>
+            <span className="camp-row__count-val">{displayTotal}</span>
             <span className="camp-row__count-lbl">total</span>
           </div>
         </div>
