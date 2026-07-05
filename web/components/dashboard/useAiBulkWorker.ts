@@ -29,14 +29,22 @@ async function fetchActiveJobs(): Promise<ActiveAiBulkJob[]> {
 }
 
 /** Keeps server-side AI bulk jobs running while the dashboard is open. */
-export function useAiBulkWorker(): ActiveAiBulkJob[] {
+export function useAiBulkWorker(options?: { enabled?: boolean }): ActiveAiBulkJob[] {
+  const enabled = options?.enabled ?? true
   const [activeJobs, setActiveJobs] = useState<ActiveAiBulkJob[]>([])
   const inFlightRef = useRef(false)
 
   useEffect(() => {
+    if (!enabled) {
+      setActiveJobs([])
+      return
+    }
+
     let cancelled = false
 
     const loop = async () => {
+      await sleep(2500)
+
       while (!cancelled) {
         if (inFlightRef.current) {
           await sleep(500)
@@ -99,7 +107,7 @@ export function useAiBulkWorker(): ActiveAiBulkJob[] {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [enabled])
 
   return activeJobs
 }

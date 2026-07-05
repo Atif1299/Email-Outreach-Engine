@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/db'
+import { withDbRetry } from '@/lib/db'
 import { ensureSettings, toPublicSettings } from '@/lib/settings'
 import { Prisma } from '@prisma/client'
 
@@ -16,7 +16,7 @@ function dbErrorResponse(error: unknown, action: string) {
     return NextResponse.json(
       {
         error:
-          'Database connection failed. Check DATABASE_URL in web/.env.local points to your Neon Postgres URL (not the placeholder host:5432).',
+          'Database is waking up — please wait a moment and retry. If this persists, check DATABASE_URL in web/.env.local.',
       },
       { status: 503 }
     )
@@ -113,17 +113,19 @@ export async function POST(request: NextRequest) {
     if (body.geminiApiKey) updateData.geminiApiKey = body.geminiApiKey
     if (body.verificationApiKey) updateData.verificationApiKey = body.verificationApiKey
 
-    const settings = await prisma.settings.upsert({
-      where: { id: 1 },
-      create: {
-        id: 1,
-        ...updateData,
-        smtpPassword: '',
-        openaiKey: body.openaiKey || '',
-        verificationApiKey: body.verificationApiKey || '',
-      },
-      update: updateData,
-    })
+    const settings = await withDbRetry((db) =>
+      db.settings.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          ...updateData,
+          smtpPassword: '',
+          openaiKey: body.openaiKey || '',
+          verificationApiKey: body.verificationApiKey || '',
+        },
+        update: updateData,
+      })
+    )
 
     if (Array.isArray(body.smtpAccounts)) {
       await saveSmtpAccounts(body.smtpAccounts)

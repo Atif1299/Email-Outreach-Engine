@@ -52,21 +52,23 @@ export type ResolveAccountResult =
 
 async function migrateLegacySmtpSettings() {
   const settings = await ensureSettings()
-  const existingCount = await prisma.smtpAccount.count()
+  const existingCount = await withDbRetry((db) => db.smtpAccount.count())
   if (existingCount > 0) return
 
   const email = (settings.smtpFromEmail || settings.smtpUser || '').trim().toLowerCase()
   if (!email || !settings.smtpPassword) return
 
-  await prisma.smtpAccount.create({
-    data: {
-      email,
-      password: settings.smtpPassword,
-      label: 'Primary',
-      enabled: true,
-      sortOrder: 0,
-    },
-  })
+  await withDbRetry((db) =>
+    db.smtpAccount.create({
+      data: {
+        email,
+        password: settings.smtpPassword,
+        label: 'Primary',
+        enabled: true,
+        sortOrder: 0,
+      },
+    })
+  )
 }
 
 export async function ensureSmtpAccounts() {

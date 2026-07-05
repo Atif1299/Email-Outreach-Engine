@@ -13,6 +13,7 @@ interface Props {
   campaigns: Campaign[]
   previewCampaignId: number | null
   activeBulkJobs: ActiveAiBulkJob[]
+  isVisible?: boolean
   onPreviewCampaignChange: (id: number | null) => void
   onNextStep: () => void
 }
@@ -52,6 +53,7 @@ export default function StepPreview({
   campaigns,
   previewCampaignId,
   activeBulkJobs,
+  isVisible = true,
   onPreviewCampaignChange,
   onNextStep,
 }: Props) {
@@ -92,6 +94,7 @@ export default function StepPreview({
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const completedJobIdRef = useRef<number | null>(null)
   const hadActiveBulkJobRef = useRef(false)
+  const leadsLoadGenRef = useRef(0)
   const testSendSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [testSendTo, setTestSendTo] = useState('')
   const [testSendLoading, setTestSendLoading] = useState(false)
@@ -101,6 +104,7 @@ export default function StepPreview({
   const { hint: previewHint, showHint: showPreviewHint } = useInlineHint()
 
   useEffect(() => {
+    if (!isVisible) return
     fetch('/api/settings')
       .then((res) => res.json())
       .then((settings) => {
@@ -117,7 +121,7 @@ export default function StepPreview({
         })
       })
       .catch(() => { })
-  }, [])
+  }, [isVisible])
 
   const selectedCampaign = campaigns.find((c) => c.id === previewCampaignId)
   const steps = selectedCampaign?.steps || []
@@ -131,10 +135,9 @@ export default function StepPreview({
   const unsavedCount = leads.filter((l) => !l.hasSaved).length
 
   useEffect(() => {
-    if (previewCampaignId) {
-      loadPreviewLeads()
-    }
-  }, [previewCampaignId, stepOrder])
+    if (!previewCampaignId || !isVisible) return
+    void loadPreviewLeads()
+  }, [previewCampaignId, stepOrder, isVisible])
 
   async function syncBulkJobStatus() {
     if (!previewCampaignId) return
@@ -209,24 +212,28 @@ export default function StepPreview({
 
   useEffect(() => {
     if (!activeBulkJob) return
-    void loadPreviewLeads()
     const interval = setInterval(() => void loadPreviewLeads(), 5000)
     return () => clearInterval(interval)
   }, [activeBulkJob?.id])
 
   useEffect(() => {
-    if (!previewCampaignId || (!activeBulkJob && !bulkStarting)) return
-    void syncBulkJobStatus()
-    const interval = setInterval(() => void syncBulkJobStatus(), 3000)
-    return () => clearInterval(interval)
-  }, [previewCampaignId, stepOrder, activeBulkJob?.id, activeBulkJob?.status, bulkStarting])
+    if (!previewCampaignId || !isVisible || (!activeBulkJob && !bulkStarting)) return
+    const startDelay = setTimeout(() => void syncBulkJobStatus(), 1500)
+    const interval = setInterval(() => void syncBulkJobStatus(), 5000)
+    return () => {
+      clearTimeout(startDelay)
+      clearInterval(interval)
+    }
+  }, [previewCampaignId, stepOrder, activeBulkJob?.id, activeBulkJob?.status, bulkStarting, isVisible])
 
   async function loadPreviewLeads() {
     if (!previewCampaignId) return
+    const gen = ++leadsLoadGenRef.current
     setLeadsLoading(true)
     setLeadsError(null)
     try {
       const res = await fetch(`/api/preview/leads?campaignId=${previewCampaignId}&stepOrder=${stepOrder}`)
+      if (gen !== leadsLoadGenRef.current) return
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setLeads([])
@@ -237,12 +244,13 @@ export default function StepPreview({
       setLeads(data.leads || [])
       setSavedCount(data.savedCount || 0)
     } catch (e) {
+      if (gen !== leadsLoadGenRef.current) return
       console.error('Failed to load preview leads:', e)
       setLeads([])
       setSavedCount(0)
       setLeadsError('Failed to load leads — database may be busy. Try again.')
     } finally {
-      setLeadsLoading(false)
+      if (gen === leadsLoadGenRef.current) setLeadsLoading(false)
     }
   }
 

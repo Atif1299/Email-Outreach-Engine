@@ -151,9 +151,10 @@ const NAV_STEPS = [
 ] as const
 
 export default function DashboardPage() {
-  const activeBulkJobs = useAiBulkWorker()
   const [currentStep, setCurrentStep] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [settingsLoading, setSettingsLoading] = useState(true)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [batches, setBatches] = useState<Batch[]>([])
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null)
   const [leads, setLeads] = useState<Lead[]>([])
@@ -176,10 +177,12 @@ export default function DashboardPage() {
     sendsToday: 0,
     currentJob: null,
   })
+  const activeBulkJobs = useAiBulkWorker({
+    enabled: settings !== null && currentStep >= 4,
+  })
 
-  // Load settings on mount
   useEffect(() => {
-    loadSettings()
+    void loadSettings()
   }, [])
 
   // Load data when step changes
@@ -222,15 +225,39 @@ export default function DashboardPage() {
   }, [currentStep, leadsBatchFilter, leadsStatusFilter, leadsEngagementFilter, leadsSearch, leadsReloadToken])
 
   async function loadSettings() {
-    try {
-      const res = await fetch('/api/settings')
-      if (res.ok) {
-        const data = await res.json()
-        setSettings(data)
+    setSettingsLoading(true)
+    setSettingsError(null)
+    const retryDelaysMs = [0, 5000, 10000, 15000]
+
+    for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
+      if (retryDelaysMs[attempt] > 0) {
+        await new Promise((r) => setTimeout(r, retryDelaysMs[attempt]))
       }
-    } catch (e) {
-      console.error('Failed to load settings:', e)
+      try {
+        const res = await fetch('/api/settings')
+        if (res.ok) {
+          const data = await res.json()
+          setSettings(data)
+          setSettingsError(null)
+          setSettingsLoading(false)
+          return
+        }
+        const err = await res.json().catch(() => ({}))
+        const message = (err as { error?: string }).error || 'Failed to load settings'
+        if (res.status === 503 && attempt < retryDelaysMs.length - 1) {
+          continue
+        }
+        setSettingsError(message)
+        break
+      } catch (e) {
+        console.error('Failed to load settings:', e)
+        if (attempt < retryDelaysMs.length - 1) {
+          continue
+        }
+        setSettingsError('Failed to load settings — database may still be waking up.')
+      }
     }
+    setSettingsLoading(false)
   }
 
   async function loadBatches() {
@@ -323,6 +350,9 @@ export default function DashboardPage() {
             {currentStep === 0 && (
               <StepConnect
                 settings={settings}
+                settingsLoading={settingsLoading}
+                settingsError={settingsError}
+                onRetrySettings={() => void loadSettings()}
                 onSettingsSaved={loadSettings}
               />
             )}
@@ -373,11 +403,12 @@ export default function DashboardPage() {
               />
             )}
 
-            <div style={{ display: currentStep === 4 ? 'block' : 'none' }} className="h-full">
+            <div style={{ display: currentStep === 4 ? 'contents' : 'none' }}>
               <StepPreview
                 campaigns={campaigns}
                 previewCampaignId={previewCampaignId}
                 activeBulkJobs={activeBulkJobs}
+                isVisible={currentStep === 4}
                 onPreviewCampaignChange={setPreviewCampaignId}
                 onNextStep={() => {
                   if (previewCampaignId) {

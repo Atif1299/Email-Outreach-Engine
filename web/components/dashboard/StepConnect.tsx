@@ -16,6 +16,9 @@ interface SmtpAccountForm {
 
 interface Props {
   settings: Settings | null
+  settingsLoading?: boolean
+  settingsError?: string | null
+  onRetrySettings?: () => void
   onSettingsSaved: () => void
 }
 
@@ -49,7 +52,13 @@ function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
   return [emptyAccount()]
 }
 
-export default function StepConnect({ settings, onSettingsSaved }: Props) {
+export default function StepConnect({
+  settings,
+  settingsLoading = false,
+  settingsError = null,
+  onRetrySettings,
+  onSettingsSaved,
+}: Props) {
   const [formData, setFormData] = useState({
     smtpHost: settings?.smtpHost || 'smtp.gmail.com',
     smtpPort: settings?.smtpPort || 465,
@@ -245,6 +254,24 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
   return (
     <section className="step-view">
       <div className="step-body">
+        {settingsLoading && (
+          <p className="section-hint" style={{ marginBottom: '1rem' }}>
+            Loading settings from database…
+          </p>
+        )}
+        {settingsError && !settingsLoading && (
+          <div
+            className="inline-hint inline-hint--warn"
+            style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}
+          >
+            <span>{settingsError}</span>
+            {onRetrySettings && (
+              <button type="button" className="btn btn-outline btn-sm" onClick={onRetrySettings}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         <div className="settings-panel">
           <div className="settings-section">
             <div className="section-title">SMTP Settings</div>
@@ -663,7 +690,12 @@ export default function StepConnect({ settings, onSettingsSaved }: Props) {
               {saveError}
             </span>
           )}
-          <button type="button" className="btn primary" onClick={handleSave} disabled={saving}>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={handleSave}
+            disabled={saving || settingsLoading || !settings}
+          >
             {saving
               ? 'Saving...'
               : saveFlash.flash === 'done'
