@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, type SmtpAccount } from '@prisma/client'
 import prisma from '@/lib/db'
 import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
@@ -207,7 +207,7 @@ function formatGateResult(gate: Exclude<Awaited<ReturnType<typeof evaluateSendGa
 }
 
 async function sendWithAccount(opts: {
-  account: { id: number; email: string; password: string }
+  account: SmtpAccount
   settings: Awaited<ReturnType<typeof ensureSettings>>
   mailOptions: nodemailer.SendMailOptions
 }) {
@@ -220,7 +220,14 @@ type PreparedLead = {
   lead: NonNullable<Awaited<ReturnType<typeof prisma.lead.findUnique>>>
   lastSend: { stepOrder: number; sentAt: Date; subject: string; bodySnippet: string | null; smtpMessageId: string | null } | null
   nextStepOrder: number
-  nextStep: { stepOrder: number; delayHoursAfterPrevious: number; subjectTemplate: string; bodyTemplate: string; useAi: boolean }
+  nextStep: {
+    stepOrder: number
+    delayHoursAfterPrevious: number
+    subjectTemplate: string
+    bodyTemplate: string
+    useAi: boolean
+    bodyFormat: string | null
+  }
 }
 
 async function prepareNextLeadForSend(opts: {
@@ -613,21 +620,22 @@ async function processQueueBatchInner(maxEmails?: number) {
 
     const triedAccountIds = new Set<number>()
     let sendCompleted = false
+    let account = accountResult.account
+    let newlyAssigned = accountResult.newlyAssigned
 
     while (!sendCompleted) {
-      let activeAccountResult = accountResult
       if (triedAccountIds.size > 0) {
-        activeAccountResult = await resolveAccountForSend({
+        const retryResult = await resolveAccountForSend({
           leadId,
           campaignId: campaign.id,
           stepOrder: nextStepOrder,
           limitSettings,
           excludeIds: triedAccountIds,
         })
-        if (activeAccountResult.status === 'unavailable') break
+        if (retryResult.status === 'unavailable') break
+        account = retryResult.account
+        newlyAssigned = retryResult.newlyAssigned
       }
-
-      const account = activeAccountResult.account
 
       try {
         const leadData = JSON.parse(lead.dataJson)
@@ -668,7 +676,7 @@ async function processQueueBatchInner(maxEmails?: number) {
             apiKey: apiKey || '',
             provider,
             useAi: nextStep.useAi,
-            bodyFormat: nextStep.bodyFormat,
+            bodyFormat: nextStep.bodyFormat ?? undefined,
           })
           subject = rendered.subject
           body = rendered.body
@@ -707,7 +715,7 @@ async function processQueueBatchInner(maxEmails?: number) {
 
         const smtpMessageId = await sendWithAccount({ account, settings, mailOptions })
 
-        if (activeAccountResult.newlyAssigned) {
+        if (newlyAssigned) {
           await assignLeadToAccount(leadId, campaign.id, account.id)
         }
 

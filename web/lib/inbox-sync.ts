@@ -123,10 +123,16 @@ function isUnsubscribeRequest(body: string): boolean {
   return patterns.some((re) => re.test(text))
 }
 
-function extractMessageIds(headerValue: string | undefined): string[] {
+function extractMessageIds(headerValue: string | string[] | undefined): string[] {
   if (!headerValue) return []
-  const matches = headerValue.match(/<[^>]+>/g) || []
+  const normalized = Array.isArray(headerValue) ? headerValue.join(' ') : headerValue
+  const matches = normalized.match(/<[^>]+>/g) || []
   return matches.map((m) => m.toLowerCase())
+}
+
+function htmlToPlainSnippet(html: string | false | undefined): string {
+  if (typeof html !== 'string') return ''
+  return html.replace(/<[^>]+>/g, ' ')
 }
 
 async function processBounce(
@@ -135,7 +141,7 @@ async function processBounce(
   const fromRaw = parsed.from?.value?.[0]?.address || parsed.from?.text || ''
   const fromEmail = normalizeEmail(fromRaw)
   const subject = parsed.subject || ''
-  const bodyText = (parsed.text || parsed.html?.replace(/<[^>]+>/g, ' ') || '').slice(0, 8000)
+  const bodyText = (parsed.text || htmlToPlainSnippet(parsed.html) || '').slice(0, 8000)
 
   if (!fromEmail || !isBounceSender(fromEmail, subject)) {
     return { handled: false, skipped: true }
@@ -335,7 +341,7 @@ async function processMessage(
     return { matched: true, replied: false, unsubscribed: false, outOfOffice: false, skipped: true }
   }
 
-  const bodyText = (parsed.text || parsed.html?.replace(/<[^>]+>/g, ' ') || '').slice(0, 2000)
+  const bodyText = (parsed.text || htmlToPlainSnippet(parsed.html) || '').slice(0, 2000)
 
   if (isAutoReply(headers, subject)) {
     const recorded = await recordEngagement({
@@ -409,7 +415,7 @@ async function syncAccountInbox(
         result.checked++
         try {
           const raw = await client.fetchOne(String(uid), { source: true }, { uid: true })
-          if (!raw?.source) continue
+          if (!raw || typeof raw !== 'object' || !('source' in raw) || !raw.source) continue
 
           const parsed = await simpleParser(raw.source)
 

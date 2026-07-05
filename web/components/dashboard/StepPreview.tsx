@@ -193,14 +193,14 @@ export default function StepPreview({
     void loadPreviewLeads()
     const interval = setInterval(() => void loadPreviewLeads(), 5000)
     return () => clearInterval(interval)
-  }, [activeBulkJob?.id, activeBulkJob?.processed])
+  }, [activeBulkJob?.id])
 
   useEffect(() => {
-    if (!previewCampaignId) return
+    if (!previewCampaignId || (!activeBulkJob && !bulkStarting)) return
     void syncBulkJobStatus()
     const interval = setInterval(() => void syncBulkJobStatus(), 3000)
     return () => clearInterval(interval)
-  }, [previewCampaignId, stepOrder])
+  }, [previewCampaignId, stepOrder, activeBulkJob?.id, activeBulkJob?.status, bulkStarting])
 
   async function loadPreviewLeads() {
     if (!previewCampaignId) return
@@ -258,7 +258,9 @@ export default function StepPreview({
       subject: data.subject,
       body: data.body,
       bodyFormat: data.bodyFormat ?? stepBodyFormat,
-      htmlPreview: data.htmlPreview ?? buildPreviewHtml(data.body, data.bodyFormat ?? stepBodyFormat),
+      htmlPreview:
+        data.htmlPreview ??
+        buildPreviewHtml(data.body, normalizeBodyFormat(data.bodyFormat ?? stepBodyFormat)),
     })
   }
 
@@ -294,7 +296,7 @@ export default function StepPreview({
       markPreviewEdited({
         ...(preview || { subject: '', body: '', bodyFormat: stepBodyFormat }),
         body: nextBody,
-        htmlPreview: buildPreviewHtml(nextBody, preview?.bodyFormat ?? stepBodyFormat),
+        htmlPreview: buildPreviewHtml(nextBody, normalizeBodyFormat(preview?.bodyFormat ?? stepBodyFormat)),
       })
     }
   }
@@ -493,11 +495,15 @@ export default function StepPreview({
       await fetch('/api/ai-generate/bulk/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaignId: previewCampaignId, stepOrder }),
+        body: JSON.stringify({
+          campaignId: previewCampaignId,
+          stepOrder,
+          jobId: activeBulkJob?.id,
+        }),
       })
       showPreviewHint('Bulk AI stopped', 'warn')
       setBulkStarting(false)
-      void syncBulkJobStatus()
+      await loadPreviewLeads()
     } catch {
       showPreviewHint('Failed to stop bulk AI', 'err')
     }
@@ -687,7 +693,10 @@ export default function StepPreview({
                       markPreviewEdited({
                         ...preview,
                         body: e.target.value,
-                        htmlPreview: buildPreviewHtml(e.target.value, preview.bodyFormat ?? stepBodyFormat),
+                        htmlPreview: buildPreviewHtml(
+                          e.target.value,
+                          normalizeBodyFormat(preview.bodyFormat ?? stepBodyFormat)
+                        ),
                       })
                     }
                     placeholder="Hi {{first_name}}, ..."

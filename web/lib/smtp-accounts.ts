@@ -200,10 +200,12 @@ async function getBatchAccountSendCounts(
     result.set(id, { sendsToday: 0, sendsThisHour: 0 })
   }
   for (const row of todayCounts) {
+    if (row.smtpAccountId == null) continue
     const entry = result.get(row.smtpAccountId)
     if (entry) entry.sendsToday = row._count
   }
   for (const row of hourCounts) {
+    if (row.smtpAccountId == null) continue
     const entry = result.get(row.smtpAccountId)
     if (entry) entry.sendsThisHour = row._count
   }
@@ -427,8 +429,11 @@ export async function touchAccountUsed(accountId: number) {
   })
 }
 
+/** Minimal fields required to open an SMTP connection. */
+export type SmtpTransportAccount = Pick<SmtpAccount, 'email' | 'password'>
+
 export function createAccountTransporter(
-  account: SmtpAccount,
+  account: SmtpTransportAccount,
   settings: { smtpHost: string; smtpPort: number; smtpSecure: boolean }
 ) {
   const user = account.email.trim()

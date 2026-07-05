@@ -171,13 +171,27 @@ export async function stopAiBulkJob(opts: { jobId?: number; campaignId?: number;
           status: { in: ['running', 'pausing'] },
         }
 
-    await prisma.aiBulkJob.updateMany({
+    const result = await prisma.aiBulkJob.updateMany({
       where,
-      data: { status: 'cancelled', completedAt: new Date() },
+      data: {
+        status: 'cancelled',
+        completedAt: new Date(),
+        processingLockUntil: null,
+        batchPauseUntil: null,
+        pendingLeadIdsJson: '[]',
+      },
     })
 
-    return { ok: true }
+    return { ok: true, cancelled: result.count }
   })
+}
+
+async function jobIsActive(jobId: number): Promise<boolean> {
+  const fresh = await prisma.aiBulkJob.findUnique({
+    where: { id: jobId },
+    select: { status: true },
+  })
+  return fresh?.status === 'running' || fresh?.status === 'pausing'
 }
 
 export async function getAiBulkJobStatus(campaignId: number, stepOrder: number) {
@@ -280,6 +294,21 @@ export async function processAiBulkTick() {
     const tickStarted = Date.now()
 
     while (pending.length > 0 && Date.now() - tickStarted < TICK_MAX_MS) {
+      if (!(await jobIsActive(job.id))) {
+        await prisma.aiBulkJob.update({
+          where: { id: job.id },
+          data: {
+            pendingLeadIdsJson: '[]',
+            failedLeadIdsJson: JSON.stringify(failedLeadIds),
+            generated,
+            failed,
+            processed,
+            processingLockUntil: null,
+          },
+        })
+        return { status: 'cancelled' as const, jobId: job.id, generated, failed }
+      }
+
       const tickNow = new Date()
 
       if (batchWindowStartedAt) {
@@ -400,6 +429,7 @@ export async function runAiBulkCron(maxRuntimeMs = 50_000) {
 
     if (result.status === 'idle') break
     if (result.status === 'pausing') break
+    if (result.status === 'cancelled') break
     if (result.status === 'completed') continue
     if (result.status === 'busy') {
       await new Promise((r) => setTimeout(r, 1500))

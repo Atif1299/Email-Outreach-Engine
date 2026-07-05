@@ -15,7 +15,7 @@ const GIF_HEADERS = {
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('t')
   if (!token) {
-    return new NextResponse(trackingPixelGif(), { status: 200, headers: GIF_HEADERS })
+    return new NextResponse(new Uint8Array(trackingPixelGif()), { status: 200, headers: GIF_HEADERS })
   }
 
   const leadSendId = verifyLeadSendToken(token)
@@ -30,5 +30,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return new NextResponse(trackingPixelGif(), { status: 200, headers: GIF_HEADERS })
+  return new NextResponse(new Uint8Array(trackingPixelGif()), { status: 200, headers: GIF_HEADERS })
 }

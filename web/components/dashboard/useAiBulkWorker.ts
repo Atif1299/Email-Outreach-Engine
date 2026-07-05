@@ -65,9 +65,14 @@ export function useAiBulkWorker(): ActiveAiBulkJob[] {
             setActiveJobs(await fetchActiveJobs())
 
             if (tick.status === 'pausing') {
-              await sleep(3000)
+              const pauseUntilMs = tick.pauseUntil
+                ? new Date(tick.pauseUntil).getTime()
+                : Date.now() + 30_000
+              const waitMs = Math.min(Math.max(pauseUntilMs - Date.now(), 1000), 60_000)
+              await sleep(waitMs)
               break
             }
+            if (tick.status === 'cancelled') break
             if (tick.status === 'idle' || tick.status === 'completed') break
             if (tick.status === 'busy') {
               await sleep(500)

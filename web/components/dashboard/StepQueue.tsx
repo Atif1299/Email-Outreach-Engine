@@ -603,8 +603,9 @@ export default function StepQueue({
 
   const sendingCount =
     queueStatus.running && !queueStatus.paused ? activeCampaignIds.length : 0
-  const waitingOnLimits =
+  const waitingOnLimits = Boolean(
     queueStatus.outsideWindow || queueStatus.capReached || queueStatus.hourCapReached
+  )
   const doneCount = allStats.filter(
     (s) => s.sendable > 0 && s.leadsCompleted >= s.sendable
   ).length

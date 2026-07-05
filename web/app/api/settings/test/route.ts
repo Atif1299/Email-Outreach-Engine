@@ -16,14 +16,15 @@ export async function POST(request: NextRequest) {
 
   let user = (body.email || body.smtpUser || '').trim().toLowerCase()
   let password = (body.password || body.smtpPassword || '').trim()
+  let smtpAccount: Awaited<ReturnType<typeof prisma.smtpAccount.findUnique>> = null
 
   if (body.accountId) {
-    const account = await prisma.smtpAccount.findUnique({ where: { id: body.accountId } })
-    if (!account) {
+    smtpAccount = await prisma.smtpAccount.findUnique({ where: { id: body.accountId } })
+    if (!smtpAccount) {
       return NextResponse.json({ error: 'SMTP account not found' }, { status: 404 })
     }
-    user = account.email
-    if (!password) password = account.password
+    user = smtpAccount.email
+    if (!password) password = smtpAccount.password
   }
 
   try {
@@ -43,8 +44,8 @@ export async function POST(request: NextRequest) {
 
     assertGmailSmtpUsername({ host, user })
 
-    const transporter = body.accountId
-      ? createAccountTransporter({ id: body.accountId, email: user, password }, settings)
+    const transporter = smtpAccount
+      ? createAccountTransporter(smtpAccount, settings)
       : nodemailer.createTransport({
         host,
         port,
