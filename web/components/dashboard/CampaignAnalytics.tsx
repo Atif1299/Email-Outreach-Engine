@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface AnalyticsStep {
   stepOrder: number
@@ -176,28 +176,49 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const loadInFlightRef = useRef(false)
+  const loadSeqRef = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { initial?: boolean }) => {
+    if (loadInFlightRef.current) return
+    loadInFlightRef.current = true
+    const seq = ++loadSeqRef.current
+    if (opts?.initial) {
+      setLoading(true)
+      setError(null)
+    }
+
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/analytics`)
+      if (seq !== loadSeqRef.current) return
+      const body = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError('Failed to load analytics')
+        setError(body.error || 'Failed to load analytics')
         return
       }
-      setData(await res.json())
+      setData(body)
       setError(null)
     } catch {
-      setError('Failed to load analytics')
+      if (seq === loadSeqRef.current) {
+        setError('Failed to load analytics')
+      }
     } finally {
-      setLoading(false)
+      if (seq === loadSeqRef.current) {
+        loadInFlightRef.current = false
+        setLoading(false)
+      }
     }
   }, [campaignId])
 
   useEffect(() => {
-    setLoading(true)
-    load()
-    const interval = setInterval(load, 15000)
-    return () => clearInterval(interval)
+    loadSeqRef.current += 1
+    setData(null)
+    void load({ initial: true })
+    const interval = setInterval(() => void load(), 30000)
+    return () => {
+      loadSeqRef.current += 1
+      clearInterval(interval)
+    }
   }, [load])
 
   return (
@@ -229,7 +250,14 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
         </div>
 
         {loading && !data && <p className="campaign-analytics-loading">Loading analytics…</p>}
-        {error && <p className="campaign-analytics-error">{error}</p>}
+        {error && !data && (
+          <div className="campaign-analytics-error-wrap">
+            <p className="campaign-analytics-error">{error}</p>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => void load({ initial: true })}>
+              Retry
+            </button>
+          </div>
+        )}
 
         {data && (
           <>

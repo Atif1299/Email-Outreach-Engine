@@ -46,17 +46,6 @@ const MERGE_TAGS = [
 
 type OverrideItem = { leadId: number; subject: string; body: string }
 
-/** Generate actively for this long, then pause before the next batch. */
-const BATCH_ACTIVE_MS = 90_000
-/** Break between batches — keeps each Vercel call short and avoids rate limits. */
-const BATCH_PAUSE_MS = 60_000
-/** Parallel AI requests per tick (same batch window, faster throughput). */
-const BULK_CONCURRENCY = 3
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms))
-}
-
 export default function StepPreview({
   campaigns,
   previewCampaignId,
@@ -65,6 +54,8 @@ export default function StepPreview({
 }: Props) {
   const [stepOrder, setStepOrder] = useState(1)
   const [leads, setLeads] = useState<PreviewLead[]>([])
+  const [leadsLoading, setLeadsLoading] = useState(false)
+  const [leadsError, setLeadsError] = useState<string | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null)
   const [preview, setPreview] = useState<PreviewContent | null>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
@@ -89,7 +80,7 @@ export default function StepPreview({
   const [senderFrom, setSenderFrom] = useState({ email: 'sender@example.com', name: 'Sender' })
   const subjectRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
-  const bulkAbortRef = useRef(false)
+  const completedJobIdRef = useRef<number | null>(null)
   const testSendSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [testSendTo, setTestSendTo] = useState('')
   const [testSendLoading, setTestSendLoading] = useState(false)
@@ -134,23 +125,95 @@ export default function StepPreview({
     }
   }, [previewCampaignId, stepOrder])
 
-  useEffect(() => {
-    return () => {
-      bulkAbortRef.current = true
+  async function syncBulkJobStatus() {
+    if (!previewCampaignId) return
+    try {
+      const res = await fetch(
+        `/api/ai-generate/bulk/status?campaignId=${previewCampaignId}&stepOrder=${stepOrder}`
+      )
+      if (!res.ok) return
+      const data = await res.json()
+      const job = data.job as {
+        id: number
+        status: 'running' | 'pausing' | 'completed' | 'cancelled' | 'failed'
+        total: number
+        processed: number
+        generated: number
+        failed: number
+        skipped: number
+        failedLeadIds: number[]
+        batchPauseUntil: string | null
+      } | null
+
+      if (!job) {
+        setBulkGenerating(false)
+        return
+      }
+
+      const isActive = job.status === 'running' || job.status === 'pausing'
+      setBulkGenerating(isActive)
+      setBulkPhase(job.status === 'pausing' ? 'pausing' : 'generating')
+      if (job.batchPauseUntil) {
+        const sec = Math.max(
+          0,
+          Math.ceil((new Date(job.batchPauseUntil).getTime() - Date.now()) / 1000)
+        )
+        setPauseSecondsLeft(sec)
+      } else {
+        setPauseSecondsLeft(0)
+      }
+      setBulkProgress({
+        processed: job.processed,
+        total: job.total,
+        generated: job.generated,
+        failed: job.failed,
+        skipped: job.skipped,
+      })
+      setFailedLeadIds(new Set(job.failedLeadIds))
+
+      if (job.status === 'completed' && completedJobIdRef.current !== job.id) {
+        completedJobIdRef.current = job.id
+        bulkFlash.flashDone()
+        showPreviewHint(
+          `Done: ${job.generated} generated, ${job.skipped} skipped, ${job.failed} failed`,
+          job.failed > 0 ? 'warn' : 'ok'
+        )
+        await loadPreviewLeads()
+      }
+    } catch {
+      // ignore transient poll errors
     }
-  }, [])
+  }
+
+  useEffect(() => {
+    if (!previewCampaignId) return
+    void syncBulkJobStatus()
+    const interval = setInterval(() => void syncBulkJobStatus(), 2000)
+    return () => clearInterval(interval)
+  }, [previewCampaignId, stepOrder])
 
   async function loadPreviewLeads() {
     if (!previewCampaignId) return
+    setLeadsLoading(true)
+    setLeadsError(null)
     try {
       const res = await fetch(`/api/preview/leads?campaignId=${previewCampaignId}&stepOrder=${stepOrder}`)
-      if (res.ok) {
-        const data = await res.json()
-        setLeads(data.leads || [])
-        setSavedCount(data.savedCount || 0)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setLeads([])
+        setSavedCount(0)
+        setLeadsError(data.error || 'Failed to load leads')
+        return
       }
+      setLeads(data.leads || [])
+      setSavedCount(data.savedCount || 0)
     } catch (e) {
       console.error('Failed to load preview leads:', e)
+      setLeads([])
+      setSavedCount(0)
+      setLeadsError('Failed to load leads — database may be busy. Try again.')
+    } finally {
+      setLeadsLoading(false)
     }
   }
 
@@ -335,20 +398,8 @@ export default function StepPreview({
     if (ok) setGeneratedOverrides([])
   }
 
-  async function pauseBetweenBatches() {
-    setBulkPhase('pausing')
-    const pauseSec = Math.ceil(BATCH_PAUSE_MS / 1000)
-    for (let s = pauseSec; s > 0; s--) {
-      if (bulkAbortRef.current) return
-      setPauseSecondsLeft(s)
-      await sleep(1000)
-    }
-    setPauseSecondsLeft(0)
-    setBulkPhase('generating')
-  }
-
-  async function runBulkGenerate(regenerateAll: boolean) {
-    if (!previewCampaignId || leads.length === 0) return
+  async function startBulkJob(regenerateAll: boolean, leadIds?: number[]) {
+    if (!previewCampaignId) return
 
     try {
       const settingsRes = await fetch('/api/settings')
@@ -367,131 +418,41 @@ export default function StepPreview({
       return
     }
 
-    bulkAbortRef.current = false
-    setBulkGenerating(true)
-    setBulkPhase('generating')
-    setFailedLeadIds(new Set())
-
-    const targets = regenerateAll ? leads : leads.filter((l) => !l.hasSaved)
-    const sessionDone = new Set<number>()
-    let generated = 0
-    let failed = 0
-    let skipped = 0
-    let batchBuffer: OverrideItem[] = []
-
-    setBulkProgress({
-      processed: 0,
-      total: targets.length,
-      generated: 0,
-      failed: 0,
-      skipped: 0,
-    })
-
-    const updateProgress = () => {
-      setBulkProgress({
-        processed: generated + failed + skipped,
-        total: targets.length,
-        generated,
-        failed,
-        skipped,
+    try {
+      const res = await fetch('/api/ai-generate/bulk/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId: previewCampaignId,
+          stepOrder,
+          regenerateAll,
+          leadIds,
+        }),
       })
-    }
-
-    while (!bulkAbortRef.current) {
-      const batchStart = Date.now()
-      let workInBatch = false
-
-      while (Date.now() - batchStart < BATCH_ACTIVE_MS && !bulkAbortRef.current) {
-        const pending: PreviewLead[] = []
-        for (const lead of targets) {
-          if (sessionDone.has(lead.id)) continue
-          pending.push(lead)
-          if (pending.length >= BULK_CONCURRENCY) break
-        }
-        if (pending.length === 0) break
-
-        for (const lead of pending) sessionDone.add(lead.id)
-        workInBatch = true
-
-        const results: Array<
-          | { type: 'skipped' }
-          | { type: 'generated'; leadId: number; item: { leadId: number; subject: string; body: string } }
-          | { type: 'failed'; leadId: number }
-        > = []
-        for (const lead of pending) {
-          if (!regenerateAll && lead.hasSaved) {
-            results.push({ type: 'skipped' as const })
-            continue
-          }
-          try {
-            const res = await fetch('/api/ai-generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
-            })
-            if (res.ok) {
-              const data = await res.json()
-              results.push({
-                type: 'generated' as const,
-                leadId: lead.id,
-                item: { leadId: lead.id, subject: data.subject, body: data.body },
-              })
-            } else {
-              const err = await res.json().catch(() => ({}))
-              console.error('Bulk AI error for lead', lead.id, err.error || res.status)
-              results.push({ type: 'failed' as const, leadId: lead.id })
-            }
-          } catch (e) {
-            console.error('Bulk AI error for lead', lead.id, e)
-            results.push({ type: 'failed' as const, leadId: lead.id })
-          }
-          // Small delay between requests to avoid rate limiting
-          await new Promise((r) => setTimeout(r, 500))
-        }
-
-        const newFailedIds: number[] = []
-        for (const result of results) {
-          if (result.type === 'skipped') skipped++
-          else if (result.type === 'generated') {
-            generated++
-            batchBuffer.push(result.item)
-          } else {
-            failed++
-            if (result.leadId) newFailedIds.push(result.leadId)
-          }
-        }
-        if (newFailedIds.length > 0) {
-          setFailedLeadIds((prev) => {
-            const next = new Set(prev)
-            newFailedIds.forEach((id) => next.add(id))
-            return next
-          })
-        }
-        updateProgress()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showPreviewHint(data.error || 'Failed to start bulk AI', 'err')
+        return
       }
 
-      if (batchBuffer.length > 0) {
-        await saveOverrideBatch(batchBuffer, true)
-        batchBuffer = []
+      completedJobIdRef.current = null
+      setBulkGenerating(true)
+      setBulkPhase('generating')
+      setFailedLeadIds(new Set())
+      if (data.job) {
+        setBulkProgress({
+          processed: data.job.processed ?? 0,
+          total: data.job.total ?? 0,
+          generated: data.job.generated ?? 0,
+          failed: data.job.failed ?? 0,
+          skipped: data.job.skipped ?? 0,
+        })
       }
-
-      if (sessionDone.size >= targets.length) break
-      if (!workInBatch) break
-
-      await pauseBetweenBatches()
+      showPreviewHint('Bulk AI started — keeps running if you leave this page', 'ok')
+      void syncBulkJobStatus()
+    } catch {
+      showPreviewHint('Failed to start bulk AI', 'err')
     }
-
-    if (batchBuffer.length > 0) {
-      await saveOverrideBatch(batchBuffer, true)
-    }
-
-    setBulkGenerating(false)
-    setBulkPhase('generating')
-    bulkFlash.flashDone()
-    showPreviewHint(
-      `Done: ${generated} generated, ${skipped} skipped, ${failed} failed`,
-      failed > 0 ? 'warn' : 'ok'
-    )
   }
 
   function bulkGenerateAI() {
@@ -503,64 +464,12 @@ export default function StepPreview({
       return
     }
     setConfirmBulk(false)
-    runBulkGenerate(false)
+    void startBulkJob(false)
   }
 
   async function retryFailed() {
     if (!previewCampaignId || failedLeadIds.size === 0) return
-
-    const failedLeads = leads.filter((l) => failedLeadIds.has(l.id))
-    if (failedLeads.length === 0) return
-
-    bulkAbortRef.current = false
-    setBulkGenerating(true)
-    setBulkPhase('generating')
-
-    let generated = 0
-    let failed = 0
-    const newFailedIds: number[] = []
-    let batchBuffer: OverrideItem[] = []
-
-    setBulkProgress({ processed: 0, total: failedLeads.length, generated: 0, failed: 0, skipped: 0 })
-
-    for (const lead of failedLeads) {
-      if (bulkAbortRef.current) break
-      try {
-        const res = await fetch('/api/ai-generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ leadId: lead.id, campaignId: previewCampaignId, stepOrder }),
-        })
-        if (res.ok) {
-          const data = await res.json()
-          generated++
-          batchBuffer.push({ leadId: lead.id, subject: data.subject, body: data.body })
-        } else {
-          failed++
-          newFailedIds.push(lead.id)
-        }
-      } catch {
-        failed++
-        newFailedIds.push(lead.id)
-      }
-      setBulkProgress({ processed: generated + failed, total: failedLeads.length, generated, failed, skipped: 0 })
-
-      if (batchBuffer.length >= 10) {
-        await saveOverrideBatch(batchBuffer, true)
-        batchBuffer = []
-      }
-      // Small delay to avoid rate limiting
-      await new Promise((r) => setTimeout(r, 500))
-    }
-
-    if (batchBuffer.length > 0) {
-      await saveOverrideBatch(batchBuffer, true)
-    }
-
-    setFailedLeadIds(new Set(newFailedIds))
-    setBulkGenerating(false)
-    bulkFlash.flashDone()
-    showPreviewHint(`Retry done: ${generated} generated, ${failed} still failed`, failed > 0 ? 'warn' : 'ok')
+    void startBulkJob(false, Array.from(failedLeadIds))
   }
 
   function cancelBulkConfirm() {
@@ -568,9 +477,19 @@ export default function StepPreview({
     setConfirmRegenerateAll(false)
   }
 
-  function stopBulkGenerate() {
-    bulkAbortRef.current = true
-    showPreviewHint('Stopping after current batch…', 'warn')
+  async function stopBulkGenerate() {
+    if (!previewCampaignId) return
+    try {
+      await fetch('/api/ai-generate/bulk/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: previewCampaignId, stepOrder }),
+      })
+      showPreviewHint('Bulk AI stopped', 'warn')
+      void syncBulkJobStatus()
+    } catch {
+      showPreviewHint('Failed to stop bulk AI', 'err')
+    }
   }
 
   const selectedLead = leads.find((l) => l.id === selectedLeadId)
@@ -618,7 +537,18 @@ export default function StepPreview({
             </p>
           )}
           <div className="queue-list">
-            {leads.length === 0 ? (
+            {leadsLoading ? (
+              <div className="queue-item">
+                <div className="queue-item-title" style={{ color: 'var(--dim)' }}>Loading leads…</div>
+              </div>
+            ) : leadsError ? (
+              <div className="queue-item">
+                <div className="queue-item-title" style={{ color: 'var(--err)' }}>{leadsError}</div>
+                <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: '0.5rem' }} onClick={() => void loadPreviewLeads()}>
+                  Retry
+                </button>
+              </div>
+            ) : leads.length === 0 ? (
               <div className="queue-item">
                 <div className="queue-item-title" style={{ color: 'var(--dim)' }}>No leads in campaign</div>
               </div>
@@ -837,8 +767,8 @@ export default function StepPreview({
                   }}
                 />
               </div>
-              <button type="button" className="btn btn-outline btn-sm bulk-stop-btn" onClick={stopBulkGenerate}>
-                Stop after this batch
+              <button type="button" className="btn btn-outline btn-sm bulk-stop-btn" onClick={() => void stopBulkGenerate()}>
+                Stop generating
               </button>
             </div>
           )}
@@ -873,7 +803,7 @@ export default function StepPreview({
                   if (confirmRegenerateAll) {
                     setConfirmRegenerateAll(false)
                     setConfirmBulk(false)
-                    runBulkGenerate(true)
+                    void startBulkJob(true)
                   } else {
                     setConfirmRegenerateAll(true)
                     setConfirmBulk(false)

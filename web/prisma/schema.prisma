@@ -61,6 +61,7 @@ model Campaign {
   mergePreviews LeadMergePreview[]
   engagements   LeadCampaignEngagement[]
   smtpAssignments LeadSmtpAssignment[]
+  aiBulkJobs      AiBulkJob[]
 
   @@map("campaigns")
 }
@@ -259,4 +260,32 @@ model QueueState {
   updatedAt            DateTime @default(now()) @map("updated_at")
 
   @@map("queue_state")
+}
+
+model AiBulkJob {
+  id                   Int       @id @default(autoincrement())
+  campaignId           Int       @map("campaign_id")
+  stepOrder            Int       @map("step_order")
+  status               String    @default("running")
+  regenerateAll        Boolean   @default(false) @map("regenerate_all")
+  total                Int       @default(0)
+  processed            Int       @default(0)
+  generated            Int       @default(0)
+  failed               Int       @default(0)
+  skipped              Int       @default(0)
+  pendingLeadIdsJson   String    @default("[]") @map("pending_lead_ids_json")
+  failedLeadIdsJson    String    @default("[]") @map("failed_lead_ids_json")
+  batchPauseUntil      DateTime? @map("batch_pause_until")
+  batchWindowStartedAt DateTime? @map("batch_window_started_at")
+  leadsInWindow        Int       @default(0) @map("leads_in_window")
+  processingLockUntil  DateTime? @map("processing_lock_until")
+  lastError            String?   @map("last_error")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  completedAt          DateTime? @map("completed_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, stepOrder, status])
+  @@map("ai_bulk_jobs")
 }

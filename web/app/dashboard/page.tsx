@@ -8,6 +8,7 @@ import StepCampaign from '@/components/dashboard/StepCampaign'
 import StepPreview from '@/components/dashboard/StepPreview'
 import StepQueue from '@/components/dashboard/StepQueue'
 import StepReplies from '@/components/dashboard/StepReplies'
+import { useAiBulkWorker } from '@/components/dashboard/useAiBulkWorker'
 
 export interface SmtpAccountStatus {
   id: number
@@ -150,6 +151,7 @@ const NAV_STEPS = [
 ] as const
 
 export default function DashboardPage() {
+  useAiBulkWorker()
   const [currentStep, setCurrentStep] = useState(0)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [batches, setBatches] = useState<Batch[]>([])
