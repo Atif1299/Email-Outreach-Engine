@@ -23,6 +23,17 @@ export async function resolveLeadIdsForCampaign(campaignId: number): Promise<Res
   if (!campaign) return { error: 'Campaign not found', status: 404 }
   if (campaign.steps.length === 0) return { error: 'Campaign has no steps', status: 400 }
 
+  for (const step of campaign.steps) {
+    if (!step.useAi) {
+      if (!step.subjectTemplate.trim() || !step.bodyTemplate.trim()) {
+        return {
+          error: `Step ${step.stepOrder} needs subject and body templates when AI is off`,
+          status: 400,
+        }
+      }
+    }
+  }
+
   const where: { verificationStatus: string; importBatchId?: { in: number[] } } = {
     verificationStatus: 'valid',
   }

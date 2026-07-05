@@ -1,7 +1,7 @@
-Sample leads from the target import batch (analyze patterns — titles, companies, industries, locations):
+Sample leads from the target import batch:
 
 {{SAMPLE_LEADS_JSON}}
 
 {{EXISTING_PITCH_SECTION}}
 
-Write the pitch block for this audience.
+Write the campaign brief for this audience.

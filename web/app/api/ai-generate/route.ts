@@ -3,6 +3,7 @@ import prisma from '@/lib/db'
 import { renderEmailForLead } from '@/lib/ai'
 import { ensureSettings } from '@/lib/settings'
 import { loadSequenceContext } from '@/lib/preview-context'
+import { buildPreviewHtml, normalizeBodyFormat } from '@/lib/email-html'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -48,13 +49,14 @@ export async function POST(request: NextRequest) {
     const sequence = await loadSequenceContext(leadId, campaignId, stepOrder || 1)
     const model = provider === 'gemini' ? settings.geminiModel : settings.openaiModel
 
+    const bodyFormat = normalizeBodyFormat(step.bodyFormat)
+
     const result = await renderEmailForLead({
       leadData: { ...leadData, email: lead.email },
       leadId: leadId,
       pitchBlock: campaign.pitchBlock,
       senderInfo: campaign.senderInfo,
       aiVoice: campaign.aiVoice,
-      aiInstructions: campaign.aiInstructions,
       outputLanguage: campaign.outputLanguage,
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
@@ -65,11 +67,14 @@ export async function POST(request: NextRequest) {
       apiKey: apiKey || '',
       provider,
       useAi: true,
-      fewShotStep1Json: campaign.fewShotStep1Json,
-      fewShotStep2Json: campaign.fewShotStep2Json,
+      bodyFormat: step.bodyFormat,
     })
 
-    return NextResponse.json(result)
+    return NextResponse.json({
+      ...result,
+      bodyFormat,
+      htmlPreview: buildPreviewHtml(result.body, bodyFormat),
+    })
   } catch (error) {
     console.error('AI generation failed:', error)
     const message = error instanceof Error ? error.message : 'AI generation failed'

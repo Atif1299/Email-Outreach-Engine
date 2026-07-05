@@ -47,7 +47,6 @@ export function parsePitchBlock(text: string) {
         flush()
         currentKey = key
         const labelEnd = line.length - trimmedStart.length + m[0].length
-        // Keep trailing/mid-text spaces — only strip the single gap after "Label:"
         currentLines = [line.slice(labelEnd).replace(/^\s/, '')]
         matched = true
         break
@@ -82,3 +81,30 @@ export function countFilledPitchFields(text: string): number {
   const parsed = parsePitchBlock(text)
   return Object.values(parsed.fields).filter((v) => v.trim()).length
 }
+
+/** Short sender label from explicit {{sender_info}} value. Not the lead's name. */
+export function deriveSenderNameFromSignOff(signOff: string): string {
+  const text = (signOff || '').trim()
+  if (!text) return ''
+
+  const firstLine = text.split(/\r?\n/)[0]?.trim() || text
+
+  const afterComma = firstLine.match(/,(.+)$/)
+  if (afterComma) {
+    return afterComma[1].trim()
+  }
+
+  const afterDash = firstLine.match(/[—–-]\s*(.+)$/)
+  if (afterDash) {
+    return afterDash[1].trim()
+  }
+
+  if (/^(best|regards|thanks|cheers|sincerely|kind regards|warm regards)/i.test(firstLine)) {
+    return ''
+  }
+
+  return firstLine
+}
+
+export const BRIEF_PLACEHOLDER =
+  'What you sell, who it\'s for, the pain you solve, your offer/CTA, and tone notes.'

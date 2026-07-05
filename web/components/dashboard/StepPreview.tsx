@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import type { Campaign } from '@/app/dashboard/page'
 import { getOutputLanguageLabel } from '@/lib/output-languages'
 import { looksLikeRawPitchMerge } from '@/lib/preview-utils'
+import { buildPreviewHtml, normalizeBodyFormat, type BodyFormat } from '@/lib/email-html'
+import EmailInboxPreview from '@/components/dashboard/EmailInboxPreview'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -24,7 +26,23 @@ interface PreviewLead {
 interface PreviewContent {
   subject: string
   body: string
+  bodyFormat?: BodyFormat | string
+  htmlPreview?: string
 }
+
+type EditorTab = 'simple' | 'html' | 'inbox'
+
+const MERGE_TAGS = [
+  'first_name',
+  'last_name',
+  'current_employer',
+  'current_title',
+  'industry',
+  'location',
+  'email',
+  'pitch_block',
+  'sender_info',
+]
 
 type OverrideItem = { leadId: number; subject: string; body: string }
 
@@ -67,7 +85,15 @@ export default function StepPreview({
   const [confirmBulk, setConfirmBulk] = useState(false)
   const [confirmRegenerateAll, setConfirmRegenerateAll] = useState(false)
   const [aiProvider, setAiProvider] = useState<{ provider: string; model: string; hasKey: boolean } | null>(null)
+  const [editorTab, setEditorTab] = useState<EditorTab>('simple')
+  const [senderFrom, setSenderFrom] = useState({ email: 'sender@example.com', name: 'Sender' })
+  const subjectRef = useRef<HTMLInputElement>(null)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
   const bulkAbortRef = useRef(false)
+  const testSendSentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [testSendTo, setTestSendTo] = useState('')
+  const [testSendLoading, setTestSendLoading] = useState(false)
+  const [testSendSent, setTestSendSent] = useState(false)
   const saveFlash = useButtonFlash()
   const bulkFlash = useButtonFlash()
   const { hint: previewHint, showHint: showPreviewHint } = useInlineHint()
@@ -82,12 +108,24 @@ export default function StepPreview({
           model: isGemini ? settings.geminiModel : settings.openaiModel,
           hasKey: isGemini ? settings.hasGeminiApiKey : settings.hasOpenaiKey,
         })
+        const firstSmtp = settings.smtpAccounts?.[0]
+        setSenderFrom({
+          email: firstSmtp?.email || settings.smtpFromName || 'sender@example.com',
+          name: settings.smtpFromName || firstSmtp?.label || 'Sender',
+        })
       })
       .catch(() => { })
   }, [])
 
   const selectedCampaign = campaigns.find((c) => c.id === previewCampaignId)
   const steps = selectedCampaign?.steps || []
+  const currentStep = steps.find((s) => s.stepOrder === stepOrder)
+  const stepBodyFormat = normalizeBodyFormat(currentStep?.bodyFormat)
+
+  useEffect(() => {
+    setEditorTab(stepBodyFormat === 'html' ? 'html' : 'simple')
+  }, [stepBodyFormat, stepOrder, previewCampaignId])
+
   const unsavedCount = leads.filter((l) => !l.hasSaved).length
 
   useEffect(() => {
@@ -126,7 +164,12 @@ export default function StepPreview({
       const res = await fetch(`/api/preview?leadId=${leadId}&campaignId=${previewCampaignId}&stepOrder=${stepOrder}`)
       if (res.ok) {
         const data = await res.json()
-        setPreview(data)
+        setPreview({
+          subject: data.subject,
+          body: data.body,
+          bodyFormat: data.bodyFormat ?? stepBodyFormat,
+          htmlPreview: data.htmlPreview,
+        })
       } else {
         const err = await res.json().catch(() => ({}))
         showPreviewHint(err.error || 'Preview failed', 'err')
@@ -137,6 +180,95 @@ export default function StepPreview({
     setLoadingPreview(false)
   }
 
+  function applyPreview(data: PreviewContent) {
+    setPreview({
+      subject: data.subject,
+      body: data.body,
+      bodyFormat: data.bodyFormat ?? stepBodyFormat,
+      htmlPreview: data.htmlPreview ?? buildPreviewHtml(data.body, data.bodyFormat ?? stepBodyFormat),
+    })
+  }
+
+  function markPreviewEdited(next: PreviewContent) {
+    setPreview(next)
+    if (selectedLeadId) {
+      setGeneratedOverrides((prev) => {
+        const rest = prev.filter((o) => o.leadId !== selectedLeadId)
+        return [...rest, { leadId: selectedLeadId, subject: next.subject, body: next.body }]
+      })
+    }
+  }
+
+  function insertMergeTag(tag: string) {
+    const token = `{{${tag}}}`
+    const active = document.activeElement
+    if (active === subjectRef.current && subjectRef.current) {
+      const el = subjectRef.current
+      const start = el.selectionStart ?? el.value.length
+      const end = el.selectionEnd ?? start
+      const nextSubject = el.value.slice(0, start) + token + el.value.slice(end)
+      markPreviewEdited({
+        ...(preview || { subject: '', body: '', bodyFormat: stepBodyFormat }),
+        subject: nextSubject,
+      })
+      return
+    }
+    if (active === bodyRef.current && bodyRef.current) {
+      const el = bodyRef.current
+      const start = el.selectionStart ?? el.value.length
+      const end = el.selectionEnd ?? start
+      const nextBody = el.value.slice(0, start) + token + el.value.slice(end)
+      markPreviewEdited({
+        ...(preview || { subject: '', body: '', bodyFormat: stepBodyFormat }),
+        body: nextBody,
+        htmlPreview: buildPreviewHtml(nextBody, preview?.bodyFormat ?? stepBodyFormat),
+      })
+    }
+  }
+
+  async function saveCurrentPreview() {
+    if (!selectedLeadId || !preview) return
+    const ok = await saveOverrideBatch(
+      [{ leadId: selectedLeadId, subject: preview.subject, body: preview.body }],
+      false
+    )
+    if (ok) {
+      setGeneratedOverrides((prev) => prev.filter((o) => o.leadId !== selectedLeadId))
+      showPreviewHint('Saved', 'ok')
+    }
+  }
+
+  async function sendTestEmail() {
+    if (!preview) return
+    const to = testSendTo.trim()
+    if (!to.includes('@')) return
+
+    setTestSendLoading(true)
+    setTestSendSent(false)
+
+    try {
+      const res = await fetch('/api/preview/send-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toEmail: to,
+          subject: preview.subject,
+          body: preview.body,
+          bodyFormat: preview.bodyFormat ?? stepBodyFormat,
+        }),
+      })
+      if (!res.ok) return
+
+      setTestSendSent(true)
+      if (testSendSentTimerRef.current) clearTimeout(testSendSentTimerRef.current)
+      testSendSentTimerRef.current = setTimeout(() => setTestSendSent(false), 2500)
+    } catch {
+      /* ignore */
+    } finally {
+      setTestSendLoading(false)
+    }
+  }
+
   async function generateMerge() {
     if (!selectedLeadId || !previewCampaignId) return
     setLoadingPreview(true)
@@ -144,8 +276,7 @@ export default function StepPreview({
     try {
       const res = await fetch(`/api/preview?leadId=${selectedLeadId}&campaignId=${previewCampaignId}&stepOrder=${stepOrder}&useAi=false`)
       if (res.ok) {
-        const data = await res.json()
-        setPreview(data)
+        applyPreview(await res.json())
       }
     } catch (e) {
       showPreviewHint('Preview failed', 'err')
@@ -165,7 +296,7 @@ export default function StepPreview({
       })
       if (res.ok) {
         const data = await res.json()
-        setPreview(data)
+        applyPreview(data)
         setGeneratedOverrides((prev) => [...prev, { leadId: selectedLeadId, ...data }])
       } else {
         const err = await res.json().catch(() => ({}))
@@ -540,20 +671,148 @@ export default function StepPreview({
           </div>
 
           {preview && (
-            <div className="preview-content">
-              {looksLikeRawPitchMerge(preview.body) && (
+            <div className="preview-content email-write-panel">
+              {looksLikeRawPitchMerge(preview.body) && stepBodyFormat === 'plain' && (
                 <p className="field-hint inline-hint inline-hint--warn" style={{ marginBottom: '0.65rem' }}>
                   This looks like a template merge (raw pitch block), not AI. Click <strong>AI</strong> or run{' '}
                   <strong>Regenerate all AI</strong> for Step {stepOrder}.
                 </p>
               )}
-              <div className="field preview-subject-field">
-                <label className="mini-label">Subject</label>
-                <div className="preview-box">{preview.subject}</div>
+
+              <div className="email-write-vars">
+                <span className="mini-label">Variables</span>
+                <div className="tags-list">
+                  {MERGE_TAGS.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="tag-chip"
+                      onClick={() => insertMergeTag(tag)}
+                    >
+                      {`{{${tag}}}`}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <div className="email-editor-tabs preview-editor-tabs">
+                <button
+                  type="button"
+                  className={`email-editor-tab ${editorTab === 'simple' ? 'is-active' : ''}`}
+                  onClick={() => setEditorTab('simple')}
+                >
+                  Simple
+                </button>
+                <button
+                  type="button"
+                  className={`email-editor-tab ${editorTab === 'html' ? 'is-active' : ''}`}
+                  onClick={() => setEditorTab('html')}
+                >
+                  HTML
+                </button>
+                <button
+                  type="button"
+                  className={`email-editor-tab ${editorTab === 'inbox' ? 'is-active' : ''}`}
+                  onClick={() => setEditorTab('inbox')}
+                >
+                  Preview
+                </button>
+              </div>
+
+              {editorTab !== 'inbox' && (
+                <div className="field preview-subject-field">
+                  <label className="mini-label">Subject</label>
+                  <input
+                    ref={subjectRef}
+                    type="text"
+                    className="input"
+                    value={preview.subject}
+                    onChange={(e) =>
+                      markPreviewEdited({ ...preview, subject: e.target.value })
+                    }
+                    placeholder="Quick question, {{first_name}}"
+                  />
+                </div>
+              )}
+
               <div className="field preview-body-field">
-                <label className="mini-label">Body</label>
-                <div className="preview-box preview-body">{preview.body}</div>
+                {editorTab === 'simple' && (
+                  <textarea
+                    ref={bodyRef}
+                    className="input textarea email-body-editor"
+                    rows={12}
+                    value={preview.body}
+                    onChange={(e) =>
+                      markPreviewEdited({
+                        ...preview,
+                        body: e.target.value,
+                        htmlPreview: buildPreviewHtml(e.target.value, preview.bodyFormat ?? stepBodyFormat),
+                      })
+                    }
+                    placeholder="Hi {{first_name}}, ..."
+                  />
+                )}
+
+                {editorTab === 'html' && (
+                  <textarea
+                    ref={bodyRef}
+                    className="input textarea email-body-editor email-body-editor--html"
+                    rows={12}
+                    spellCheck={false}
+                    value={preview.body}
+                    onChange={(e) =>
+                      markPreviewEdited({
+                        ...preview,
+                        body: e.target.value,
+                        htmlPreview: buildPreviewHtml(e.target.value, 'html'),
+                      })
+                    }
+                    placeholder="<p>Hi {{first_name}},</p>"
+                  />
+                )}
+
+                {editorTab === 'inbox' && (
+                  <div className="preview-inbox-wrap">
+                    <EmailInboxPreview
+                      subject={preview.subject}
+                      body={preview.body}
+                      bodyFormat={preview.bodyFormat ?? stepBodyFormat}
+                      htmlPreview={preview.htmlPreview}
+                      fromEmail={senderFrom.email}
+                      fromName={senderFrom.name}
+                      toName={[selectedLead?.firstName, selectedLead?.lastName].filter(Boolean).join(' ')}
+                      toEmail={selectedLead?.email}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="preview-editor-actions">
+                <div className="preview-editor-actions-send">
+                  <input
+                    type="email"
+                    className="input step-item-preview-send-input"
+                    placeholder="Send test to…"
+                    value={testSendTo}
+                    onChange={(e) => setTestSendTo(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={!preview.subject.trim() || !preview.body.trim() || testSendLoading || bulkGenerating}
+                    onClick={() => void sendTestEmail()}
+                  >
+                    {testSendLoading ? 'Sending…' : testSendSent ? 'Sent' : 'Send test'}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={saveCurrentPreview}
+                  disabled={!selectedLeadId || bulkGenerating}
+                >
+                  Save this lead
+                </button>
               </div>
             </div>
           )}

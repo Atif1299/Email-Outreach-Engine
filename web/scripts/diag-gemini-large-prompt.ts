@@ -12,11 +12,11 @@ async function main() {
   const model = settings!.geminiModel || 'gemini-2.5-flash'
 
   const system = fs.readFileSync(
-    path.join(process.cwd(), 'prompts/cold_outreach/body_system.md'),
+    path.join(process.cwd(), 'prompts/cold_outreach/email_combined_system.md'),
     'utf8'
   )
   const user = fs.readFileSync(
-    path.join(process.cwd(), 'prompts/cold_outreach/body_user.md'),
+    path.join(process.cwd(), 'prompts/cold_outreach/email_combined_user.md'),
     'utf8'
   )
   // pad to simulate real prompt size

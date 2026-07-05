@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/db'
+import { withDbRetry } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const batches = await prisma.importBatch.findMany({
-      include: {
-        _count: {
-          select: { leads: true }
-        }
-      },
-      orderBy: { id: 'desc' }
-    })
+    const batches = await withDbRetry((db) =>
+      db.importBatch.findMany({
+        include: {
+          _count: {
+            select: { leads: true },
+          },
+        },
+        orderBy: { id: 'desc' },
+      })
+    )
 
     return NextResponse.json(batches.map(b => ({
       id: b.id,

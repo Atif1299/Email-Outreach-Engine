@@ -21,6 +21,24 @@ function dbErrorResponse(error: unknown, action: string) {
       { status: 503 }
     )
   }
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2024') {
+    return NextResponse.json(
+      {
+        error:
+          'Database connection pool busy. Refresh the page — the request will retry automatically.',
+      },
+      { status: 503 }
+    )
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P1017') {
+    return NextResponse.json(
+      {
+        error:
+          'Database connection was closed (idle timeout). Refresh the page — the app will reconnect automatically.',
+      },
+      { status: 503 }
+    )
+  }
   console.error(`Failed to ${action}:`, error)
   return NextResponse.json({ error: `Failed to ${action}` }, { status: 500 })
 }

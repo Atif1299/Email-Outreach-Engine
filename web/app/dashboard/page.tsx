@@ -78,10 +78,7 @@ export interface Campaign {
   pitchBlock: string
   senderInfo: string
   aiVoice: string
-  aiInstructions: string
   outputLanguage: string
-  fewShotStep1: string[]
-  fewShotStep2: string[]
   createdAt: string
   targetImportBatchIds: number[]
   steps: CampaignStep[]
@@ -94,6 +91,7 @@ export interface CampaignStep {
   subjectTemplate: string
   bodyTemplate: string
   useAi: boolean
+  bodyFormat?: 'plain' | 'html'
 }
 
 export interface QueueStatus {
@@ -134,7 +132,7 @@ export interface QueueStatus {
   } | null
 }
 
-const STEPS = [
+const NAV_STEPS = [
   { id: 0, icon: '⚙', label: 'Connect' },
   { id: 1, icon: '1', label: 'Import' },
   { id: 2, icon: '2', label: 'Leads' },
@@ -142,7 +140,7 @@ const STEPS = [
   { id: 4, icon: '4', label: 'Preview' },
   { id: 5, icon: '5', label: 'Queue' },
   { id: 6, icon: '6', label: 'Replies' },
-]
+] as const
 
 export default function DashboardPage() {
   const [currentStep, setCurrentStep] = useState(0)
@@ -285,6 +283,19 @@ export default function DashboardPage() {
               <p className="app-tagline">Import, personalize, and send cold emails</p>
             </div>
           </div>
+          <nav className="steps steps--titlebar" aria-label="Dashboard steps">
+            {NAV_STEPS.map((step) => (
+              <button
+                key={step.id}
+                type="button"
+                className={`step ${currentStep === step.id ? 'is-active' : ''}`}
+                onClick={() => setCurrentStep(step.id)}
+              >
+                <span className="step-num">{step.icon}</span>
+                <span className="step-text">{step.label}</span>
+              </button>
+            ))}
+          </nav>
           <div className="titlebar-right">
             <a
               href="/"
@@ -299,21 +310,6 @@ export default function DashboardPage() {
         {/* Main Work Area */}
         <main className="workarea">
           <div className="stepper">
-            {/* Step Navigation */}
-            <nav className="steps" aria-label="Steps">
-              {STEPS.map((step) => (
-                <button
-                  key={step.id}
-                  type="button"
-                  className={`step ${currentStep === step.id ? 'is-active' : ''}`}
-                  onClick={() => setCurrentStep(step.id)}
-                >
-                  <span className="step-num">{step.icon}</span>
-                  <span className="step-text">{step.label}</span>
-                </button>
-              ))}
-            </nav>
-
             {/* Step Content */}
             {currentStep === 0 && (
               <StepConnect

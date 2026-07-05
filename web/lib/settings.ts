@@ -1,4 +1,4 @@
-import prisma from '@/lib/db'
+import { withDbRetry } from '@/lib/db'
 
 export interface PublicSettings {
   smtpHost: string
@@ -30,11 +30,13 @@ export interface PublicSettings {
 }
 
 export async function ensureSettings() {
-  let settings = await prisma.settings.findUnique({ where: { id: 1 } })
-  if (!settings) {
-    settings = await prisma.settings.create({ data: { id: 1 } })
-  }
-  return settings
+  return withDbRetry(async (db) => {
+    let settings = await db.settings.findUnique({ where: { id: 1 } })
+    if (!settings) {
+      settings = await db.settings.create({ data: { id: 1 } })
+    }
+    return settings
+  })
 }
 
 export function toPublicSettings(

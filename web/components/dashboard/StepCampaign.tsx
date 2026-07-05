@@ -3,13 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { Campaign, CampaignStep, Batch } from '@/app/dashboard/page'
 import { OUTPUT_LANGUAGES } from '@/lib/output-languages'
-import {
-  PITCH_FIELDS,
-  countFilledPitchFields,
-  fieldsFromPitchBlock,
-  serializePitchBlock,
-  type PitchFieldKey,
-} from '@/lib/pitch-block'
+import { BRIEF_PLACEHOLDER } from '@/lib/pitch-block'
+import { mergeTags } from '@/lib/merge-tags'
+import { buildPreviewHtml, normalizeBodyFormat, resolvePreviewBodyFormat } from '@/lib/email-html'
+import EmailInboxPreview from '@/components/dashboard/EmailInboxPreview'
 import { InlineHint, useButtonFlash, useInlineHint } from '@/components/dashboard/useStepFeedback'
 
 interface Props {
@@ -22,53 +19,106 @@ interface Props {
   onNextStep: () => void
 }
 
-const DEFAULT_STEP1_SUBJECT = '{{first_name}} — quick question for {{current_employer}}'
-const DEFAULT_STEP1_BODY = `Hi {{first_name}},
+const MIN_BRIEF_LENGTH = 40
 
-If outbound at {{current_employer}} is leaking replies, you're also leaking meetings. As {{current_title}}, that usually means pipeline and follow-up get messy fast.
+type StepViewTab = 'plain' | 'html' | 'preview'
 
-{{pitch_block}}
+interface PreviewLeadSource {
+  id?: number
+  data: Record<string, string>
+  email: string
+  label: string
+  isSample: boolean
+}
 
-Worth a quick look — or not a priority right now?
+interface StepAiPreview {
+  subject: string
+  body: string
+  bodyFormat: 'plain' | 'html'
+  htmlPreview: string
+}
 
-{{sender_info}}`
+const SAMPLE_LEAD: PreviewLeadSource = {
+  email: 'john@example.com',
+  data: {
+    first_name: 'John',
+    last_name: 'Doe',
+    current_employer: 'Acme Corp',
+    current_title: 'CEO',
+    industry: 'Technology',
+    location: 'New York',
+  },
+  label: 'John Doe',
+  isSample: true,
+}
 
-const DEFAULT_STEP2_SUBJECT = 'Re: {{first_name}} — {{current_employer}}'
-const DEFAULT_STEP2_BODY = `Hi {{first_name}},
+function getStepViewTab(
+  stepIndex: number,
+  step: CampaignStep,
+  stepViewTab: Record<number, StepViewTab>
+): StepViewTab {
+  return stepViewTab[stepIndex] ?? ((step.bodyFormat || 'plain') === 'html' ? 'html' : 'plain')
+}
 
-Following up on my note to {{current_employer}} — one pattern I see for {{current_title}} teams in {{industry}}:
+function buildStepAiPreviewCacheKey(
+  step: CampaignStep,
+  draft: Campaign,
+  previewLeadId: number,
+  priorSteps?: Array<{ stepOrder: number; subject: string; body: string }>
+): string {
+  const priorPart =
+    priorSteps?.map((p) => `${p.stepOrder}::${p.subject}::${p.body}`).join('||') ?? ''
+  return [
+    previewLeadId,
+    draft.id,
+    step.stepOrder,
+    step.useAi,
+    step.subjectTemplate,
+    step.bodyTemplate,
+    step.bodyFormat || 'plain',
+    draft.pitchBlock,
+    draft.outputLanguage,
+    priorPart,
+  ].join(':::')
+}
 
-[One insight, benchmark, or consequence tied to step 1's pain — something useful even without a call]
+function buildPriorStepsFromPreviews(
+  steps: CampaignStep[],
+  previews: Record<number, StepAiPreview | null>,
+  upToIndex: number
+): Array<{ stepOrder: number; subject: string; body: string }> {
+  const out: Array<{ stepOrder: number; subject: string; body: string }> = []
+  for (let j = 0; j < upToIndex; j++) {
+    const preview = previews[j]
+    if (!preview) continue
+    out.push({
+      stepOrder: steps[j].stepOrder,
+      subject: preview.subject,
+      body: preview.body,
+    })
+  }
+  return out
+}
 
-[Optional one-sentence bridge to your solution from the pitch block]
-
-Want me to send the benchmark — or skip for now?
-
-{{sender_info}}`
-
-const DEFAULT_STEP3_SUBJECT = 'Re: {{first_name}} — {{current_employer}}'
-const DEFAULT_STEP3_BODY = `Hi {{first_name}},
-
-Totally understand if timing's off — [one specific pain/workflow from step 1 or 2] at {{current_employer}} is what I had in mind when I wrote last week.
-
-If [offer from pitch — plain language, e.g. a short workflow review] is still useful for your team, I'm happy to run it — otherwise I'll close this out on my side, no worries.
-
-{{sender_info}}`
-
-const DEFAULT_AI_INSTRUCTIONS =
-  'Peer tone, no buzzwords. One question max per email. Never say "hope this finds you well" or "just circling back". Name the lead company or industry in every email.'
-
-const DEFAULT_PITCH_BLOCK = `Product: 
-For: 
-Pain: 
-Solution: 
-Integrations/channels: 
-Offer/CTA: 
-Proof (optional): `
-
-const DEFAULT_SENDER_SIGNOFF = `Best,
-Your Name
-Your Company`
+function buildMergedStepPreview(
+  step: CampaignStep,
+  draft: Campaign,
+  lead: PreviewLeadSource
+) {
+  const pitch = draft.pitchBlock.trim()
+  const sender = draft.senderInfo?.trim() || ''
+  const bodyFormat = normalizeBodyFormat(step.bodyFormat)
+  const leadData = { ...lead.data, email: lead.email }
+  const mergedSubject = mergeTags(step.subjectTemplate, leadData, pitch, sender)
+  const mergedBody = mergeTags(step.bodyTemplate, leadData, pitch, sender)
+  const effectiveFormat = resolvePreviewBodyFormat(mergedBody, bodyFormat)
+  return {
+    mergedSubject,
+    mergedBody,
+    htmlPreview: buildPreviewHtml(mergedBody, effectiveFormat),
+    bodyFormat: effectiveFormat,
+  }
+}
 
 function formatDate(iso: string) {
   const d = new Date(iso)
@@ -80,11 +130,13 @@ function AutoResizeTextarea({
   onChange,
   className = 'input textarea textarea--fit',
   placeholder,
+  rows,
 }: {
   value: string
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   className?: string
   placeholder?: string
+  rows?: number
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -104,6 +156,7 @@ function AutoResizeTextarea({
       ref={ref}
       className={className}
       placeholder={placeholder}
+      rows={rows}
       value={value}
       onChange={(e) => {
         onChange(e)
@@ -113,38 +166,42 @@ function AutoResizeTextarea({
   )
 }
 
-function stepRoleLabel(stepOrder: number): string {
-  if (stepOrder <= 1) return 'Observation'
-  if (stepOrder === 2) return 'Insight / proof'
-  return 'Close loop'
+function stepLabel(stepOrder: number): string {
+  if (stepOrder <= 1) return 'Email 1'
+  return `Follow-up ${stepOrder - 1}`
 }
 
 function defaultStep(stepOrder: number): CampaignStep {
-  if (stepOrder <= 1) {
-    return {
-      stepOrder: 1,
-      delayHoursAfterPrevious: 0,
-      subjectTemplate: DEFAULT_STEP1_SUBJECT,
-      bodyTemplate: DEFAULT_STEP1_BODY,
-      useAi: true,
-    }
-  }
-  if (stepOrder === 2) {
-    return {
-      stepOrder: 2,
-      delayHoursAfterPrevious: 72,
-      subjectTemplate: DEFAULT_STEP2_SUBJECT,
-      bodyTemplate: DEFAULT_STEP2_BODY,
-      useAi: true,
-    }
-  }
   return {
     stepOrder,
-    delayHoursAfterPrevious: 72,
-    subjectTemplate: DEFAULT_STEP3_SUBJECT,
-    bodyTemplate: DEFAULT_STEP3_BODY,
+    delayHoursAfterPrevious: stepOrder <= 1 ? 0 : 72,
+    subjectTemplate: '',
+    bodyTemplate: '',
     useAi: true,
+    bodyFormat: 'plain',
   }
+}
+
+function prepareDraftForSave(draft: Campaign): Campaign {
+  const pitchBlock = draft.pitchBlock.trim()
+  return {
+    ...draft,
+    pitchBlock,
+  }
+}
+
+function validateDraft(draft: Campaign): string | null {
+  if (draft.pitchBlock.trim().length < MIN_BRIEF_LENGTH) {
+    return `Campaign brief needs at least ${MIN_BRIEF_LENGTH} characters`
+  }
+  for (const step of draft.steps) {
+    if (!step.useAi) {
+      if (!step.subjectTemplate.trim() || !step.bodyTemplate.trim()) {
+        return `Step ${step.stepOrder} needs subject and body templates when AI is off`
+      }
+    }
+  }
+  return null
 }
 
 export default function StepCampaign({
@@ -156,35 +213,361 @@ export default function StepCampaign({
   onCampaignsChanged,
   onNextStep,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'sequences' | 'examples'>('overview')
+  const [activeTab, setActiveTab] = useState<'brief' | 'sequence'>('brief')
   const [draft, setDraft] = useState<Campaign | null>(null)
   const [saving, setSaving] = useState(false)
   const [suggestingPitch, setSuggestingPitch] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [stepViewTab, setStepViewTab] = useState<Record<number, StepViewTab>>({})
+  const [previewLead, setPreviewLead] = useState<PreviewLeadSource | null>(null)
+  const [senderFrom, setSenderFrom] = useState({ email: 'sender@example.com', name: 'Sender' })
+  const [aiPreviews, setAiPreviews] = useState<Record<number, StepAiPreview | null>>({})
+  const [aiPreviewLoading, setAiPreviewLoading] = useState<Record<number, boolean>>({})
+  const [aiPreviewError, setAiPreviewError] = useState<Record<number, string>>({})
+  const [previewAllLoading, setPreviewAllLoading] = useState(false)
+  const [testSendTo, setTestSendTo] = useState('')
+  const [testSendLoading, setTestSendLoading] = useState<Record<number, boolean>>({})
+  const [testSendSent, setTestSendSent] = useState<Record<number, boolean>>({})
+  const testSendSentTimerRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
   const saveFlash = useButtonFlash()
-  const { hint: pitchHint, showHint: showPitchHint } = useInlineHint()
+  const { hint: briefHint, showHint: showBriefHint } = useInlineHint()
   const { hint: listHint, showHint: showListHint } = useInlineHint()
   const savedOutputLanguageRef = useRef<string | null>(null)
+  const skipNextLoadRef = useRef(false)
+  const aiPreviewCacheRef = useRef<Record<number, string>>({})
+  const aiPreviewsRef = useRef<Record<number, StepAiPreview | null>>({})
+  const previewAbortRef = useRef<Record<number, AbortController>>({})
+  const draftRef = useRef<Campaign | null>(null)
+  const previewLeadRef = useRef<PreviewLeadSource | null>(null)
+
+  useEffect(() => {
+    aiPreviewsRef.current = aiPreviews
+  }, [aiPreviews])
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
+
+  useEffect(() => {
+    previewLeadRef.current = previewLead
+  }, [previewLead])
 
   const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId)
 
   useEffect(() => {
     if (selectedCampaignId) {
+      if (skipNextLoadRef.current) {
+        skipNextLoadRef.current = false
+        return
+      }
       loadCampaign(selectedCampaignId)
     } else {
       setDraft(null)
     }
   }, [selectedCampaignId])
 
+  useEffect(() => {
+    fetch('/api/settings')
+      .then((res) => res.json())
+      .then((settings) => {
+        const firstSmtp = settings.smtpAccounts?.[0]
+        setSenderFrom({
+          email: firstSmtp?.email || 'sender@example.com',
+          name: settings.smtpFromName || firstSmtp?.label || 'Sender',
+        })
+      })
+      .catch(() => { })
+  }, [])
+
+  useEffect(() => {
+    if (activeTab !== 'sequence' || !draft) return
+
+    const batchId = draft.targetImportBatchIds[0] || leadsBatchFilter
+    const controller = new AbortController()
+
+      ; (async () => {
+        try {
+          const params = new URLSearchParams()
+          if (batchId) params.set('batchId', String(batchId))
+          const res = await fetch(`/api/leads?${params}`, { signal: controller.signal })
+          if (!res.ok) {
+            setPreviewLead(SAMPLE_LEAD)
+            return
+          }
+          const leads = await res.json()
+          if (!Array.isArray(leads) || leads.length === 0) {
+            setPreviewLead(SAMPLE_LEAD)
+            return
+          }
+          const sorted = [...leads].sort((a: { id: number }, b: { id: number }) => a.id - b.id)
+          const first = sorted[0]
+          const data = (first.data || {}) as Record<string, string>
+          setPreviewLead({
+            id: first.id,
+            data,
+            email: first.email || '',
+            label: [data.first_name, data.last_name].filter(Boolean).join(' ') || first.email || 'Lead',
+            isSample: false,
+          })
+        } catch (e) {
+          if ((e as Error).name !== 'AbortError') {
+            setPreviewLead(SAMPLE_LEAD)
+          }
+        }
+      })()
+
+    return () => controller.abort()
+  }, [activeTab, draft?.targetImportBatchIds, leadsBatchFilter])
+
+  const previewInFlightRef = useRef<Record<number, Promise<void>>>({})
+
+  const fetchStepPreview = useCallback(async (stepIndex: number, options?: { force?: boolean }) => {
+    const inFlight = previewInFlightRef.current[stepIndex]
+    if (inFlight && !options?.force) {
+      return inFlight
+    }
+
+    const run = (async () => {
+      try {
+        const currentDraft = draftRef.current
+        const lead = previewLeadRef.current
+        if (!currentDraft || !lead?.id || lead.isSample) return
+
+        const step = currentDraft.steps[stepIndex]
+        if (!step?.useAi) return
+
+        const priorSteps = buildPriorStepsFromPreviews(
+          currentDraft.steps,
+          aiPreviewsRef.current,
+          stepIndex
+        )
+
+        const cacheKey = buildStepAiPreviewCacheKey(step, currentDraft, lead.id, priorSteps)
+        if (
+          !options?.force &&
+          aiPreviewCacheRef.current[step.stepOrder] === cacheKey &&
+          aiPreviewsRef.current[stepIndex]
+        ) {
+          return
+        }
+
+        previewAbortRef.current[stepIndex]?.abort()
+        const controller = new AbortController()
+        previewAbortRef.current[stepIndex] = controller
+
+        setAiPreviewLoading((prev) => ({ ...prev, [stepIndex]: true }))
+        setAiPreviewError((prev) => ({ ...prev, [stepIndex]: '' }))
+
+        const pitch = currentDraft.pitchBlock.trim()
+        const res = await fetch('/api/preview/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            leadId: lead.id,
+            campaignId: currentDraft.id || undefined,
+            campaign: {
+              pitchBlock: pitch,
+              senderInfo: currentDraft.senderInfo?.trim() || '',
+              aiVoice: currentDraft.aiVoice,
+              outputLanguage: currentDraft.outputLanguage,
+            },
+            step: {
+              stepOrder: step.stepOrder,
+              subjectTemplate: step.subjectTemplate,
+              bodyTemplate: step.bodyTemplate,
+              useAi: step.useAi,
+              bodyFormat: step.bodyFormat,
+            },
+            priorSteps,
+          }),
+        })
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          setAiPreviewError((prev) => ({
+            ...prev,
+            [stepIndex]: (err as { error?: string }).error || 'AI preview failed',
+          }))
+          setAiPreviews((prev) => ({ ...prev, [stepIndex]: null }))
+          return
+        }
+
+        const data = await res.json()
+        const previewFormat = resolvePreviewBodyFormat(
+          data.body || '',
+          normalizeBodyFormat(data.bodyFormat ?? step.bodyFormat)
+        )
+        aiPreviewCacheRef.current[step.stepOrder] = cacheKey
+        const previewResult: StepAiPreview = {
+          subject: data.subject || '',
+          body: data.body || '',
+          bodyFormat: previewFormat,
+          htmlPreview:
+            data.htmlPreview || buildPreviewHtml(data.body || '', previewFormat),
+        }
+        aiPreviewsRef.current = { ...aiPreviewsRef.current, [stepIndex]: previewResult }
+        setAiPreviews((prev) => ({
+          ...prev,
+          [stepIndex]: previewResult,
+        }))
+
+        for (let j = stepIndex + 1; j < currentDraft.steps.length; j++) {
+          delete aiPreviewCacheRef.current[currentDraft.steps[j].stepOrder]
+        }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') {
+          return
+        }
+        setAiPreviewError((prev) => ({ ...prev, [stepIndex]: 'AI preview failed' }))
+        setAiPreviews((prev) => ({ ...prev, [stepIndex]: null }))
+      } finally {
+        setAiPreviewLoading((prev) => ({ ...prev, [stepIndex]: false }))
+        delete previewInFlightRef.current[stepIndex]
+      }
+    })()
+
+    previewInFlightRef.current[stepIndex] = run
+    return run
+  }, [])
+
+  const ensureStepPreviewChain = useCallback(
+    async (stepIndex: number, options?: { force?: boolean }) => {
+      const currentDraft = draftRef.current
+      if (!currentDraft) return
+
+      for (let j = 0; j < stepIndex; j++) {
+        if (currentDraft.steps[j]?.useAi && !aiPreviewsRef.current[j]) {
+          await fetchStepPreview(j)
+        }
+      }
+      await fetchStepPreview(stepIndex, options)
+    },
+    [fetchStepPreview]
+  )
+
+  const previewAllSteps = useCallback(async () => {
+    const currentDraft = draftRef.current
+    const lead = previewLeadRef.current
+    if (!currentDraft || !lead?.id || lead.isSample) return
+
+    for (let i = 0; i < currentDraft.steps.length; i++) {
+      if (currentDraft.steps[i].useAi) {
+        await fetchStepPreview(i, { force: true })
+      }
+    }
+  }, [fetchStepPreview])
+
+  const sendStepTestEmail = useCallback(
+    async (
+      stepIndex: number,
+      preview: { subject: string; body: string; bodyFormat: 'plain' | 'html' }
+    ) => {
+      const to = testSendTo.trim()
+      if (!to.includes('@')) return
+
+      setTestSendLoading((prev) => ({ ...prev, [stepIndex]: true }))
+      setTestSendSent((prev) => ({ ...prev, [stepIndex]: false }))
+
+      try {
+        const res = await fetch('/api/preview/send-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            toEmail: to,
+            subject: preview.subject,
+            body: preview.body,
+            bodyFormat: preview.bodyFormat,
+          }),
+        })
+        if (!res.ok) return
+
+        setTestSendSent((prev) => ({ ...prev, [stepIndex]: true }))
+        const existing = testSendSentTimerRef.current[stepIndex]
+        if (existing) clearTimeout(existing)
+        testSendSentTimerRef.current[stepIndex] = setTimeout(() => {
+          setTestSendSent((prev) => ({ ...prev, [stepIndex]: false }))
+        }, 2500)
+      } catch {
+        /* ignore */
+      } finally {
+        setTestSendLoading((prev) => ({ ...prev, [stepIndex]: false }))
+      }
+    },
+    [testSendTo]
+  )
+
+  const renderPreviewFooter = (
+    stepIndex: number,
+    hint: React.ReactNode,
+    preview: { subject: string; body: string; bodyFormat: 'plain' | 'html' }
+  ) => (
+    <div className="step-item-preview-footer">
+      <p className="step-item-preview-hint">{hint}</p>
+      <div className="step-item-preview-send-test">
+        <input
+          type="email"
+          className="input step-item-preview-send-input"
+          placeholder="Send test to…"
+          value={testSendTo}
+          onChange={(e) => setTestSendTo(e.target.value)}
+        />
+        <button
+          type="button"
+          className="btn btn-outline btn-sm"
+          disabled={!!testSendLoading[stepIndex]}
+          onClick={() => void sendStepTestEmail(stepIndex, preview)}
+        >
+          {testSendLoading[stepIndex]
+            ? 'Sending…'
+            : testSendSent[stepIndex]
+              ? 'Sent'
+              : 'Send test'}
+        </button>
+      </div>
+    </div>
+  )
+
+  const stepsPreviewSignature = (draft?.steps ?? [])
+    .map(
+      (s) =>
+        `${s.stepOrder}:${s.useAi}:${s.subjectTemplate}:${s.bodyTemplate}:${s.bodyFormat}:${draft?.pitchBlock}:${draft?.outputLanguage}`
+    )
+    .join('|')
+
+  useEffect(() => {
+    if (!draft || !previewLead?.id || previewLead.isSample || activeTab !== 'sequence') return
+
+    draft.steps.forEach((step, i) => {
+      const viewTab = getStepViewTab(i, step, stepViewTab)
+      if (viewTab === 'preview' && step.useAi) {
+        void ensureStepPreviewChain(i)
+      }
+    })
+  }, [
+    activeTab,
+    stepsPreviewSignature,
+    previewLead?.id,
+    previewLead?.isSample,
+    stepViewTab,
+    ensureStepPreviewChain,
+  ])
+
   async function loadCampaign(id: number) {
+    aiPreviewCacheRef.current = {}
+    setAiPreviews({})
+    setAiPreviewLoading({})
+    setAiPreviewError({})
     try {
       const res = await fetch(`/api/campaigns/${id}`)
       if (res.ok) {
         const data = await res.json()
         setDraft({
           ...data,
-          fewShotStep1: data.fewShotStep1 ?? [],
-          fewShotStep2: data.fewShotStep2 ?? [],
+          steps: (data.steps || []).map((s: CampaignStep) => ({
+            ...s,
+            bodyFormat: s.bodyFormat || 'plain',
+          })),
         })
         savedOutputLanguageRef.current = data.outputLanguage || 'en'
       }
@@ -198,23 +581,27 @@ export default function StepCampaign({
     setDraft({
       id: 0,
       name: 'New Campaign',
-      pitchBlock: DEFAULT_PITCH_BLOCK,
-      senderInfo: DEFAULT_SENDER_SIGNOFF,
+      pitchBlock: '',
+      senderInfo: '',
       aiVoice: 'founder',
-      aiInstructions: DEFAULT_AI_INSTRUCTIONS,
       outputLanguage: 'en',
-      fewShotStep1: [],
-      fewShotStep2: [],
       createdAt: new Date().toISOString(),
       targetImportBatchIds: leadsBatchFilter ? [leadsBatchFilter] : [],
       steps: [defaultStep(1)],
     })
-    setActiveTab('overview')
+    setActiveTab('brief')
   }
 
   async function saveCampaign() {
     if (!draft) return
+    const validationError = validateDraft(draft)
+    if (validationError) {
+      showBriefHint(validationError, 'warn')
+      return
+    }
+
     setSaving(true)
+    const payload = prepareDraftForSave(draft)
 
     try {
       const method = draft.id ? 'PUT' : 'POST'
@@ -222,27 +609,54 @@ export default function StepCampaign({
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         const saved = await res.json()
-        if (!draft.id) {
+        const leadId = previewLead?.id ?? 0
+        const isNewCampaign = !draft.id
+
+        const merged: Campaign = {
+          ...draft,
+          ...saved,
+          steps: (saved.steps || draft.steps).map((s: CampaignStep) => ({
+            ...s,
+            bodyFormat: s.bodyFormat || 'plain',
+          })),
+        }
+
+        for (const step of merged.steps) {
+          const idx = merged.steps.findIndex((s) => s.stepOrder === step.stepOrder)
+          const priorSteps = buildPriorStepsFromPreviews(
+            merged.steps,
+            aiPreviewsRef.current,
+            idx
+          )
+          const newKey = buildStepAiPreviewCacheKey(step, merged, leadId, priorSteps)
+          if (aiPreviewCacheRef.current[step.stepOrder] !== newKey) {
+            delete aiPreviewCacheRef.current[step.stepOrder]
+          }
+        }
+
+        if (isNewCampaign) {
+          skipNextLoadRef.current = true
           onSelectCampaign(saved.id)
         }
+
+        setDraft(merged)
         savedOutputLanguageRef.current = saved.outputLanguage || draft.outputLanguage || 'en'
         onCampaignsChanged()
         saveFlash.flashDone()
       } else {
         saveFlash.flashError()
       }
-    } catch (e) {
+    } catch {
       saveFlash.flashError()
     }
     setSaving(false)
   }
 
   async function deleteCampaign(id: number) {
-    const camp = campaigns.find(c => c.id === id)
     if (confirmDeleteId !== id) {
       setConfirmDeleteId(id)
       return
@@ -260,13 +674,13 @@ export default function StepCampaign({
       } else {
         showListHint('Delete failed', 'err')
       }
-    } catch (e) {
+    } catch {
       showListHint('Delete failed', 'err')
     }
     setConfirmDeleteId(null)
   }
 
-  async function suggestPitch() {
+  async function suggestBrief() {
     const batchId = draft?.targetImportBatchIds?.[0]
     if (!batchId) return
     setSuggestingPitch(true)
@@ -284,67 +698,14 @@ export default function StepCampaign({
       if (res.ok) {
         const result = await res.json()
         setDraft(prev => prev ? { ...prev, pitchBlock: result.pitchBlock } : null)
-        showPitchHint('Updated', 'ok')
+        showBriefHint('Brief updated', 'ok')
       } else {
-        showPitchHint('Failed', 'err')
+        showBriefHint('Failed', 'err')
       }
-    } catch (e) {
-      showPitchHint('Failed', 'err')
+    } catch {
+      showBriefHint('Failed', 'err')
     }
     setSuggestingPitch(false)
-  }
-
-  function updatePitchField(key: PitchFieldKey, value: string) {
-    if (!draft) return
-    const fields = fieldsFromPitchBlock(draft.pitchBlock)
-    fields[key] = value
-    setDraft({ ...draft, pitchBlock: serializePitchBlock(fields) })
-  }
-
-  function updateFewShot(step: 'fewShotStep1' | 'fewShotStep2', index: number, value: string) {
-    if (!draft) return
-    const list = [...draft[step]]
-    list[index] = value
-    setDraft({ ...draft, [step]: list })
-  }
-
-  function addFewShot(step: 'fewShotStep1' | 'fewShotStep2') {
-    if (!draft) return
-    setDraft({ ...draft, [step]: [...draft[step], ''] })
-  }
-
-  function removeFewShot(step: 'fewShotStep1' | 'fewShotStep2', index: number) {
-    if (!draft) return
-    setDraft({ ...draft, [step]: draft[step].filter((_, i) => i !== index) })
-  }
-
-  async function applyFewShotDefaults(step: 'step1' | 'step2' | 'both') {
-    if (!draft) return
-    try {
-      const res = await fetch('/api/campaigns/few-shot-defaults')
-      if (!res.ok) return
-      const data = await res.json()
-      if (step === 'step1') {
-        setDraft({ ...draft, fewShotStep1: data.step1 || [] })
-      } else if (step === 'step2') {
-        setDraft({ ...draft, fewShotStep2: data.step2 || [] })
-      } else {
-        setDraft({
-          ...draft,
-          fewShotStep1: data.step1 || [],
-          fewShotStep2: data.step2 || [],
-        })
-      }
-    } catch (e) {
-      console.error('Failed to load few-shot defaults:', e)
-    }
-  }
-
-  function clearFewShots(step: 'step1' | 'step2' | 'both') {
-    if (!draft) return
-    if (step === 'step1') setDraft({ ...draft, fewShotStep1: [] })
-    else if (step === 'step2') setDraft({ ...draft, fewShotStep2: [] })
-    else setDraft({ ...draft, fewShotStep1: [], fewShotStep2: [] })
   }
 
   function addStep() {
@@ -362,17 +723,22 @@ export default function StepCampaign({
     setDraft({ ...draft, steps: newSteps })
   }
 
-  function updateStep(index: number, field: keyof CampaignStep, value: any) {
+  function setStepView(index: number, tab: StepViewTab) {
+    setStepViewTab((prev) => ({ ...prev, [index]: tab }))
+  }
+
+  function updateStep(index: number, field: keyof CampaignStep, value: CampaignStep[keyof CampaignStep]) {
     if (!draft) return
     const newSteps = [...draft.steps]
     newSteps[index] = { ...newSteps[index], [field]: value }
     setDraft({ ...draft, steps: newSteps })
   }
 
+  const briefTooShort = (draft?.pitchBlock.trim().length ?? 0) < MIN_BRIEF_LENGTH
+
   return (
     <section className="step-view">
       <div className="step-body split">
-        {/* Campaign List */}
         <div className="queue">
           <div className="queue-head">
             <div className="queue-head-row">
@@ -417,7 +783,6 @@ export default function StepCampaign({
           </div>
         </div>
 
-        {/* Campaign Editor */}
         <div className="editor campaign-editor">
           <div className="editor-head">
             <div className="editor-head-row">
@@ -451,31 +816,22 @@ export default function StepCampaign({
                 <div className="campaign-tabs">
                   <button
                     type="button"
-                    className={`tab-btn ${activeTab === 'overview' ? 'is-active' : ''}`}
-                    onClick={() => setActiveTab('overview')}
+                    className={`tab-btn ${activeTab === 'brief' ? 'is-active' : ''}`}
+                    onClick={() => setActiveTab('brief')}
                   >
-                    Overview
+                    Brief
                   </button>
                   <button
                     type="button"
-                    className={`tab-btn ${activeTab === 'sequences' ? 'is-active' : ''}`}
-                    onClick={() => setActiveTab('sequences')}
+                    className={`tab-btn ${activeTab === 'sequence' ? 'is-active' : ''}`}
+                    onClick={() => setActiveTab('sequence')}
                   >
-                    Sequences
-                  </button>
-                  <button
-                    type="button"
-                    className={`tab-btn ${activeTab === 'examples' ? 'is-active' : ''}`}
-                    onClick={() => setActiveTab('examples')}
-                    title="AI style examples"
-                  >
-                    Examples
+                    Sequence
                   </button>
                 </div>
               </div>
 
-              {/* Overview Tab */}
-              {activeTab === 'overview' && (
+              {activeTab === 'brief' && (
                 <div className="tab-content">
                   <div className="campaign-overview-row">
                     <div className="field">
@@ -521,7 +877,7 @@ export default function StepCampaign({
                     </div>
                   </div>
                   <p className="field-hint" style={{ marginTop: '-0.35rem', marginBottom: '0.65rem' }}>
-                    Pitch in English; AI writes the email in the language you pick above.
+                    Write the brief in English; AI writes emails in the language above.
                     {draft.id > 0 &&
                       savedOutputLanguageRef.current != null &&
                       (draft.outputLanguage || 'en') !== savedOutputLanguageRef.current && (
@@ -532,207 +888,92 @@ export default function StepCampaign({
                   <div className="field field-grow">
                     <div className="pitch-block-head">
                       <label className="mini-label">
-                        Pitch Block
-                        <InlineHint hint={pitchHint} />
+                        Campaign brief
+                        <InlineHint hint={briefHint} />
                       </label>
                       <button
                         type="button"
                         className="btn btn-outline btn-sm"
                         disabled={!draft.targetImportBatchIds[0] || suggestingPitch}
-                        onClick={suggestPitch}
+                        onClick={suggestBrief}
                       >
                         {suggestingPitch ? 'Analyzing...' : 'Suggest from leads'}
                       </button>
                     </div>
-                    <div className="pitch-fields">
-                      {PITCH_FIELDS.map(({ key, label }) => (
-                        <div key={key} className="field pitch-field-row">
-                          <label className="mini-label">{label}</label>
-                          <AutoResizeTextarea
-                            value={fieldsFromPitchBlock(draft.pitchBlock)[key]}
-                            onChange={(e) => updatePitchField(key, e.target.value)}
-                            placeholder={`${label}...`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    {countFilledPitchFields(draft.pitchBlock) < 2 && (
+                    <AutoResizeTextarea
+                      value={draft.pitchBlock}
+                      onChange={(e) => setDraft({ ...draft, pitchBlock: e.target.value })}
+                      placeholder={BRIEF_PLACEHOLDER}
+                      rows={12}
+                    />
+                    {briefTooShort && (
                       <p className="field-hint inline-hint inline-hint--warn">
-                        Fill at least Pain and Solution so AI can personalize reliably.
+                        Add a brief description ({MIN_BRIEF_LENGTH}+ characters) so AI can personalize emails.
                       </p>
                     )}
                     <p className="field-hint">
-                      The AI extracts these blocks — plain labeled lines, not marketing fluff.
-                      Select a Target Batch to enable Suggest from leads.
+                      Include what you sell, who it&apos;s for, pain, offer, and tone. Put sign-off in each step template where it belongs. Select a target batch to use Suggest from leads.
                     </p>
                   </div>
 
-                  <div className="field field-grow">
-                    <label className="mini-label">AI Instructions (optional)</label>
-                    <textarea
-                      className="input textarea"
-                      rows={3}
-                      placeholder="Extra tone notes, words to avoid, CTA preference..."
-                      value={draft.aiInstructions}
-                      onChange={(e) => setDraft({ ...draft, aiInstructions: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="field field-grow">
-                    <label className="mini-label">Sender Sign-off</label>
-                    <textarea
-                      className="input textarea"
-                      placeholder={`Best,\nYour Name\nYour Company`}
-                      value={draft.senderInfo}
-                      onChange={(e) => setDraft({ ...draft, senderInfo: e.target.value })}
-                    />
-                  </div>
-
                   <div className="merge-tags">
-                    <div className="mini-label">Available Merge Tags</div>
+                    <div className="mini-label">Merge tags (manual templates only)</div>
                     <div className="tags-list">
                       <code>{'{{first_name}}'}</code>
-                      <code>{'{{last_name}}'}</code>
-                      <code>{'{{email}}'}</code>
                       <code>{'{{current_employer}}'}</code>
                       <code>{'{{current_title}}'}</code>
                       <code>{'{{industry}}'}</code>
-                      <code>{'{{location}}'}</code>
                       <code>{'{{pitch_block}}'}</code>
                       <code>{'{{sender_info}}'}</code>
+                      <code>{'{{sender_name}}'}</code>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* AI Examples Tab */}
-              {activeTab === 'examples' && (
-                <div className="tab-content">
-                  <p className="field-hint" style={{ marginBottom: '0.75rem' }}>
-                    Style guides for AI body generation — tone and structure only. Product and offer always come from the pitch block.
-                    Leave empty to use built-in defaults.
-                  </p>
-
-                  <div className="few-shot-section">
-                    <div className="few-shot-section-head">
-                      <div>
-                        <div className="mini-label">Step 1 examples</div>
-                        <p className="field-hint">
-                          {draft.fewShotStep1.length > 0
-                            ? `${draft.fewShotStep1.length} custom — one picked per lead`
-                            : 'Using built-in defaults'}
-                        </p>
-                      </div>
-                      <div className="few-shot-section-actions">
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => addFewShot('fewShotStep1')}>
-                          + Add
-                        </button>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => applyFewShotDefaults('step1')}>
-                          Load defaults
-                        </button>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => clearFewShots('step1')}>
-                          Use built-in
-                        </button>
-                      </div>
-                    </div>
-                    <div className="few-shot-list">
-                      {draft.fewShotStep1.length === 0 ? (
-                        <p className="field-hint">No custom examples — built-in files under prompts/cold_outreach/few_shot/step1/ are used.</p>
-                      ) : (
-                        draft.fewShotStep1.map((example, i) => (
-                          <div key={`s1-${i}`} className="few-shot-item">
-                            <div className="few-shot-item-head">
-                              <span className="few-shot-item-label">Example {i + 1}</span>
-                              <button type="button" className="btn-delete-item" onClick={() => removeFewShot('fewShotStep1', i)} title="Remove">
-                                🗑
-                              </button>
-                            </div>
-                            <AutoResizeTextarea
-                              value={example}
-                              onChange={(e) => updateFewShot('fewShotStep1', i, e.target.value)}
-                              placeholder="Hi {first_name}, ..."
-                            />
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="few-shot-section">
-                    <div className="few-shot-section-head">
-                      <div>
-                        <div className="mini-label">Follow-up examples (step 2+)</div>
-                        <p className="field-hint">
-                          {draft.fewShotStep2.length > 0
-                            ? `${draft.fewShotStep2.length} custom — one picked per lead`
-                            : 'Using built-in defaults'}
-                        </p>
-                      </div>
-                      <div className="few-shot-section-actions">
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => addFewShot('fewShotStep2')}>
-                          + Add
-                        </button>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => applyFewShotDefaults('step2')}>
-                          Load defaults
-                        </button>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => clearFewShots('step2')}>
-                          Use built-in
-                        </button>
-                      </div>
-                    </div>
-                    <div className="few-shot-list">
-                      {draft.fewShotStep2.length === 0 ? (
-                        <p className="field-hint">No custom examples — built-in files under prompts/cold_outreach/few_shot/step2/ are used.</p>
-                      ) : (
-                        draft.fewShotStep2.map((example, i) => (
-                          <div key={`s2-${i}`} className="few-shot-item">
-                            <div className="few-shot-item-head">
-                              <span className="few-shot-item-label">Example {i + 1}</span>
-                              <button type="button" className="btn-delete-item" onClick={() => removeFewShot('fewShotStep2', i)} title="Remove">
-                                🗑
-                              </button>
-                            </div>
-                            <AutoResizeTextarea
-                              value={example}
-                              onChange={(e) => updateFewShot('fewShotStep2', i, e.target.value)}
-                              placeholder="Hi {first_name}, ..."
-                            />
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Sequences Tab */}
-              {activeTab === 'sequences' && (
+              {activeTab === 'sequence' && (
                 <div className="tab-content">
                   <div className="sequences-header">
                     <div>
-                      <div className="mini-label">Email Sequence</div>
+                      <div className="mini-label">Email sequence</div>
                       <p className="field-hint">
-                        Templates use merge tags — AI rewrites from this structure; Merge-only sends as-is.
+                        AI on: merges your templates and fills missing lead fields. AI off: manual merge only.
                       </p>
                     </div>
-                    <button type="button" className="btn btn-outline btn-sm" onClick={addStep}>
-                      + Add Step
-                    </button>
+                    <div className="sequences-header-actions">
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        disabled={previewAllLoading || previewLead?.isSample !== false}
+                        onClick={async () => {
+                          setPreviewAllLoading(true)
+                          try {
+                            await previewAllSteps()
+                          } finally {
+                            setPreviewAllLoading(false)
+                          }
+                        }}
+                      >
+                        {previewAllLoading ? 'Previewing…' : 'Preview all steps'}
+                      </button>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={addStep}>
+                        + Add follow-up
+                      </button>
+                    </div>
                   </div>
 
                   <div className="steps-list">
-                    {draft.steps.map((step, i) => (
-                      <div key={i} className="step-item">
-                        <div className="step-item-head">
-                          <span className="step-item-title">Step {step.stepOrder} · {stepRoleLabel(step.stepOrder)}</span>
-                          <div className="step-item-controls">
-                            <label style={{ fontSize: '0.72rem', color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                              <input
-                                type="checkbox"
-                                checked={step.useAi}
-                                onChange={(e) => updateStep(i, 'useAi', e.target.checked)}
-                              /> AI
-                            </label>
+                    {draft.steps.map((step, i) => {
+                      const viewTab = getStepViewTab(i, step, stepViewTab)
+                      const mergedPreview =
+                        previewLead && draft
+                          ? buildMergedStepPreview(step, draft, previewLead)
+                          : null
+
+                      return (
+                        <div key={i} className="step-item">
+                          <div className="step-item-head">
+                            <span className="step-item-title">{stepLabel(step.stepOrder)}</span>
                             {i > 0 && (
                               <button
                                 type="button"
@@ -743,36 +984,186 @@ export default function StepCampaign({
                               </button>
                             )}
                           </div>
-                        </div>
-                        <div className="step-item-grid">
-                          <div className="field">
-                            <input
-                              type="text"
-                              className="input"
-                              placeholder="Subject..."
-                              value={step.subjectTemplate}
-                              onChange={(e) => updateStep(i, 'subjectTemplate', e.target.value)}
-                            />
+
+                          <div className="step-item-toolbar">
+                            <div className="field">
+                              <label className="mini-label">Subject template</label>
+                              <input
+                                type="text"
+                                className="input"
+                                placeholder={
+                                  step.useAi
+                                    ? 'Optional — AI generates subject if blank'
+                                    : '{{first_name}}, quick question about…'
+                                }
+                                value={step.subjectTemplate}
+                                onChange={(e) => updateStep(i, 'subjectTemplate', e.target.value)}
+                              />
+                            </div>
+                            <div className="step-item-toolbar-controls">
+                              <div className="field step-item-option-delay">
+                                <label className="mini-label">Delay (hours)</label>
+                                <input
+                                  type="number"
+                                  className="input"
+                                  value={step.delayHoursAfterPrevious}
+                                  disabled={i === 0}
+                                  onChange={(e) =>
+                                    updateStep(i, 'delayHoursAfterPrevious', parseFloat(e.target.value) || 0)
+                                  }
+                                />
+                              </div>
+                              <div className="field step-item-option-format">
+                                <label className="mini-label">Body format</label>
+                                <div className="step-format-tabs" role="group" aria-label="Body format">
+                                  <button
+                                    type="button"
+                                    className={`step-format-tab ${viewTab === 'plain' ? 'is-active' : ''}`}
+                                    onClick={() => {
+                                      updateStep(i, 'bodyFormat', 'plain')
+                                      setStepView(i, 'plain')
+                                    }}
+                                  >
+                                    Plain
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`step-format-tab ${viewTab === 'html' ? 'is-active' : ''}`}
+                                    onClick={() => {
+                                      updateStep(i, 'bodyFormat', 'html')
+                                      setStepView(i, 'html')
+                                    }}
+                                  >
+                                    HTML
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`step-format-tab ${viewTab === 'preview' ? 'is-active' : ''}`}
+                                    onClick={() => setStepView(i, 'preview')}
+                                  >
+                                    Preview
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="field step-item-ai-field">
+                                <label className="mini-label">Generate with AI</label>
+                                <button
+                                  type="button"
+                                  className={`btn btn-outline btn-sm step-item-ai-btn ${step.useAi ? 'step-item-ai-btn--on' : 'step-item-ai-btn--off'}`}
+                                  onClick={() => updateStep(i, 'useAi', !step.useAi)}
+                                >
+                                  <span
+                                    className={`step-item-ai-dot ${step.useAi ? 'step-item-ai-dot--on' : 'step-item-ai-dot--off'}`}
+                                  />
+                                  {step.useAi ? 'Enabled' : 'Enable'}
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                          <div className="field">
-                            <input
-                              type="number"
-                              className="input"
-                              placeholder="Delay (h)"
-                              value={step.delayHoursAfterPrevious}
-                              onChange={(e) => updateStep(i, 'delayHoursAfterPrevious', parseFloat(e.target.value) || 0)}
-                            />
-                          </div>
+
+                          {viewTab === 'preview' ? (
+                            <div className="field step-item-preview-wrap">
+                              <label className="mini-label">Body template</label>
+                              {step.useAi ? (
+                                previewLead?.isSample ? (
+                                  <p className="step-item-preview-hint">
+                                    Import leads into your target batch to preview AI personalization for a real lead.
+                                  </p>
+                                ) : aiPreviewLoading[i] && !aiPreviews[i] ? (
+                                  <p className="step-item-preview-hint">Generating AI preview for first lead…</p>
+                                ) : aiPreviewError[i] && !aiPreviews[i] ? (
+                                  <p className="step-item-preview-hint">{aiPreviewError[i]}</p>
+                                ) : aiPreviews[i] && previewLead ? (
+                                  <div className="step-item-preview">
+                                    <EmailInboxPreview
+                                      subject={aiPreviews[i]!.subject}
+                                      body={aiPreviews[i]!.body}
+                                      bodyFormat={aiPreviews[i]!.bodyFormat}
+                                      htmlPreview={aiPreviews[i]!.htmlPreview}
+                                      fromEmail={senderFrom.email}
+                                      fromName={senderFrom.name}
+                                      toName={previewLead.label}
+                                      toEmail={previewLead.email}
+                                    />
+                                    {renderPreviewFooter(
+                                      i,
+                                      <>
+                                        {aiPreviewLoading[i] ? 'Refreshing… · ' : ''}
+                                        {aiPreviews[i]!.bodyFormat === 'html' ? 'HTML format' : 'Plain text format'}
+                                        {' · '}
+                                        First lead — {previewLead.label}
+                                        {' · '}
+                                        <button
+                                          type="button"
+                                          className="step-item-preview-refresh"
+                                          onClick={() => void ensureStepPreviewChain(i, { force: true })}
+                                        >
+                                          Refresh preview
+                                        </button>
+                                      </>,
+                                      {
+                                        subject: aiPreviews[i]!.subject,
+                                        body: aiPreviews[i]!.body,
+                                        bodyFormat: aiPreviews[i]!.bodyFormat,
+                                      }
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="step-item-preview-hint">
+                                    Open Preview to generate email for the first lead.
+                                  </p>
+                                )
+                              ) : !step.bodyTemplate.trim() && !step.subjectTemplate.trim() ? (
+                                <p className="step-item-preview-hint">
+                                  Add a subject or body template to preview.
+                                </p>
+                              ) : mergedPreview && previewLead ? (
+                                <div className="step-item-preview">
+                                  <EmailInboxPreview
+                                    subject={mergedPreview.mergedSubject}
+                                    body={mergedPreview.mergedBody}
+                                    bodyFormat={mergedPreview.bodyFormat}
+                                    htmlPreview={mergedPreview.htmlPreview}
+                                    fromEmail={senderFrom.email}
+                                    fromName={senderFrom.name}
+                                    toName={previewLead.label}
+                                    toEmail={previewLead.email}
+                                  />
+                                  {renderPreviewFooter(
+                                    i,
+                                    <>
+                                      {mergedPreview.bodyFormat === 'html' ? 'HTML format' : 'Plain text format'}
+                                      {' · '}
+                                      {previewLead.isSample
+                                        ? 'Preview uses sample data — variables like {{first_name}} → John'
+                                        : `Preview uses first lead — {{first_name}} → ${previewLead.data.first_name || previewLead.label}`}
+                                    </>,
+                                    {
+                                      subject: mergedPreview.mergedSubject,
+                                      body: mergedPreview.mergedBody,
+                                      bodyFormat: mergedPreview.bodyFormat,
+                                    }
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <div className="field">
+                              <label className="mini-label">Body template</label>
+                              <AutoResizeTextarea
+                                placeholder={
+                                  (step.bodyFormat || 'plain') === 'html'
+                                    ? '<p>Hi {{first_name}},</p><p>...</p>'
+                                    : 'Body with merge tags like {{first_name}}, {{pitch_block}}, {{sender_info}}...'
+                                }
+                                value={step.bodyTemplate}
+                                onChange={(e) => updateStep(i, 'bodyTemplate', e.target.value)}
+                              />
+                            </div>
+                          )}
                         </div>
-                        <div className="field">
-                          <AutoResizeTextarea
-                            placeholder="Body template — use merge tags like {{first_name}}, {{current_employer}}..."
-                            value={step.bodyTemplate}
-                            onChange={(e) => updateStep(i, 'bodyTemplate', e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -791,7 +1182,7 @@ export default function StepCampaign({
           <button
             type="button"
             className="btn primary"
-            disabled={!selectedCampaignId}
+            disabled={!selectedCampaignId || briefTooShort}
             onClick={onNextStep}
           >
             Next: Preview →

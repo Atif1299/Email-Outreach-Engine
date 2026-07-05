@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/db'
+import { withDbRetry } from '@/lib/db'
 import { resolveEngagementDisplay } from '@/lib/lead-suppression'
 
 export const dynamic = 'force-dynamic'
@@ -29,11 +29,13 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { id: 'desc' },
-      take: 1000,
-    })
+    const leads = await withDbRetry((db) =>
+      db.lead.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        take: 1000,
+      })
+    )
 
     const leadIds = leads.map((l) => l.id)
     const campaignId = searchParams.get('campaignId')
@@ -51,10 +53,12 @@ export async function GET(request: NextRequest) {
     if (campaignId) engagementWhere.campaignId = campaignId
 
     const engagements = leadIds.length
-      ? await prisma.leadCampaignEngagement.findMany({
-        where: engagementWhere,
-        select: { leadId: true, status: true },
-      })
+      ? await withDbRetry((db) =>
+        db.leadCampaignEngagement.findMany({
+          where: engagementWhere,
+          select: { leadId: true, status: true },
+        })
+      )
       : []
 
     const engagementByLead = new Map<number, string>()

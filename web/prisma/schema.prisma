@@ -51,10 +51,7 @@ model Campaign {
   pitchBlock     String   @default("") @map("pitch_block")
   senderInfo     String   @default("") @map("sender_info")
   aiVoice        String   @default("founder") @map("ai_voice")
-  aiInstructions String   @default("") @map("ai_instructions")
   outputLanguage String   @default("en") @map("output_language")
-  fewShotStep1Json String @default("[]") @map("few_shot_step1_json")
-  fewShotStep2Json String @default("[]") @map("few_shot_step2_json")
   createdAt      DateTime @default(now()) @map("created_at")
 
   steps         CampaignStep[]
@@ -76,6 +73,7 @@ model CampaignStep {
   subjectTemplate         String  @map("subject_template")
   bodyTemplate            String  @map("body_template")
   useAi                   Boolean @default(false) @map("use_ai")
+  bodyFormat              String  @default("plain") @map("body_format")
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 

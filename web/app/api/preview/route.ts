@@ -3,6 +3,7 @@ import prisma from '@/lib/db'
 import { renderEmailForLead, mergeTags } from '@/lib/ai'
 import { ensureSettings } from '@/lib/settings'
 import { loadSequenceContext } from '@/lib/preview-context'
+import { buildPreviewHtml, normalizeBodyFormat, resolvePreviewBodyFormat } from '@/lib/email-html'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Step not found' }, { status: 404 })
     }
 
+    const bodyFormat = normalizeBodyFormat(step.bodyFormat)
+
     const override = await prisma.leadBodyOverride.findUnique({
       where: {
         leadId_campaignId_stepOrder: { leadId, campaignId, stepOrder },
@@ -42,13 +45,15 @@ export async function GET(request: NextRequest) {
 
     const leadData = JSON.parse(lead.dataJson)
 
-    // Saved preview — return immediately, no AI
     if (override) {
+      const subject =
+        override.subject ??
+        mergeTags(step.subjectTemplate, leadData, campaign.pitchBlock, campaign.senderInfo)
       return NextResponse.json({
-        subject:
-          override.subject ??
-          mergeTags(step.subjectTemplate, leadData, campaign.pitchBlock, campaign.senderInfo),
+        subject,
         body: override.body,
+        bodyFormat,
+        htmlPreview: buildPreviewHtml(override.body, bodyFormat),
         source: 'saved',
       })
     }
@@ -75,7 +80,6 @@ export async function GET(request: NextRequest) {
       pitchBlock: campaign.pitchBlock,
       senderInfo: campaign.senderInfo,
       aiVoice: campaign.aiVoice,
-      aiInstructions: campaign.aiInstructions,
       outputLanguage: campaign.outputLanguage,
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
@@ -86,11 +90,17 @@ export async function GET(request: NextRequest) {
       apiKey: apiKey || '',
       provider,
       useAi,
-      fewShotStep1Json: campaign.fewShotStep1Json,
-      fewShotStep2Json: campaign.fewShotStep2Json,
+      bodyFormat,
     })
 
-    return NextResponse.json({ ...result, source: useAi ? 'ai' : 'merge' })
+    const effectiveFormat = resolvePreviewBodyFormat(result.body, bodyFormat)
+
+    return NextResponse.json({
+      ...result,
+      bodyFormat: effectiveFormat,
+      htmlPreview: buildPreviewHtml(result.body, effectiveFormat),
+      source: useAi ? 'ai' : 'merge',
+    })
   } catch (error) {
     console.error('Preview failed:', error)
     const message = error instanceof Error ? error.message : 'Preview failed'

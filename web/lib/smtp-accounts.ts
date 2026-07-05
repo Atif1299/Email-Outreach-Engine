@@ -1,6 +1,6 @@
 import type { SmtpAccount } from '@prisma/client'
 import nodemailer from 'nodemailer'
-import prisma from '@/lib/db'
+import prisma, { withDbRetry } from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
 import {
   countSuccessfulSendsForAccountSince,
@@ -71,7 +71,9 @@ async function migrateLegacySmtpSettings() {
 
 export async function ensureSmtpAccounts() {
   await migrateLegacySmtpSettings()
-  return prisma.smtpAccount.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] })
+  return withDbRetry((db) =>
+    db.smtpAccount.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] })
+  )
 }
 
 export async function getEnabledSmtpAccounts(): Promise<SmtpAccount[]> {

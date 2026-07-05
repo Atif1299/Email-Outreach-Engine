@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { parseFewShotJson, serializeFewShotJson } from '@/lib/few-shot'
+import { normalizeBodyFormat } from '@/lib/email-html'
 import { deactivateCampaign } from '@/lib/queue-active'
 import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
 
@@ -12,10 +12,7 @@ function mapCampaign(c: {
   pitchBlock: string
   senderInfo: string
   aiVoice: string
-  aiInstructions: string
   outputLanguage: string
-  fewShotStep1Json: string
-  fewShotStep2Json: string
   createdAt: Date
   steps: Array<{
     id: number
@@ -24,6 +21,7 @@ function mapCampaign(c: {
     subjectTemplate: string
     bodyTemplate: string
     useAi: boolean
+    bodyFormat: string
   }>
   targetBatches: Array<{ importBatchId: number }>
 }) {
@@ -33,10 +31,7 @@ function mapCampaign(c: {
     pitchBlock: c.pitchBlock,
     senderInfo: c.senderInfo,
     aiVoice: c.aiVoice,
-    aiInstructions: c.aiInstructions,
     outputLanguage: c.outputLanguage,
-    fewShotStep1: parseFewShotJson(c.fewShotStep1Json),
-    fewShotStep2: parseFewShotJson(c.fewShotStep2Json),
     createdAt: c.createdAt.toISOString(),
     targetImportBatchIds: c.targetBatches.map((tb) => tb.importBatchId),
     steps: c.steps.map((s) => ({
@@ -46,6 +41,7 @@ function mapCampaign(c: {
       subjectTemplate: s.subjectTemplate,
       bodyTemplate: s.bodyTemplate,
       useAi: s.useAi,
+      bodyFormat: normalizeBodyFormat(s.bodyFormat),
     })),
   }
 }
@@ -91,10 +87,7 @@ export async function PUT(
         pitchBlock: body.pitchBlock,
         senderInfo: body.senderInfo,
         aiVoice: body.aiVoice,
-        aiInstructions: body.aiInstructions,
         outputLanguage: body.outputLanguage || 'en',
-        fewShotStep1Json: serializeFewShotJson(body.fewShotStep1),
-        fewShotStep2Json: serializeFewShotJson(body.fewShotStep2),
       }
     })
 
@@ -109,6 +102,7 @@ export async function PUT(
           subjectTemplate: s.subjectTemplate || '',
           bodyTemplate: s.bodyTemplate || '',
           useAi: s.useAi ?? true,
+          bodyFormat: normalizeBodyFormat(s.bodyFormat),
         }))
       })
     }
@@ -124,7 +118,19 @@ export async function PUT(
       })
     }
 
-    return NextResponse.json({ success: true })
+    const updated = await prisma.campaign.findUnique({
+      where: { id },
+      include: {
+        steps: { orderBy: { stepOrder: 'asc' } },
+        targetBatches: true,
+      },
+    })
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Campaign not found after update' }, { status: 404 })
+    }
+
+    return NextResponse.json(mapCampaign(updated))
   } catch (error) {
     console.error('Failed to update campaign:', error)
     return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 })

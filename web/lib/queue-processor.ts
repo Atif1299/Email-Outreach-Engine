@@ -322,10 +322,7 @@ type CampaignWithSteps = {
   pitchBlock: string
   senderInfo: string
   aiVoice: string
-  aiInstructions: string
   outputLanguage: string
-  fewShotStep1Json: string
-  fewShotStep2Json: string
   steps: PreparedLead['nextStep'][]
 }
 
@@ -661,7 +658,6 @@ async function processQueueBatchInner(maxEmails?: number) {
             pitchBlock: campaign.pitchBlock,
             senderInfo: campaign.senderInfo,
             aiVoice: campaign.aiVoice,
-            aiInstructions: campaign.aiInstructions,
             outputLanguage: campaign.outputLanguage,
             subjectTemplate: nextStep.subjectTemplate,
             bodyTemplate: nextStep.bodyTemplate,
@@ -672,15 +668,14 @@ async function processQueueBatchInner(maxEmails?: number) {
             apiKey: apiKey || '',
             provider,
             useAi: nextStep.useAi,
-            fewShotStep1Json: campaign.fewShotStep1Json,
-            fewShotStep2Json: campaign.fewShotStep2Json,
+            bodyFormat: nextStep.bodyFormat,
           })
           subject = rendered.subject
           body = rendered.body
         }
 
         const from = formatFromAddress(settings.smtpFromName, account)
-        const mailContent = buildMailContent(body, leadSendId, getAppBaseUrl())
+        const mailContent = buildMailContent(body, leadSendId, getAppBaseUrl(), normalizeBodyFormat(nextStep.bodyFormat))
         const mailOptions: nodemailer.SendMailOptions = {
           from,
           to: lead.email,
