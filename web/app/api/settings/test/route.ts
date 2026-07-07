@@ -74,6 +74,13 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    if (smtpAccount) {
+      await prisma.smtpAccount.update({
+        where: { id: smtpAccount.id },
+        data: { exhaustedUntil: null, exhaustReason: null, lastInboxError: null },
+      })
+    }
+
     return NextResponse.json({ success: true })
   } catch (error: unknown) {
     console.error('SMTP test failed:', error)

@@ -537,9 +537,8 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
   const removeIds = existing.map((a) => a.id).filter((id) => !keptIds.has(id))
 
   if (removeIds.length > 0) {
-    await prisma.smtpAccount.updateMany({
-      where: { id: { in: removeIds } },
-      data: { enabled: false },
-    })
+    await withDbRetry((db) =>
+      db.smtpAccount.deleteMany({ where: { id: { in: removeIds } } })
+    )
   }
 }
