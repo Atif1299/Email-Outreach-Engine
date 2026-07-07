@@ -18,7 +18,8 @@ export async function GET() {
   try {
     const state = await prisma.queueState.findUnique({ where: { id: 1 } })
     const settings = await ensureSettings()
-    const limitSettings = toSendLimitSettings(settings)
+    const accounts = await prisma.smtpAccount.findMany({ where: { enabled: true, password: { not: '' } } })
+    const limitSettings = toSendLimitSettings(settings, Math.max(accounts.length, 1))
     const activeEntries = parseActiveCampaigns(state)
     const stepTypeCounts = await getStepTypeSendCounts(limitSettings)
 

@@ -25,6 +25,8 @@ export interface PublicSmtpAccount {
   hasPassword: boolean
   exhaustedUntil: string | null
   exhaustReason: string | null
+  healthStatus: string
+  recoveryUntil: string | null
   sendsToday: number
   sendsThisHour: number
   warmupDay: number | null
@@ -38,7 +40,7 @@ export type AccountSendGateResult =
   | { allowed: true }
   | {
     allowed: false
-    reason: 'exhausted' | 'daily_cap' | 'hourly_cap' | 'disabled' | 'no_password' | 'throttled'
+    reason: 'exhausted' | 'daily_cap' | 'hourly_cap' | 'disabled' | 'no_password' | 'throttled' | 'blocked' | 'recovery'
     message: string
   }
 
@@ -99,9 +101,17 @@ export function getWarmupDay(account: SmtpAccount, now = new Date()): number | n
   return Math.floor((now.getTime() - account.warmupStartedAt.getTime()) / MS_PER_DAY) + 1
 }
 
+function isForcedRecovery(account: SmtpAccount, now = new Date()): boolean {
+  return (
+    account.healthStatus === 'recovery' ||
+    (!!account.recoveryUntil && account.recoveryUntil > now)
+  )
+}
+
 export function getWarmupDailyCap(account: SmtpAccount, userDailyCap: number, now = new Date()): number {
-  if (!account.warmupEnabled) return userDailyCap
-  if (!account.warmupStartedAt) return userDailyCap
+  const forceWarmup = isForcedRecovery(account, now) || account.warmupEnabled
+  if (!forceWarmup) return userDailyCap
+  if (!account.warmupStartedAt && !isForcedRecovery(account, now)) return userDailyCap
   const day = getWarmupDay(account, now) ?? 1
   if (day <= 3) return Math.min(userDailyCap, 15)
   if (day <= 7) return Math.min(userDailyCap, 30)
@@ -118,6 +128,13 @@ export async function evaluateAccountSendGate(
   }
   if (!account.password) {
     return { allowed: false, reason: 'no_password', message: `${account.email} has no app password` }
+  }
+  if (account.healthStatus === 'blocked') {
+    return {
+      allowed: false,
+      reason: 'blocked',
+      message: `${account.email} is blocked — restore with Google, run SMTP test, then re-enable`,
+    }
   }
   if (isExhausted(account, now)) {
     return {
@@ -237,6 +254,8 @@ export async function toPublicSmtpAccounts(
       hasPassword: !!account.password,
       exhaustedUntil: account.exhaustedUntil?.toISOString() ?? null,
       exhaustReason: account.exhaustReason,
+      healthStatus: account.healthStatus || 'healthy',
+      recoveryUntil: account.recoveryUntil?.toISOString() ?? null,
       sendsToday,
       sendsThisHour,
       warmupDay,
@@ -412,14 +431,35 @@ export async function resolveAccountForSend(opts: {
 }
 
 export async function markAccountExhausted(accountId: number, reason: DeliveryHaltReason) {
-  const until = new Date(Date.now() + EXHAUST_DURATION_MS[reason])
+  const now = new Date()
+  const until = new Date(now.getTime() + EXHAUST_DURATION_MS[reason])
+  const recoveryUntil = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+  const data: Record<string, unknown> = {
+    exhaustedUntil: until,
+    exhaustReason: reason,
+  }
+
+  if (reason === 'auth_failure') {
+    data.healthStatus = 'blocked'
+    data.healthChangedAt = now
+    data.recoveryUntil = recoveryUntil
+  } else if (reason === 'message_blocked' || reason === 'gmail_rate_limit') {
+    data.healthStatus = 'recovery'
+    data.healthChangedAt = now
+    data.recoveryUntil = recoveryUntil
+    data.warmupEnabled = true
+  }
+
   await prisma.smtpAccount.update({
     where: { id: accountId },
-    data: {
-      exhaustedUntil: until,
-      exhaustReason: reason,
-    },
+    data,
   })
+
+  if (reason === 'message_blocked' || reason === 'gmail_rate_limit') {
+    const { recordInboxClusterEvent } = await import('@/lib/inbox-cluster-guard')
+    await recordInboxClusterEvent(accountId, reason)
+  }
 }
 
 export async function touchAccountUsed(accountId: number) {
@@ -519,6 +559,7 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
       })
       keptIds.add(account.id)
     } else {
+      const recoveryUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       const created = await prisma.smtpAccount.create({
         data: {
           email: account.email,
@@ -526,7 +567,10 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
           label: account.label,
           enabled: account.enabled,
           sortOrder: account.sortOrder,
-          warmupEnabled: account.warmupEnabled,
+          warmupEnabled: true,
+          healthStatus: 'recovery',
+          healthChangedAt: new Date(),
+          recoveryUntil,
         },
       })
       keptIds.add(created.id)

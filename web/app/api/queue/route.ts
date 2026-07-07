@@ -19,6 +19,7 @@ import {
   toSendLimitSettings,
 } from '@/lib/send-limits'
 import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
+import { isClusterBreakerActive, isFollowUpsPaused } from '@/lib/inbox-cluster-guard'
 import {
   computeAggregateDueNow,
   getActiveCampaignIds,
@@ -38,9 +39,9 @@ export async function GET() {
       }
 
       const settings = await ensureSettings()
-      const limitSettings = toSendLimitSettings(settings)
       const accounts = await ensureSmtpAccounts()
       const enabledCount = accounts.filter((a) => a.enabled && a.password).length
+      const limitSettings = toSendLimitSettings(settings, Math.max(enabledCount, 1))
 
       const dayStart = getDayStartInTimezone(limitSettings.sendTimezone)
       const hourAgo = new Date(Date.now() - 60 * 60 * 1000)
@@ -255,6 +256,10 @@ export async function GET() {
         followUpSentToday: stepTypeCounts.followUpSentToday,
         dailyStep1Cap: limitSettings.dailyStep1Cap,
         dailyFollowUpCap: limitSettings.dailyFollowUpCap,
+        followUpsPaused: isFollowUpsPaused(state),
+        followUpsPausedUntil: state.followUpsPausedUntil?.toISOString() ?? null,
+        clusterBreakerActive: isClusterBreakerActive(state),
+        clusterBreakerUntil: state.clusterBreakerUntil?.toISOString() ?? null,
         currentJob,
       })
     })

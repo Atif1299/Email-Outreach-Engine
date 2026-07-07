@@ -26,6 +26,16 @@ function emptyAccount(): SmtpAccountForm {
   return { email: '', password: '', label: '', enabled: true, warmupEnabled: false }
 }
 
+function healthBadgeLabel(status?: string): { label: string; tone: string } {
+  if (status === 'blocked') return { label: 'Blocked', tone: 'err' }
+  if (status === 'recovery') return { label: 'Recovery', tone: 'warn' }
+  return { label: 'Healthy', tone: 'ok' }
+}
+
+function countEnabledGmailAccounts(accounts: SmtpAccountForm[]): number {
+  return accounts.filter((a) => a.enabled && /@gmail\.com$/i.test(a.email.trim())).length
+}
+
 function accountsFromSettings(settings: Settings | null): SmtpAccountForm[] {
   if (!settings) return [emptyAccount()]
   if (settings.smtpAccounts?.length) {
@@ -79,6 +89,8 @@ export default function StepConnect({
     geminiModel: settings?.geminiModel || 'gemini-2.5-flash',
     verificationProvider: settings?.verificationProvider || 'none',
     verificationApiKey: '',
+    unsubscribeEnabled: settings?.unsubscribeEnabled !== false,
+    unsubscribeFooterText: settings?.unsubscribeFooterText || '',
   })
   const [smtpAccounts, setSmtpAccounts] = useState<SmtpAccountForm[]>(accountsFromSettings(settings))
   const [testEmail, setTestEmail] = useState('')
@@ -98,6 +110,9 @@ export default function StepConnect({
   const capsOverCapacity = splitCapsEnabled && capsSum > totalDailyCapacity
   const suggestedStep1Cap = Math.max(1, totalDailyCapacity - formData.dailyFollowUpCap)
   const suggestedFollowUpCap = Math.max(1, totalDailyCapacity - formData.dailyStep1Cap)
+  const gmailClusterCount = countEnabledGmailAccounts(smtpAccounts)
+  const autoStep1Cap = Math.floor(totalDailyCapacity * 0.7)
+  const autoFollowUpCap = totalDailyCapacity - autoStep1Cap
 
   function validateCaps(): string | null {
     if (formData.dailyStep1Cap < 0 || formData.dailyFollowUpCap < 0) {
@@ -105,7 +120,7 @@ export default function StepConnect({
     }
     if (formData.dailyStep1Cap > 0 || formData.dailyFollowUpCap > 0) {
       if (formData.dailyStep1Cap <= 0 || formData.dailyFollowUpCap <= 0) {
-        return 'Set both Step 1 and follow-up daily caps, or leave both at 0 to disable split'
+        return 'Set both Step 1 and follow-up daily caps, or leave both at 0 for auto 70/30 split'
       }
       if (capsSum > totalDailyCapacity) {
         return `Step 1 cap (${formData.dailyStep1Cap}) + follow-up cap (${formData.dailyFollowUpCap}) cannot exceed ${totalDailyCapacity}/day (${formData.dailyCap} per inbox × ${enabledInboxCount} inbox(es))`
@@ -134,6 +149,8 @@ export default function StepConnect({
       aiProvider: settings.aiProvider || 'openai',
       geminiModel: settings.geminiModel || 'gemini-2.5-flash',
       verificationProvider: settings.verificationProvider,
+      unsubscribeEnabled: settings.unsubscribeEnabled !== false,
+      unsubscribeFooterText: settings.unsubscribeFooterText || '',
     }))
     setSmtpAccounts(accountsFromSettings(settings))
   }, [settings])
@@ -327,103 +344,113 @@ export default function StepConnect({
             </div>
 
             <div className="smtp-accounts-list">
-              {smtpAccounts.map((account, index) => (
-                <div key={account.id ?? `new-${index}`} className="smtp-account-card">
-                  <div className="smtp-account-card-header">
-                    <span className="smtp-account-card-title">
-                      Inbox {index + 1}
-                      {account.label ? ` — ${account.label}` : ''}
-                    </span>
-                    <label className="smtp-account-enabled">
+              {gmailClusterCount >= 3 && (
+                <p className="smtp-cluster-warning">
+                  {gmailClusterCount} @gmail.com inboxes share platform reputation — cluster protection
+                  will slow all inboxes if one is blocked.
+                </p>
+              )}
+              {smtpAccounts.map((account, index) => {
+                const health = healthBadgeLabel(settings?.smtpAccounts?.[index]?.healthStatus)
+                return (
+                  <div key={account.id ?? `new-${index}`} className="smtp-account-card">
+                    <div className="smtp-account-card-header">
+                      <span className="smtp-account-card-title">
+                        Inbox {index + 1}
+                        {account.label ? ` — ${account.label}` : ''}
+                        <span className={`status-pill status-pill--${health.tone === 'ok' ? 'ok' : health.tone === 'err' ? 'err' : 'paused'}`}>{health.label}</span>
+                      </span>
+                      <label className="smtp-account-enabled">
+                        <input
+                          type="checkbox"
+                          checked={account.enabled}
+                          onChange={(e) => updateAccount(index, { enabled: e.target.checked })}
+                        />
+                        Enabled
+                      </label>
+                    </div>
+                    <div className="settings-grid">
+                      <div className="field">
+                        <label className="mini-label">Gmail address</label>
+                        <input
+                          type="text"
+                          className="input"
+                          placeholder="you@gmail.com"
+                          value={account.email}
+                          onChange={(e) => updateAccount(index, { email: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <label className="mini-label">App Password</label>
+                        <input
+                          type="password"
+                          className="input"
+                          placeholder={
+                            account.hasPassword
+                              ? '•••••••• (saved — leave blank to keep)'
+                              : '••••••••'
+                          }
+                          value={account.password}
+                          onChange={(e) => updateAccount(index, { password: e.target.value })}
+                        />
+                      </div>
+                      <div className="field field-mini">
+                        <label className="mini-label">Label (optional)</label>
+                        <input
+                          type="text"
+                          className="input"
+                          placeholder="e.g. Inbox 2"
+                          value={account.label}
+                          onChange={(e) => updateAccount(index, { label: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <label className="smtp-warmup-toggle">
                       <input
                         type="checkbox"
-                        checked={account.enabled}
-                        onChange={(e) => updateAccount(index, { enabled: e.target.checked })}
+                        checked={account.warmupEnabled}
+                        onChange={(e) => updateAccount(index, { warmupEnabled: e.target.checked })}
                       />
-                      Enabled
+                      <span>
+                        Gradual warmup (15/day days 1–3, 30/day days 4–7, then your daily cap)
+                      </span>
                     </label>
-                  </div>
-                  <div className="settings-grid">
-                    <div className="field">
-                      <label className="mini-label">Gmail address</label>
+                    <div className="smtp-account-card-actions">
                       <input
                         type="text"
-                        className="input"
-                        placeholder="you@gmail.com"
-                        value={account.email}
-                        onChange={(e) => updateAccount(index, { email: e.target.value })}
+                        className="input smtp-test-email-input"
+                        placeholder="Test email address..."
+                        value={testEmail}
+                        onChange={(e) => setTestEmail(e.target.value)}
                       />
-                    </div>
-                    <div className="field">
-                      <label className="mini-label">App Password</label>
-                      <input
-                        type="password"
-                        className="input"
-                        placeholder={
-                          account.hasPassword
-                            ? '•••••••• (saved — leave blank to keep)'
-                            : '••••••••'
-                        }
-                        value={account.password}
-                        onChange={(e) => updateAccount(index, { password: e.target.value })}
-                      />
-                    </div>
-                    <div className="field field-mini">
-                      <label className="mini-label">Label (optional)</label>
-                      <input
-                        type="text"
-                        className="input"
-                        placeholder="e.g. Inbox 2"
-                        value={account.label}
-                        onChange={(e) => updateAccount(index, { label: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <label className="smtp-warmup-toggle">
-                    <input
-                      type="checkbox"
-                      checked={account.warmupEnabled}
-                      onChange={(e) => updateAccount(index, { warmupEnabled: e.target.checked })}
-                    />
-                    <span>
-                      Gradual warmup (15/day days 1–3, 30/day days 4–7, then your daily cap)
-                    </span>
-                  </label>
-                  <div className="smtp-account-card-actions">
-                    <input
-                      type="text"
-                      className="input smtp-test-email-input"
-                      placeholder="Test email address..."
-                      value={testEmail}
-                      onChange={(e) => setTestEmail(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-sm"
-                      disabled={testingAccountIndex === index || !account.email.trim()}
-                      onClick={() => handleTestAccount(index)}
-                    >
-                      {testingAccountIndex === index
-                        ? 'Testing...'
-                        : testHints[index]?.type === 'ok'
-                          ? 'Sent'
-                          : testHints[index]?.type === 'err'
-                            ? 'Failed'
-                            : 'Test'}
-                    </button>
-                    <InlineHint hint={testHints[index] ?? null} />
-                    {smtpAccounts.length > 1 && (
                       <button
                         type="button"
                         className="btn btn-outline btn-sm"
-                        onClick={() => removeAccount(index)}
+                        disabled={testingAccountIndex === index || !account.email.trim()}
+                        onClick={() => handleTestAccount(index)}
                       >
-                        Remove
+                        {testingAccountIndex === index
+                          ? 'Testing...'
+                          : testHints[index]?.type === 'ok'
+                            ? 'Sent'
+                            : testHints[index]?.type === 'err'
+                              ? 'Failed'
+                              : 'Test'}
                       </button>
-                    )}
+                      <InlineHint hint={testHints[index] ?? null} />
+                      {smtpAccounts.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          onClick={() => removeAccount(index)}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             <button type="button" className="btn btn-outline" onClick={addAccount} style={{ marginTop: '0.75rem' }}>
@@ -560,15 +587,38 @@ export default function StepConnect({
               </div>
             </div>
             <p className="settings-hint">
-              Step 1 + follow-up caps are optional (set both, or leave both at 0). When enabled, they must not exceed{' '}
-              {totalDailyCapacity}/day combined ({formData.dailyStep1Cap}+{formData.dailyFollowUpCap}={capsSum}).
-              Follow-ups send before new Step 1 emails when both are due.
+              Leave both caps at 0 for auto 70/30 split ({autoStep1Cap} step-1 / {autoFollowUpCap} follow-ups).
+              Or set both explicitly (max {totalDailyCapacity}/day combined). Step 1 sends before follow-ups when both are due.
             </p>
             {capsOverCapacity && (
               <p className="settings-hint inline-hint inline-hint--err" role="alert">
                 Combined caps exceed {totalDailyCapacity}/day. Example split: {suggestedStep1Cap} Step 1 +{' '}
                 {suggestedFollowUpCap} follow-up = {totalDailyCapacity}.
               </p>
+            )}
+            <label className="smtp-warmup-toggle" style={{ marginTop: '0.75rem' }}>
+              <input
+                type="checkbox"
+                checked={formData.unsubscribeEnabled}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, unsubscribeEnabled: e.target.checked }))
+                }
+              />
+              <span>Include one-click unsubscribe headers and footer (recommended)</span>
+            </label>
+            {formData.unsubscribeEnabled && (
+              <div className="field" style={{ marginTop: '0.5rem' }}>
+                <label className="mini-label">Unsubscribe link label (optional)</label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Unsubscribe"
+                  value={formData.unsubscribeFooterText}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, unsubscribeFooterText: e.target.value }))
+                  }
+                />
+              </div>
             )}
           </div>
 

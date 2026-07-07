@@ -28,6 +28,7 @@ import {
   toSendLimitSettings,
   type SendLimitSettings,
 } from '@/lib/send-limits'
+import { isFollowUpsPaused } from '@/lib/inbox-cluster-guard'
 import {
   assignLeadToAccount,
   countInboxesAvailableForSend,
@@ -236,14 +237,15 @@ async function prepareNextLeadForSend(opts: {
   campaign: { id: number; steps: PreparedLead['nextStep'][] }
   limitSettings: SendLimitSettings
   stepTypeCounts: { step1SentToday: number; followUpSentToday: number }
+  followUpsPaused?: boolean
 }): Promise<
   | { ok: true; prepared: PreparedLead }
   | { ok: false; reason: 'empty' | 'waiting' | 'type_cap'; message?: string }
 > {
-  const { activeLeadIds, blockedLeadIds, campaign, limitSettings, stepTypeCounts } = opts
+  const { activeLeadIds, blockedLeadIds, campaign, limitSettings, stepTypeCounts, followUpsPaused } = opts
   if (activeLeadIds.length === 0) return { ok: false, reason: 'empty' }
 
-  const passes: Array<'followup' | 'step1'> = ['followup', 'step1']
+  const passes: Array<'followup' | 'step1'> = followUpsPaused ? ['step1'] : ['step1', 'followup']
 
   for (const pass of passes) {
     for (let i = 0; i < activeLeadIds.length; i++) {
@@ -339,6 +341,7 @@ async function pickJobAcrossCampaigns(opts: {
   limitSettings: SendLimitSettings
   stepTypeCounts: { step1SentToday: number; followUpSentToday: number }
   lastServedCampaignId: number | null
+  followUpsPaused?: boolean
 }): Promise<
   | {
     ok: true
@@ -369,6 +372,7 @@ async function pickJobAcrossCampaigns(opts: {
       campaign,
       limitSettings: opts.limitSettings,
       stepTypeCounts: opts.stepTypeCounts,
+      followUpsPaused: opts.followUpsPaused,
     })
 
     if (pick.ok) {
@@ -401,10 +405,10 @@ async function pickJobAcrossCampaigns(opts: {
 
   const followUps = candidates.filter((c) => c.stepOrder > 1)
   const step1Only = candidates.filter((c) => c.stepOrder === 1)
-  const pool = followUps.length > 0 ? followUps : step1Only
+  const pool = step1Only.length > 0 ? step1Only : followUps
 
   pool.sort((a, b) => {
-    if (a.stepOrder !== b.stepOrder) return b.stepOrder - a.stepOrder
+    if (a.stepOrder !== b.stepOrder) return a.stepOrder - b.stepOrder
     if (a.delayElapsedAt !== b.delayElapsedAt) return a.delayElapsedAt - b.delayElapsedAt
     const last = opts.lastServedCampaignId
     const aAfter = last != null && a.campaign.id <= last ? 1 : 0
@@ -458,8 +462,8 @@ async function processQueueBatchInner(maxEmails?: number) {
   }
 
   const settings = await ensureSettings()
-  const limitSettings = toSendLimitSettings(settings)
   const enabledAccounts = await getEnabledSmtpAccounts()
+  const limitSettings = toSendLimitSettings(settings, enabledAccounts.length)
 
   if (enabledAccounts.length === 0) {
     await pauseQueueForDeliveryIssue({
@@ -503,6 +507,8 @@ async function processQueueBatchInner(maxEmails?: number) {
   const stepTypeCounts = await getStepTypeSendCounts(limitSettings)
   const batchLimit = Math.max(1, Math.min(maxEmails ?? enabledAccounts.length, enabledAccounts.length))
   const accountsUsedThisBatch = new Set<number>()
+  let lastAccountIdInBatch: number | null = null
+  const followUpsPaused = isFollowUpsPaused(state)
 
   for (let i = 0; i < batchLimit; i++) {
     const currentState = await prisma.queueState.findUnique({ where: { id: 1 } })
@@ -520,6 +526,7 @@ async function processQueueBatchInner(maxEmails?: number) {
       limitSettings,
       stepTypeCounts,
       lastServedCampaignId,
+      followUpsPaused,
     })
 
     if (!jobPick.ok) {
@@ -683,13 +690,31 @@ async function processQueueBatchInner(maxEmails?: number) {
         }
 
         const from = formatFromAddress(settings.smtpFromName, account, enabledAccounts)
-        const mailContent = buildMailContent(body, leadSendId, getAppBaseUrl(), normalizeBodyFormat(nextStep.bodyFormat))
+        const unsubEnabled = settings.unsubscribeEnabled !== false
+        const mailContent = buildMailContent(
+          body,
+          leadSendId,
+          getAppBaseUrl(),
+          normalizeBodyFormat(nextStep.bodyFormat),
+          unsubEnabled
+            ? {
+              unsubscribe: { leadId, campaignId: campaign.id, leadSendId },
+              unsubscribeFooterText: settings.unsubscribeFooterText || undefined,
+              mailtoAddress: account.email,
+            }
+            : undefined
+        )
         const mailOptions: nodemailer.SendMailOptions = {
           from,
           to: lead.email,
           subject,
           text: mailContent.text,
           html: mailContent.html,
+        }
+
+        const extraHeaders: Record<string, string> = {}
+        if (mailContent.listUnsubscribeHeaders) {
+          Object.assign(extraHeaders, mailContent.listUnsubscribeHeaders)
         }
 
         if (nextStepOrder > 1) {
@@ -706,11 +731,22 @@ async function processQueueBatchInner(maxEmails?: number) {
           })
           if (priorSend?.smtpMessageId) {
             const refId = formatMessageId(priorSend.smtpMessageId)
-            mailOptions.headers = {
-              'In-Reply-To': refId,
-              References: refId,
-            }
+            extraHeaders['In-Reply-To'] = refId
+            extraHeaders.References = refId
           }
+        }
+
+        if (Object.keys(extraHeaders).length > 0) {
+          mailOptions.headers = extraHeaders
+        }
+
+        if (
+          lastAccountIdInBatch !== null &&
+          lastAccountIdInBatch !== account.id &&
+          enabledAccounts.length >= 2
+        ) {
+          const jitterMs = 30_000 + Math.floor(Math.random() * 90_001)
+          await new Promise((resolve) => setTimeout(resolve, jitterMs))
         }
 
         const smtpMessageId = await sendWithAccount({ account, settings, mailOptions })
@@ -741,6 +777,7 @@ async function processQueueBatchInner(maxEmails?: number) {
         consecutiveFailures = 0
         sendCompleted = true
         accountsUsedThisBatch.add(account.id)
+        lastAccountIdInBatch = account.id
         if (nextStepOrder <= 1) stepTypeCounts.step1SentToday++
         else stepTypeCounts.followUpSentToday++
 

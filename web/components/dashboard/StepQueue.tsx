@@ -730,6 +730,22 @@ export default function StepQueue({
         <div className="queue-dashboard">
           {/* Global stats — top of queue page */}
           <div className="queue-global-section">
+            {(queueStatus.clusterBreakerActive || queueStatus.followUpsPaused) && (
+              <div className="queue-deliverability-banner" role="status">
+                {queueStatus.clusterBreakerActive && (
+                  <p>
+                    <strong>Cluster protection active</strong> — multiple Gmail blocks detected. Pause sending,
+                    restore affected accounts, then resume. Follow-ups stay paused for 24h after resume.
+                  </p>
+                )}
+                {queueStatus.followUpsPaused && !queueStatus.clusterBreakerActive && (
+                  <p>
+                    <strong>Follow-ups paused</strong> — reputation protection after a Gmail block. Step 1 sends
+                    continue.
+                  </p>
+                )}
+              </div>
+            )}
             <div className="queue-global-bar__header">
               <h3 className="queue-section-title">Global send stats</h3>
             </div>

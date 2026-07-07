@@ -729,6 +729,15 @@ export default function StepCampaign({
 
   function updateStep(index: number, field: keyof CampaignStep, value: CampaignStep[keyof CampaignStep]) {
     if (!draft) return
+    if (field === 'delayHoursAfterPrevious' && index >= 1) {
+      const hours = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      if (hours < 24) {
+        const ok = window.confirm(
+          'Follow-up delay under 24h increases spam risk. Send this soon after step 1 anyway?'
+        )
+        if (!ok) return
+      }
+    }
     const newSteps = [...draft.steps]
     newSteps[index] = { ...newSteps[index], [field]: value }
     setDraft({ ...draft, steps: newSteps })
@@ -1012,6 +1021,13 @@ export default function StepCampaign({
                                     updateStep(i, 'delayHoursAfterPrevious', parseFloat(e.target.value) || 0)
                                   }
                                 />
+                                {i >= 1 && step.delayHoursAfterPrevious > 0 && step.delayHoursAfterPrevious < 48 && (
+                                  <p className="step-item-preview-hint">
+                                    {step.delayHoursAfterPrevious < 24
+                                      ? 'Very short delay — high spam risk.'
+                                      : 'Short delay — consider 48h+ for cold outreach.'}
+                                  </p>
+                                )}
                               </div>
                               <div className="field step-item-option-format">
                                 <label className="mini-label">Body format</label>

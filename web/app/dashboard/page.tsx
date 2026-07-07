@@ -25,6 +25,8 @@ export interface SmtpAccountStatus {
   warmupDay?: number | null
   warmupDailyCap?: number | null
   warmupEnabled?: boolean
+  healthStatus?: string
+  recoveryUntil?: string | null
 }
 
 export interface Settings {
@@ -47,6 +49,9 @@ export interface Settings {
   hasOpenaiKey: boolean
   hasGeminiApiKey: boolean
   hasVerificationApiKey: boolean
+  unsubscribeEnabled?: boolean
+  unsubscribeFooterText?: string
+  maxFollowUpRatio?: number
   smtpAccounts: SmtpAccountStatus[]
   /** @deprecated legacy fields */
   smtpUser?: string
@@ -123,6 +128,10 @@ export interface QueueStatus {
   followUpSentToday?: number
   dailyStep1Cap?: number
   dailyFollowUpCap?: number
+  followUpsPaused?: boolean
+  followUpsPausedUntil?: string | null
+  clusterBreakerActive?: boolean
+  clusterBreakerUntil?: string | null
   activeCampaignMetrics?: Array<{
     campaignId: number
     step1Sent: number

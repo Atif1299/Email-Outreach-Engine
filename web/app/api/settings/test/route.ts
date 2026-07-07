@@ -75,9 +75,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (smtpAccount) {
+      const update: Record<string, unknown> = {
+        exhaustedUntil: null,
+        exhaustReason: null,
+        lastInboxError: null,
+      }
+      if (smtpAccount.healthStatus !== 'blocked') {
+        update.healthStatus = 'healthy'
+        update.healthChangedAt = new Date()
+        update.recoveryUntil = null
+      }
       await prisma.smtpAccount.update({
         where: { id: smtpAccount.id },
-        data: { exhaustedUntil: null, exhaustReason: null, lastInboxError: null },
+        data: update,
       })
     }
 

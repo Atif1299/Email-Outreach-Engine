@@ -3,7 +3,7 @@ import prisma from '@/lib/db'
 import { renderEmailForLead, mergeTags } from '@/lib/ai'
 import { ensureSettings } from '@/lib/settings'
 import { loadSequenceContext } from '@/lib/preview-context'
-import { buildPreviewHtml, normalizeBodyFormat, resolvePreviewBodyFormat } from '@/lib/email-html'
+import { buildPreviewHtml, buildPreviewUnsubscribeFooter, normalizeBodyFormat, resolvePreviewBodyFormat } from '@/lib/email-html'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +54,8 @@ export async function GET(request: NextRequest) {
         body: override.body,
         bodyFormat,
         htmlPreview: buildPreviewHtml(override.body, bodyFormat),
+        unsubscribePreview:
+          settings.unsubscribeEnabled !== false ? buildPreviewUnsubscribeFooter() : '',
         source: 'saved',
       })
     }
@@ -94,11 +96,13 @@ export async function GET(request: NextRequest) {
     })
 
     const effectiveFormat = resolvePreviewBodyFormat(result.body, bodyFormat)
+    const unsubFooter = settings.unsubscribeEnabled !== false ? buildPreviewUnsubscribeFooter() : ''
 
     return NextResponse.json({
       ...result,
       bodyFormat: effectiveFormat,
       htmlPreview: buildPreviewHtml(result.body, effectiveFormat),
+      unsubscribePreview: unsubFooter,
       source: useAi ? 'ai' : 'merge',
     })
   } catch (error) {

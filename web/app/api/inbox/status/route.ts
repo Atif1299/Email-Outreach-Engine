@@ -15,8 +15,9 @@ export async function GET(request: NextRequest) {
 
       const syncState = await prisma.inboxSyncState.findUnique({ where: { id: 1 } })
       const settings = await ensureSettings()
-      const limitSettings = toSendLimitSettings(settings)
       const accounts = await ensureSmtpAccounts()
+      const enabledCount = accounts.filter((a) => a.enabled && a.password).length || 1
+      const limitSettings = toSendLimitSettings(settings, enabledCount)
       const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
       const engagementWhere = campaignId ? { campaignId } : {}

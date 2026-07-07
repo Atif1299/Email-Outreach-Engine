@@ -47,7 +47,8 @@ export async function GET() {
   try {
     const settings = await ensureSettings()
     const accounts = await ensureSmtpAccounts()
-    const limitSettings = toSendLimitSettings(settings)
+    const enabledCount = accounts.filter((a) => a.enabled && a.password).length || 1
+    const limitSettings = toSendLimitSettings(settings, enabledCount)
     const publicAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
     return NextResponse.json(toPublicSettings(settings, publicAccounts))
   } catch (error) {
@@ -107,6 +108,9 @@ export async function POST(request: NextRequest) {
       aiProvider: body.aiProvider || 'openai',
       geminiModel: body.geminiModel || 'gemini-1.5-flash',
       verificationProvider: body.verificationProvider || 'none',
+      unsubscribeEnabled: body.unsubscribeEnabled ?? true,
+      unsubscribeFooterText: body.unsubscribeFooterText || '',
+      maxFollowUpRatio: body.maxFollowUpRatio ?? 0.4,
     }
 
     if (body.openaiKey) updateData.openaiKey = body.openaiKey
@@ -132,7 +136,8 @@ export async function POST(request: NextRequest) {
     }
 
     const accounts = await ensureSmtpAccounts()
-    const limitSettings = toSendLimitSettings(settings)
+    const enabledCount = accounts.filter((a) => a.enabled && a.password).length || 1
+    const limitSettings = toSendLimitSettings(settings, enabledCount)
     const publicAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
     return NextResponse.json({ success: true, ...toPublicSettings(settings, publicAccounts) })

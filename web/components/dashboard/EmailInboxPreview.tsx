@@ -12,6 +12,7 @@ interface Props {
   toName?: string
   toEmail?: string
   htmlPreview?: string
+  unsubscribeFooter?: string
 }
 
 export default function EmailInboxPreview({
@@ -23,6 +24,7 @@ export default function EmailInboxPreview({
   toName = 'Recipient',
   toEmail = 'recipient@example.com',
   htmlPreview,
+  unsubscribeFooter,
 }: Props) {
   const format = normalizeBodyFormat(bodyFormat)
   const displaySubject = subject.trim() || '(No subject)'
@@ -79,6 +81,9 @@ export default function EmailInboxPreview({
             sandbox=""
             srcDoc={iframeHtml}
           />
+          {unsubscribeFooter && (
+            <p className="inbox-preview-gmail__unsub-footer">{unsubscribeFooter.trim()}</p>
+          )}
         </div>
       </div>
     </div>

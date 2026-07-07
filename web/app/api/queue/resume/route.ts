@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 
+import { applyClusterResumeFollowUpPause } from '@/lib/inbox-cluster-guard'
+
 export async function POST() {
   try {
+    await applyClusterResumeFollowUpPause()
     await prisma.queueState.update({
       where: { id: 1 },
       data: {

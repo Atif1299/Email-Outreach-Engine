@@ -31,6 +31,7 @@ interface PreviewContent {
   body: string
   bodyFormat?: BodyFormat | string
   htmlPreview?: string
+  unsubscribePreview?: string
 }
 
 type EditorTab = 'simple' | 'html' | 'inbox'
@@ -311,6 +312,7 @@ export default function StepPreview({
           body: data.body,
           bodyFormat: data.bodyFormat ?? stepBodyFormat,
           htmlPreview: data.htmlPreview,
+          unsubscribePreview: data.unsubscribePreview,
         })
       } else {
         const err = await res.json().catch(() => ({}))
@@ -808,6 +810,7 @@ export default function StepPreview({
                       body={preview.body}
                       bodyFormat={preview.bodyFormat ?? stepBodyFormat}
                       htmlPreview={preview.htmlPreview}
+                      unsubscribeFooter={preview.unsubscribePreview}
                       fromEmail={senderFrom.email}
                       fromName={senderFrom.name}
                       toName={[selectedLead?.firstName, selectedLead?.lastName].filter(Boolean).join(' ')}

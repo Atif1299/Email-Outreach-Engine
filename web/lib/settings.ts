@@ -17,6 +17,9 @@ export interface PublicSettings {
   aiProvider: string
   geminiModel: string
   verificationProvider: string
+  unsubscribeEnabled: boolean
+  unsubscribeFooterText: string
+  maxFollowUpRatio: number
   hasOpenaiKey: boolean
   hasGeminiApiKey: boolean
   hasVerificationApiKey: boolean
@@ -60,6 +63,9 @@ export function toPublicSettings(
     geminiApiKey: string
     geminiModel: string
     verificationProvider: string
+    unsubscribeEnabled: boolean
+    unsubscribeFooterText: string
+    maxFollowUpRatio: number
     smtpPassword: string
     openaiKey: string
     verificationApiKey: string
@@ -83,6 +89,9 @@ export function toPublicSettings(
     aiProvider: settings.aiProvider,
     geminiModel: settings.geminiModel,
     verificationProvider: settings.verificationProvider,
+    unsubscribeEnabled: settings.unsubscribeEnabled,
+    unsubscribeFooterText: settings.unsubscribeFooterText || '',
+    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0.4,
     hasOpenaiKey: !!settings.openaiKey,
     hasGeminiApiKey: !!settings.geminiApiKey,
     hasVerificationApiKey: !!settings.verificationApiKey,

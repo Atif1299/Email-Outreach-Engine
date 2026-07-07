@@ -1,4 +1,5 @@
 import { buildOpenTrackingUrl } from '@/lib/track-token'
+import { buildUnsubscribeUrl, type UnsubscribeTokenPayload } from '@/lib/unsubscribe-token'
 
 export type BodyFormat = 'plain' | 'html'
 
@@ -83,26 +84,51 @@ function trackingPixelTag(pixelUrl: string): string {
   return `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0" />`
 }
 
+function unsubscribeFooterHtml(unsubscribeUrl: string, customText?: string): string {
+  const label = customText?.trim() || 'Unsubscribe'
+  return `<p style="margin-top:24px;font-size:12px;color:#666"><a href="${unsubscribeUrl}" style="color:#666">${label}</a></p>`
+}
+
+function unsubscribeFooterPlain(unsubscribeUrl: string, customText?: string): string {
+  const label = customText?.trim() || 'To stop emails'
+  return `\n\n---\n${label}: ${unsubscribeUrl}`
+}
+
+export function buildListUnsubscribeHeaders(opts: {
+  unsubscribeUrl: string
+  mailtoAddress: string
+}): Record<string, string> {
+  const mailto = `mailto:${opts.mailtoAddress}?subject=unsubscribe`
+  return {
+    'List-Unsubscribe': `<${opts.unsubscribeUrl}>, <${mailto}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  }
+}
+
 export function buildTrackedHtmlEmail(
   body: string,
   leadSendId: number,
   baseUrl?: string,
-  bodyFormat: BodyFormat = 'plain'
+  bodyFormat: BodyFormat = 'plain',
+  opts?: { unsubscribeUrl?: string; unsubscribeFooterText?: string }
 ): string {
   const pixelUrl = buildOpenTrackingUrl(leadSendId, baseUrl)
   const pixel = trackingPixelTag(pixelUrl)
+  const unsubBlock = opts?.unsubscribeUrl
+    ? unsubscribeFooterHtml(opts.unsubscribeUrl, opts.unsubscribeFooterText)
+    : ''
   const format = normalizeBodyFormat(bodyFormat)
 
   if (format === 'html') {
     const sanitized = sanitizeEmailHtml(body)
     if (/<\/body>/i.test(sanitized)) {
-      return sanitized.replace(/<\/body>/i, `${pixel}</body>`)
+      return sanitized.replace(/<\/body>/i, `${unsubBlock}${pixel}</body>`)
     }
-    return `<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:14px;line-height:1.5;color:#111">${sanitized}${pixel}</body></html>`
+    return `<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:14px;line-height:1.5;color:#111">${sanitized}${unsubBlock}${pixel}</body></html>`
   }
 
   const htmlBody = plainTextToHtml(body)
-  return `<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:14px;line-height:1.5;color:#111">${htmlBody}${pixel}</body></html>`
+  return `<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:14px;line-height:1.5;color:#111">${htmlBody}${unsubBlock}${pixel}</body></html>`
 }
 
 export function buildPreviewHtml(body: string, bodyFormat: BodyFormat = 'plain'): string {
@@ -120,13 +146,46 @@ export function buildMailContent(
   body: string,
   leadSendId: number,
   baseUrl?: string,
-  bodyFormat: BodyFormat = 'plain'
-): { text: string; html: string } {
-  const format = resolvePreviewBodyFormat(body, normalizeBodyFormat(bodyFormat))
-  return {
-    text: format === 'html' ? htmlToPlainText(body) : body,
-    html: buildTrackedHtmlEmail(body, leadSendId, baseUrl, format),
+  bodyFormat: BodyFormat = 'plain',
+  opts?: {
+    unsubscribe?: UnsubscribeTokenPayload
+    unsubscribeFooterText?: string
+    mailtoAddress?: string
+    includeTrackingPixel?: boolean
   }
+): { text: string; html: string; unsubscribeUrl?: string; listUnsubscribeHeaders?: Record<string, string> } {
+  const format = resolvePreviewBodyFormat(body, normalizeBodyFormat(bodyFormat))
+  const includePixel = opts?.includeTrackingPixel !== false
+  const unsubscribeUrl = opts?.unsubscribe
+    ? buildUnsubscribeUrl(opts.unsubscribe, baseUrl)
+    : undefined
+
+  const footerOpts = unsubscribeUrl
+    ? { unsubscribeUrl, unsubscribeFooterText: opts?.unsubscribeFooterText }
+    : undefined
+
+  const textBase = format === 'html' ? htmlToPlainText(body) : body
+  const text = footerOpts ? textBase + unsubscribeFooterPlain(unsubscribeUrl!, opts?.unsubscribeFooterText) : textBase
+
+  const html = includePixel
+    ? buildTrackedHtmlEmail(body, leadSendId, baseUrl, format, footerOpts)
+    : buildPreviewHtml(body, format) +
+    (footerOpts ? unsubscribeFooterHtml(unsubscribeUrl!, opts?.unsubscribeFooterText) : '')
+
+  const listUnsubscribeHeaders =
+    unsubscribeUrl && opts?.unsubscribe
+      ? buildListUnsubscribeHeaders({
+        unsubscribeUrl,
+        mailtoAddress: opts.mailtoAddress ?? 'unsubscribe@example.com',
+      })
+      : undefined
+
+  return { text, html, unsubscribeUrl, listUnsubscribeHeaders }
+}
+
+/** Preview-only footer (no live token). */
+export function buildPreviewUnsubscribeFooter(): string {
+  return '\n\n---\nUnsubscribe link will appear here when sent.'
 }
 
 export function emailSnippet(text: string, bodyFormat: BodyFormat = 'plain', maxLen = 120): string {

@@ -130,6 +130,9 @@ model SmtpAccount {
   lastInboxError     String?   @map("last_inbox_error")
   warmupStartedAt    DateTime? @map("warmup_started_at")
   warmupEnabled      Boolean   @default(false) @map("warmup_enabled")
+  healthStatus       String    @default("healthy") @map("health_status")
+  healthChangedAt    DateTime? @map("health_changed_at")
+  recoveryUntil      DateTime? @map("recovery_until")
   createdAt          DateTime  @default(now()) @map("created_at")
 
   assignments  LeadSmtpAssignment[]
@@ -238,6 +241,9 @@ model Settings {
   geminiModel          String  @default("gemini-2.5-flash") @map("gemini_model")
   verificationProvider String  @default("none") @map("verification_provider")
   verificationApiKey   String  @default("") @map("verification_api_key")
+  unsubscribeEnabled   Boolean @default(true) @map("unsubscribe_enabled")
+  unsubscribeFooterText String @default("") @map("unsubscribe_footer_text")
+  maxFollowUpRatio     Float   @default(0.4) @map("max_follow_up_ratio")
 
   @@map("settings")
 }
@@ -258,6 +264,8 @@ model QueueState {
   lastServedCampaignId Int?     @map("last_served_campaign_id")
   processingLockUntil  DateTime? @map("processing_lock_until")
   nextSendAllowedAt    DateTime? @map("next_send_allowed_at")
+  followUpsPausedUntil DateTime? @map("follow_ups_paused_until")
+  clusterBreakerUntil  DateTime? @map("cluster_breaker_until")
   updatedAt            DateTime @default(now()) @map("updated_at")
 
   @@map("queue_state")

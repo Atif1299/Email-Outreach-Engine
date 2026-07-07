@@ -6,6 +6,7 @@ export interface SendLimitSettings {
   dailyCap: number
   dailyStep1Cap: number
   dailyFollowUpCap: number
+  maxFollowUpRatio: number
   hourlyCap: number
   sendTimezone: string
   sendStartHour: number
@@ -24,7 +25,14 @@ export type SendGateResult =
   }
 
 export function isStepTypeCapsEnabled(settings: SendLimitSettings): boolean {
-  return settings.dailyStep1Cap > 0 || settings.dailyFollowUpCap > 0
+  return settings.dailyStep1Cap > 0 && settings.dailyFollowUpCap > 0
+}
+
+function resolveDefaultStepCaps(dailyCap: number, enabledAccountCount: number) {
+  const total = dailyCap * Math.max(enabledAccountCount, 1)
+  const dailyStep1Cap = Math.floor(total * 0.7)
+  const dailyFollowUpCap = total - dailyStep1Cap
+  return { dailyStep1Cap, dailyFollowUpCap }
 }
 
 export function getZonedParts(date: Date, timeZone: string) {
@@ -215,6 +223,19 @@ export async function evaluateStepTypeDailyCap(
     }
   }
 
+  if (stepOrder > 1 && settings.maxFollowUpRatio > 0) {
+    const ratio = followUpSentToday / Math.max(step1SentToday, 1)
+    if (ratio > settings.maxFollowUpRatio) {
+      return {
+        allowed: false,
+        status: 'follow_up_cap',
+        message: `Follow-up ratio cap (${Math.round(settings.maxFollowUpRatio * 100)}% of step-1 sends) reached for today`,
+        sendsToday: followUpSentToday,
+        cap: Math.floor(step1SentToday * settings.maxFollowUpRatio),
+      }
+    }
+  }
+
   return { allowed: true }
 }
 
@@ -267,22 +288,34 @@ export async function evaluateGlobalDailyCap(
   return { allowed: true }
 }
 
-export function toSendLimitSettings(settings: {
-  sendDelayMinMs: number
-  sendDelayMaxMs: number
-  dailyCap: number
-  dailyStep1Cap?: number
-  dailyFollowUpCap?: number
-  hourlyCap: number
-  sendTimezone: string
-  sendStartHour: number
-}): SendLimitSettings {
+export function toSendLimitSettings(
+  settings: {
+    sendDelayMinMs: number
+    sendDelayMaxMs: number
+    dailyCap: number
+    dailyStep1Cap?: number
+    dailyFollowUpCap?: number
+    maxFollowUpRatio?: number
+    hourlyCap: number
+    sendTimezone: string
+    sendStartHour: number
+  },
+  enabledAccountCount = 1
+): SendLimitSettings {
+  let dailyStep1Cap = settings.dailyStep1Cap ?? 0
+  let dailyFollowUpCap = settings.dailyFollowUpCap ?? 0
+  if (dailyStep1Cap <= 0 && dailyFollowUpCap <= 0) {
+    const defaults = resolveDefaultStepCaps(settings.dailyCap, enabledAccountCount)
+    dailyStep1Cap = defaults.dailyStep1Cap
+    dailyFollowUpCap = defaults.dailyFollowUpCap
+  }
   return {
     sendDelayMinMs: settings.sendDelayMinMs,
     sendDelayMaxMs: settings.sendDelayMaxMs,
     dailyCap: settings.dailyCap,
-    dailyStep1Cap: settings.dailyStep1Cap ?? 0,
-    dailyFollowUpCap: settings.dailyFollowUpCap ?? 0,
+    dailyStep1Cap,
+    dailyFollowUpCap,
+    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0.4,
     hourlyCap: settings.hourlyCap,
     sendTimezone: settings.sendTimezone || 'Asia/Karachi',
     sendStartHour: settings.sendStartHour ?? 12,
