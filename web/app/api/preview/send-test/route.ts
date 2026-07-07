@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
+import prisma from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
 import {
   createAccountTransporter,
   formatFromAddress,
   getEnabledSmtpAccounts,
 } from '@/lib/smtp-accounts'
-import {
-  buildPreviewHtml,
-  htmlToPlainText,
-  normalizeBodyFormat,
-  resolvePreviewBodyFormat,
-} from '@/lib/email-html'
+import { buildMailContent, normalizeBodyFormat } from '@/lib/email-html'
+import { getAppBaseUrl } from '@/lib/track-token'
 import { enhanceSmtpError } from '@/lib/smtp'
 
 export const dynamic = 'force-dynamic'
+
+function formatMessageId(id: string): string {
+  const trimmed = id.trim()
+  return trimmed.startsWith('<') ? trimmed : `<${trimmed}>`
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,6 +24,9 @@ export async function POST(request: NextRequest) {
     const subject = typeof body.subject === 'string' ? body.subject.trim() : ''
     const emailBody = typeof body.body === 'string' ? body.body : ''
     const bodyFormat = normalizeBodyFormat(body.bodyFormat)
+    const leadId = parseInt(String(body.leadId ?? ''), 10)
+    const campaignId = parseInt(String(body.campaignId ?? ''), 10)
+    const stepOrder = parseInt(String(body.stepOrder ?? '1'), 10) || 1
 
     if (!toEmail.includes('@')) {
       return NextResponse.json({ error: 'Enter a valid test inbox email' }, { status: 400 })
@@ -31,6 +36,12 @@ export async function POST(request: NextRequest) {
     }
     if (!emailBody.trim()) {
       return NextResponse.json({ error: 'Body is empty — refresh preview first' }, { status: 400 })
+    }
+    if (!leadId || !campaignId) {
+      return NextResponse.json(
+        { error: 'Select a lead and campaign in Preview before sending a test' },
+        { status: 400 }
+      )
     }
 
     const settings = await ensureSettings()
@@ -43,19 +54,75 @@ export async function POST(request: NextRequest) {
     }
 
     const account = accounts[0]
-    const effectiveFormat = resolvePreviewBodyFormat(emailBody, bodyFormat)
-    const html = buildPreviewHtml(emailBody, effectiveFormat)
-    const text = effectiveFormat === 'html' ? htmlToPlainText(emailBody) : emailBody
     const transporter = createAccountTransporter(account, settings)
     const from = formatFromAddress(settings.smtpFromName, account, accounts)
 
-    await transporter.sendMail({
+    const leadSend = await prisma.leadSend.create({
+      data: {
+        leadId,
+        campaignId,
+        stepOrder,
+        subject,
+        bodySnippet: emailBody.slice(0, 1500),
+        smtpAccountId: account.id,
+      },
+    })
+
+    const unsubEnabled = settings.unsubscribeEnabled !== false
+    const mailContent = buildMailContent(
+      emailBody,
+      leadSend.id,
+      getAppBaseUrl(),
+      bodyFormat,
+      unsubEnabled
+        ? {
+            unsubscribe: { leadId, campaignId, leadSendId: leadSend.id },
+            unsubscribeFooterText: settings.unsubscribeFooterText || undefined,
+            mailtoAddress: account.email,
+            includeTrackingPixel: false,
+          }
+        : { includeTrackingPixel: false }
+    )
+
+    const extraHeaders: Record<string, string> = {}
+    if (mailContent.listUnsubscribeHeaders) {
+      Object.assign(extraHeaders, mailContent.listUnsubscribeHeaders)
+    }
+
+    if (stepOrder > 1) {
+      const priorSend = await prisma.leadSend.findFirst({
+        where: {
+          leadId,
+          campaignId,
+          stepOrder: stepOrder - 1,
+          error: null,
+          subject: { notIn: ['SENDING', 'FAILED'] },
+          smtpMessageId: { not: null },
+        },
+        orderBy: { sentAt: 'desc' },
+      })
+      if (priorSend?.smtpMessageId) {
+        const refId = formatMessageId(priorSend.smtpMessageId)
+        extraHeaders['In-Reply-To'] = refId
+        extraHeaders.References = refId
+      }
+    }
+
+    const info = await transporter.sendMail({
       from,
       to: toEmail,
       subject,
-      text,
-      html,
+      text: mailContent.text,
+      html: mailContent.html,
+      ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     })
+
+    if (info.messageId) {
+      await prisma.leadSend.update({
+        where: { id: leadSend.id },
+        data: { smtpMessageId: info.messageId },
+      })
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -401,6 +401,9 @@ export default function StepPreview({
           subject: preview.subject,
           body: preview.body,
           bodyFormat: preview.bodyFormat ?? stepBodyFormat,
+          leadId: selectedLeadId,
+          campaignId: previewCampaignId,
+          stepOrder,
         }),
       })
       if (!res.ok) return
