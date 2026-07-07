@@ -1,9 +1,23 @@
 import crypto from 'crypto'
 
+function isLocalhostUrl(url: string): boolean {
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(url)
+}
+
 export function getAppBaseUrl(): string | undefined {
-  const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || '').replace(/\/$/, '')
-  if (!origin) return undefined
-  return origin.startsWith('http') ? origin : `https://${origin}`
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_URL,
+  ].filter((v): v is string => !!v?.trim())
+
+  for (const raw of candidates) {
+    let origin = raw.trim().replace(/\/$/, '')
+    if (process.env.NODE_ENV === 'production' && isLocalhostUrl(origin)) continue
+    return origin.startsWith('http') ? origin : `https://${origin}`
+  }
+
+  return undefined
 }
 
 function trackingSecret(): string {

@@ -86,7 +86,7 @@ function trackingPixelTag(pixelUrl: string): string {
 
 function unsubscribeFooterHtml(unsubscribeUrl: string, customText?: string): string {
   const label = customText?.trim() || 'Unsubscribe'
-  return `<p style="margin-top:24px;font-size:12px;color:#666"><a href="${unsubscribeUrl}" style="color:#666">${label}</a></p>`
+  return `<p style="margin-top:24px;font-size:12px;color:#666;text-align:center"><a href="${unsubscribeUrl}" style="color:#666">${label}</a></p>`
 }
 
 function unsubscribeFooterPlain(unsubscribeUrl: string, customText?: string): string {
