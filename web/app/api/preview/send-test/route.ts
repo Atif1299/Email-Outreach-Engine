@@ -57,16 +57,31 @@ export async function POST(request: NextRequest) {
     const transporter = createAccountTransporter(account, settings)
     const from = formatFromAddress(settings.smtpFromName, account, accounts)
 
-    const leadSend = await prisma.leadSend.create({
-      data: {
-        leadId,
-        campaignId,
-        stepOrder,
-        subject,
-        bodySnippet: emailBody.slice(0, 1500),
-        smtpAccountId: account.id,
-      },
+    const existing = await prisma.leadSend.findFirst({
+      where: { leadId, campaignId, stepOrder, error: null },
     })
+
+    const leadSend = existing
+      ? await prisma.leadSend.update({
+          where: { id: existing.id },
+          data: {
+            subject,
+            bodySnippet: emailBody.slice(0, 1500),
+            smtpAccountId: account.id,
+            sentAt: new Date(),
+            openedAt: null,
+          },
+        })
+      : await prisma.leadSend.create({
+          data: {
+            leadId,
+            campaignId,
+            stepOrder,
+            subject,
+            bodySnippet: emailBody.slice(0, 1500),
+            smtpAccountId: account.id,
+          },
+        })
 
     const unsubEnabled = settings.unsubscribeEnabled !== false
     const mailContent = buildMailContent(

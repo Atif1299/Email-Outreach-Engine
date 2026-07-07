@@ -406,13 +406,17 @@ export default function StepPreview({
           stepOrder,
         }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        showPreviewHint(err.error || 'Test send failed', 'err')
+        return
+      }
 
       setTestSendSent(true)
       if (testSendSentTimerRef.current) clearTimeout(testSendSentTimerRef.current)
       testSendSentTimerRef.current = setTimeout(() => setTestSendSent(false), 2500)
     } catch {
-      /* ignore */
+      showPreviewHint('Test send failed', 'err')
     } finally {
       setTestSendLoading(false)
     }
