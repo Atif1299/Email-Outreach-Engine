@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Email Outreach',
-  description: 'Import, personalize, and send cold emails',
+  title: 'Email Outreach Engine',
+  description: 'Import, personalize, and send cold emails at scale',
 }
 
 export default function RootLayout({

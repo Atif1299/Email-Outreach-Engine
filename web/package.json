@@ -16,6 +16,7 @@
     "@prisma/adapter-neon": "^5.22.0",
     "@prisma/client": "5.22.0",
     "bufferutil": "^4.1.0",
+    "geist": "^1.7.2",
     "imapflow": "^1.4.2",
     "mailparser": "^3.9.11",
     "next": "14.2.18",
