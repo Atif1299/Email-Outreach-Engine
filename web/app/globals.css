@@ -680,6 +680,15 @@
   color: var(--text);
 }
 
+.smtp-account-health-hint
+{
+  margin: -0.25rem 0 0.5rem;
+  font-size: 0.68rem;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .smtp-account-enabled
 {
   display: flex;

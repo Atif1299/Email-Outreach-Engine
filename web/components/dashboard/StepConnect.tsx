@@ -346,12 +346,22 @@ export default function StepConnect({
             <div className="smtp-accounts-list">
               {gmailClusterCount >= 3 && (
                 <p className="smtp-cluster-warning">
-                  {gmailClusterCount} @gmail.com inboxes share platform reputation — cluster protection
-                  will slow all inboxes if one is blocked.
+                  {gmailClusterCount} @gmail.com inboxes — if one is blocked, only that inbox enters
+                  recovery. The queue pauses only after 2+ blocks in 24 hours.
                 </p>
               )}
               {smtpAccounts.map((account, index) => {
-                const health = healthBadgeLabel(settings?.smtpAccounts?.[index]?.healthStatus)
+                const pub = settings?.smtpAccounts?.[index]
+                const health = healthBadgeLabel(pub?.healthStatus)
+                const exhaustHint =
+                  pub?.healthStatus === 'recovery' && pub.exhaustReason
+                    ? `${pub.exhaustReason.replace(/_/g, ' ')}${pub.exhaustedUntil
+                      ? ` · until ${new Date(pub.exhaustedUntil).toLocaleString()}`
+                      : ''
+                    }`
+                    : pub?.lastInboxError
+                      ? `IMAP: ${pub.lastInboxError.slice(0, 80)}`
+                      : null
                 return (
                   <div key={account.id ?? `new-${index}`} className="smtp-account-card">
                     <div className="smtp-account-card-header">
@@ -369,6 +379,9 @@ export default function StepConnect({
                         Enabled
                       </label>
                     </div>
+                    {exhaustHint && (
+                      <p className="smtp-account-health-hint">{exhaustHint}</p>
+                    )}
                     <div className="settings-grid">
                       <div className="field">
                         <label className="mini-label">Gmail address</label>

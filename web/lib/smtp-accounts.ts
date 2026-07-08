@@ -16,6 +16,53 @@ const EXHAUST_DURATION_MS: Record<DeliveryHaltReason, number> = {
   auth_failure: 24 * 60 * 60 * 1000,
 }
 
+const CLUSTER_EXHAUST_REASONS = new Set<DeliveryHaltReason>([
+  'message_blocked',
+  'gmail_rate_limit',
+  'auth_failure',
+])
+
+/** Badge reflects active send cooldown, not a stale DB flag or 7-day window. */
+export function getEffectiveHealthStatus(
+  account: Pick<SmtpAccount, 'healthStatus' | 'exhaustReason' | 'exhaustedUntil'>,
+  now = new Date()
+): 'healthy' | 'recovery' | 'blocked' {
+  if (account.healthStatus === 'blocked' || account.exhaustReason === 'auth_failure') {
+    return 'blocked'
+  }
+  const coolingDown = !!account.exhaustedUntil && account.exhaustedUntil > now
+  const smtpHalt =
+    account.exhaustReason === 'message_blocked' || account.exhaustReason === 'gmail_rate_limit'
+  if (smtpHalt && coolingDown) return 'recovery'
+  return 'healthy'
+}
+
+/** Clear collateral recovery tags and expired recovery windows. */
+export async function reconcileInboxHealthStatuses() {
+  const now = new Date()
+  const accounts = await prisma.smtpAccount.findMany()
+
+  for (const account of accounts) {
+    if (account.healthStatus === 'blocked') continue
+
+    const effective = getEffectiveHealthStatus(account, now)
+    const smtpHalt =
+      account.exhaustReason === 'message_blocked' || account.exhaustReason === 'gmail_rate_limit'
+    const coolingDown = !!account.exhaustedUntil && account.exhaustedUntil > now
+
+    if (effective === 'healthy' && account.healthStatus !== 'healthy') {
+      await prisma.smtpAccount.update({
+        where: { id: account.id },
+        data: {
+          healthStatus: 'healthy',
+          recoveryUntil: null,
+          ...(smtpHalt && !coolingDown ? { exhaustReason: null } : {}),
+        },
+      })
+    }
+  }
+}
+
 export interface PublicSmtpAccount {
   id: number
   email: string
@@ -75,6 +122,7 @@ async function migrateLegacySmtpSettings() {
 
 export async function ensureSmtpAccounts() {
   await migrateLegacySmtpSettings()
+  await reconcileInboxHealthStatuses()
   return withDbRetry((db) =>
     db.smtpAccount.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] })
   )
@@ -82,6 +130,7 @@ export async function ensureSmtpAccounts() {
 
 export async function getEnabledSmtpAccounts(): Promise<SmtpAccount[]> {
   await migrateLegacySmtpSettings()
+  await reconcileInboxHealthStatuses()
   return withDbRetry((db) =>
     db.smtpAccount.findMany({
       where: { enabled: true, password: { not: '' } },
@@ -102,10 +151,7 @@ export function getWarmupDay(account: SmtpAccount, now = new Date()): number | n
 }
 
 function isForcedRecovery(account: SmtpAccount, now = new Date()): boolean {
-  return (
-    account.healthStatus === 'recovery' ||
-    (!!account.recoveryUntil && account.recoveryUntil > now)
-  )
+  return getEffectiveHealthStatus(account, now) === 'recovery'
 }
 
 export function getWarmupDailyCap(account: SmtpAccount, userDailyCap: number, now = new Date()): number {
@@ -254,7 +300,7 @@ export async function toPublicSmtpAccounts(
       hasPassword: !!account.password,
       exhaustedUntil: account.exhaustedUntil?.toISOString() ?? null,
       exhaustReason: account.exhaustReason,
-      healthStatus: account.healthStatus || 'healthy',
+      healthStatus: getEffectiveHealthStatus(account),
       recoveryUntil: account.recoveryUntil?.toISOString() ?? null,
       sendsToday,
       sendsThisHour,
@@ -433,7 +479,6 @@ export async function resolveAccountForSend(opts: {
 export async function markAccountExhausted(accountId: number, reason: DeliveryHaltReason) {
   const now = new Date()
   const until = new Date(now.getTime() + EXHAUST_DURATION_MS[reason])
-  const recoveryUntil = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const data: Record<string, unknown> = {
     exhaustedUntil: until,
@@ -443,11 +488,11 @@ export async function markAccountExhausted(accountId: number, reason: DeliveryHa
   if (reason === 'auth_failure') {
     data.healthStatus = 'blocked'
     data.healthChangedAt = now
-    data.recoveryUntil = recoveryUntil
+    data.recoveryUntil = until
   } else if (reason === 'message_blocked' || reason === 'gmail_rate_limit') {
     data.healthStatus = 'recovery'
     data.healthChangedAt = now
-    data.recoveryUntil = recoveryUntil
+    data.recoveryUntil = until
     data.warmupEnabled = true
   }
 
@@ -559,7 +604,6 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
       })
       keptIds.add(account.id)
     } else {
-      const recoveryUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       const created = await prisma.smtpAccount.create({
         data: {
           email: account.email,
@@ -568,9 +612,8 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
           enabled: account.enabled,
           sortOrder: account.sortOrder,
           warmupEnabled: true,
-          healthStatus: 'recovery',
-          healthChangedAt: new Date(),
-          recoveryUntil,
+          healthStatus: 'healthy',
+          warmupStartedAt: new Date(),
         },
       })
       keptIds.add(created.id)
