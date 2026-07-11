@@ -184,3 +184,24 @@ export async function countPriorCampaignContacts(
 
   return rows.length
 }
+
+/** Lead IDs that already received a successful send in any other campaign. */
+export async function getPriorCampaignContactLeadIds(
+  campaignId: number,
+  leadIds: number[]
+): Promise<Set<number>> {
+  if (leadIds.length === 0) return new Set()
+
+  const rows = await prisma.leadSend.findMany({
+    where: {
+      leadId: { in: leadIds },
+      campaignId: { not: campaignId },
+      error: null,
+      subject: { notIn: ['SENDING', 'FAILED'] },
+    },
+    select: { leadId: true },
+    distinct: ['leadId'],
+  })
+
+  return new Set(rows.map((r) => r.leadId))
+}

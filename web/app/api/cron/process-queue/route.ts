@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db'
-import { isAuthorizedCron, runQueueCron } from '@/lib/queue-cron'
-import { runAiBulkCron } from '@/lib/ai-bulk-processor'
+import { CRON_QUEUE_BUDGET_MS, isAuthorizedCron, runQueueCron } from '@/lib/queue-cron'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+
+/**
+ * Default maxBatches=1 stays under ~30s external cron timeouts when AI renders inline.
+ * Override with QUEUE_CRON_MAX_BATCHES (e.g. 2) only after measuring send latency.
+ */
+function resolveMaxBatches(): number {
+  const raw = process.env.QUEUE_CRON_MAX_BATCHES
+  if (!raw) return 1
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 5) : 1
+}
 
 async function handleCron(request: NextRequest) {
   if (!isAuthorizedCron(request)) {
@@ -12,11 +22,11 @@ async function handleCron(request: NextRequest) {
   }
 
   try {
-    const [queueResult, aiBulkResult] = await Promise.all([
-      runQueueCron(),
-      runAiBulkCron(),
-    ])
-    return NextResponse.json({ queue: queueResult, aiBulk: aiBulkResult })
+    const queueResult = await runQueueCron({
+      maxRuntimeMs: CRON_QUEUE_BUDGET_MS,
+      maxBatches: resolveMaxBatches(),
+    })
+    return NextResponse.json({ queue: queueResult })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Processing failed'
     await prisma.queueState.update({
@@ -27,7 +37,7 @@ async function handleCron(request: NextRequest) {
   }
 }
 
-/** Vercel Cron + external schedulers (cron-job.org, etc.) */
+/** Vercel Cron + external schedulers (cron-job.org, etc.) — send queue only. */
 export async function GET(request: NextRequest) {
   return handleCron(request)
 }

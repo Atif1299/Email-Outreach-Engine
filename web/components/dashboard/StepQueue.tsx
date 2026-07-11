@@ -63,9 +63,10 @@ function cardStateForCampaign(
   isActive: boolean,
   queueRunning: boolean,
   queuePaused: boolean,
-  waitingOnLimits: boolean
+  waitingOnLimits: boolean,
+  followUpsPaused: boolean
 ): CampaignCardState {
-  return getCampaignCardState(stats, isActive, queueRunning, queuePaused, waitingOnLimits)
+  return getCampaignCardState(stats, isActive, queueRunning, queuePaused, waitingOnLimits, followUpsPaused)
 }
 
 function getCampaignCardState(
@@ -73,20 +74,53 @@ function getCampaignCardState(
   isActive: boolean,
   queueRunning: boolean,
   queuePaused: boolean,
-  waitingOnLimits: boolean
+  waitingOnLimits: boolean,
+  followUpsPaused: boolean
 ): CampaignCardState {
   if (stats && stats.sendable > 0 && stats.leadsCompleted >= stats.sendable) return 'completed'
   if (isActive && queueRunning && waitingOnLimits) return 'paused'
+  if (isActive && queueRunning && !queuePaused && followUpsPaused) {
+    const progress = computeCampaignProgress(
+      {
+        sendable: stats?.sendable ?? 0,
+        leadsCompleted: stats?.leadsCompleted ?? 0,
+        stepCount: stats?.stepCount ?? 0,
+        stepBreakdown: stats?.stepBreakdown,
+      },
+      { isActive, queueRunning, queuePaused }
+    )
+    if ((progress.activeStepOrder ?? 1) > 1) return 'paused'
+  }
   if (isActive && queueRunning && !queuePaused) return 'sending'
   if (isActive && queuePaused) return 'paused'
   if (isActive) return 'in_queue'
   return 'idle'
 }
 
-function campaignBadgeLabel(state: CampaignCardState): string {
-  if (state === 'sending') return 'Sending'
+function isFollowUpsPausedForCampaign(
+  stats: CampaignStats | undefined,
+  isActive: boolean,
+  queueRunning: boolean,
+  queuePaused: boolean,
+  followUpsPaused: boolean
+): boolean {
+  if (!isActive || !queueRunning || queuePaused || !followUpsPaused) return false
+  const progress = computeCampaignProgress(
+    {
+      sendable: stats?.sendable ?? 0,
+      leadsCompleted: stats?.leadsCompleted ?? 0,
+      stepCount: stats?.stepCount ?? 0,
+      stepBreakdown: stats?.stepBreakdown,
+    },
+    { isActive, queueRunning, queuePaused }
+  )
+  return (progress.activeStepOrder ?? 1) > 1
+}
+
+function campaignBadgeLabel(state: CampaignCardState, followUpsPausedWaiting = false): string {
+  if (state === 'sending') return followUpsPausedWaiting ? 'Waiting' : 'Sending'
   if (state === 'in_queue') return 'In queue'
-  if (state === 'paused') return 'Paused'
+  if (state === 'paused') return followUpsPausedWaiting ? 'Follow-ups paused' : 'Paused'
   if (state === 'completed') return 'Completed'
   return 'Idle'
 }
@@ -101,11 +135,23 @@ interface CampaignCardProps {
   queueRunning: boolean
   queuePaused: boolean
   waitingOnLimits: boolean
+  followUpsPaused: boolean
+  queueOptions?: {
+    priority: number
+    followUpsOnly: boolean
+    dailyStep1Quota: number | null
+  }
+  dueBreakdown?: { step1Due: number; followUpDue: number }
   onView: () => void
   onToggleSelect: () => void
   onAnalytics: () => void
   onToggleActive: () => void
   onDelete: () => void
+  onUpdateOptions?: (opts: {
+    priority?: number
+    followUpsOnly?: boolean
+    dailyStep1Quota?: number | null
+  }) => void
 }
 
 function CampaignCard({
@@ -118,13 +164,24 @@ function CampaignCard({
   queueRunning,
   queuePaused,
   waitingOnLimits,
+  followUpsPaused,
+  queueOptions,
+  dueBreakdown,
   onView,
   onToggleSelect,
   onAnalytics,
   onToggleActive,
   onDelete,
+  onUpdateOptions,
 }: CampaignCardProps) {
-  const cardState = getCampaignCardState(stats, isActive, queueRunning, queuePaused, waitingOnLimits)
+  const cardState = getCampaignCardState(stats, isActive, queueRunning, queuePaused, waitingOnLimits, followUpsPaused)
+  const followUpsPausedWaiting = isFollowUpsPausedForCampaign(
+    stats,
+    isActive,
+    queueRunning,
+    queuePaused,
+    followUpsPaused
+  )
   const subject =
     campaign.steps.find((s) => s.stepOrder === 1)?.subjectTemplate || 'No subject template'
   const sendable = stats?.sendable ?? 0
@@ -144,6 +201,7 @@ function CampaignCard({
   const progressPct = progress.progressPct
   const displaySent = progress.phase === 'active' ? progress.sent : (stats?.leadsStarted ?? 0)
   const displayTotal = progress.phase === 'active' ? progress.total : sendable
+  const activeStepOrder = progress.activeStepOrder
   const emailsSent = stats?.emailsSent ?? 0
   const openedCount = stats?.openedCount ?? 0
   const openRate = emailsSent > 0 ? Math.round((openedCount / emailsSent) * 100) : 0
@@ -170,7 +228,7 @@ function CampaignCard({
             {campaign.name}
           </button>
           <span className={`camp-row__badge camp-row__badge--${cardState}`}>
-            {campaignBadgeLabel(cardState)}
+            {campaignBadgeLabel(cardState, followUpsPausedWaiting)}
           </span>
         </div>
         <p className="camp-row__subject">
@@ -178,7 +236,57 @@ function CampaignCard({
           {followUpSent > 0 && (
             <span className="camp-row__meta"> · Follow-ups: {followUpSent} sent</span>
           )}
+          {dueBreakdown && (dueBreakdown.step1Due > 0 || dueBreakdown.followUpDue > 0) && (
+            <span className="camp-row__meta">
+              {' '}
+              · Due: {dueBreakdown.step1Due} Step 1 / {dueBreakdown.followUpDue} follow-up
+            </span>
+          )}
         </p>
+        {isActive && onUpdateOptions && queueOptions && (
+          <div className="camp-row__queue-opts">
+            <label className="camp-row__opt" title="Higher priority is served first within the same step type">
+              Priority
+              <input
+                type="number"
+                min={0}
+                max={99}
+                defaultValue={queueOptions.priority}
+                key={`pri-${campaign.id}-${queueOptions.priority}`}
+                onBlur={(e) =>
+                  onUpdateOptions({ priority: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                }
+              />
+            </label>
+            <label className="camp-row__opt" title="Skip Step 1 for this campaign — only send due follow-ups">
+              <input
+                type="checkbox"
+                checked={queueOptions.followUpsOnly}
+                onChange={(e) => onUpdateOptions({ followUpsOnly: e.target.checked })}
+              />
+              Follow-ups only
+            </label>
+            <label className="camp-row__opt" title="Optional per-campaign Step 1 daily quota (blank = unlimited)">
+              Step 1/day
+              <input
+                type="number"
+                min={0}
+                placeholder="∞"
+                defaultValue={queueOptions.dailyStep1Quota ?? ''}
+                key={`quota-${campaign.id}-${queueOptions.dailyStep1Quota ?? 'x'}`}
+                onBlur={(e) => {
+                  const raw = e.target.value.trim()
+                  if (raw === '') {
+                    onUpdateOptions({ dailyStep1Quota: null })
+                    return
+                  }
+                  const n = parseInt(raw, 10)
+                  onUpdateOptions({ dailyStep1Quota: Number.isFinite(n) && n > 0 ? n : null })
+                }}
+              />
+            </label>
+          </div>
+        )}
         {showProgress && (
           <div className="camp-row__progress">
             <div className="camp-row__progress-track">
@@ -196,11 +304,15 @@ function CampaignCard({
         <div className="camp-row__counts">
           <div className="camp-row__count">
             <span className="camp-row__count-val">{displaySent}</span>
-            <span className="camp-row__count-lbl">sent</span>
+            <span className="camp-row__count-lbl">
+              {activeStepOrder != null ? `Step ${activeStepOrder} sent` : 'sent'}
+            </span>
           </div>
           <div className="camp-row__count">
             <span className="camp-row__count-val">{displayTotal}</span>
-            <span className="camp-row__count-lbl">total</span>
+            <span className="camp-row__count-lbl">
+              {activeStepOrder != null ? `Step ${activeStepOrder} eligible` : 'total'}
+            </span>
           </div>
         </div>
         <span className="camp-row__rate camp-row__rate--success">{successRate}% success</span>
@@ -258,9 +370,12 @@ export default function StepQueue({
   const [inboxSyncing, setInboxSyncing] = useState(false)
   const [analyticsCampaignId, setAnalyticsCampaignId] = useState<number | null>(null)
   const [campaignFilter, setCampaignFilter] = useState<CampaignFilter>('all')
+  const [excludePriorContacts, setExcludePriorContacts] = useState(false)
+  const [refreshingLeads, setRefreshingLeads] = useState(false)
   const statsInFlightRef = useRef(false)
   const queueInFlightRef = useRef(false)
   const inboxInFlightRef = useRef(false)
+  const optionsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startFlash = useButtonFlash()
   const { hint: queueHint, showHint: showQueueHint } = useInlineHint()
 
@@ -413,20 +528,77 @@ export default function StepQueue({
         const res = await fetch('/api/queue/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaignId }),
+          body: JSON.stringify({
+            campaignId,
+            excludePriorCampaignContacts: excludePriorContacts,
+          }),
         })
         if (!res.ok) {
           const err = await res.json()
           showQueueHint(err.error || 'Failed to activate', 'err')
           return
         }
-        showQueueHint('Campaign added to queue', 'ok')
+        const data = await res.json()
+        const excluded = data.warnings?.priorCampaignExcluded ?? 0
+        showQueueHint(
+          excluded > 0
+            ? `Campaign added · ${excluded} prior-contact leads skipped`
+            : 'Campaign added to queue',
+          'ok'
+        )
       }
       await loadQueueStatus()
       await loadAllCampaignStats()
     } catch {
       showQueueHint('Failed to update campaign', 'err')
     }
+  }
+
+  async function updateCampaignQueueOptions(
+    campaignId: number,
+    opts: { priority?: number; followUpsOnly?: boolean; dailyStep1Quota?: number | null }
+  ) {
+    if (optionsDebounceRef.current) clearTimeout(optionsDebounceRef.current)
+    optionsDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/queue/campaign-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaignId, ...opts }),
+        })
+        if (!res.ok) {
+          const err = await res.json()
+          showQueueHint(err.error || 'Failed to update options', 'err')
+          return
+        }
+        await loadQueueStatus()
+      } catch {
+        showQueueHint('Failed to update options', 'err')
+      }
+    }, 400)
+  }
+
+  async function refreshActiveLeads() {
+    if (!queueStatus.running && activeCampaignIds.length === 0) {
+      showQueueHint('No active campaigns to refresh', 'warn')
+      return
+    }
+    setRefreshingLeads(true)
+    try {
+      const res = await fetch('/api/queue/refresh-leads', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json()
+        showQueueHint(err.error || 'Refresh failed', 'err')
+        return
+      }
+      const data = await res.json()
+      await loadQueueStatus()
+      await loadAllCampaignStats()
+      showQueueHint(`Refreshed leads for ${data.refreshed ?? 0} campaign(s)`, 'ok')
+    } catch {
+      showQueueHint('Refresh failed', 'err')
+    }
+    setRefreshingLeads(false)
   }
 
   async function startQueue() {
@@ -441,7 +613,10 @@ export default function StepQueue({
       const res = await fetch('/api/queue/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaignIds: ids }),
+        body: JSON.stringify({
+          campaignIds: ids,
+          excludePriorCampaignContacts: excludePriorContacts,
+        }),
       })
       if (res.ok) {
         const data = await res.json()
@@ -449,13 +624,20 @@ export default function StepQueue({
         await loadAllCampaignStats()
         startFlash.flashDone()
         const parts: string[] = [`Started ${data.results?.filter((r: { leadCount?: number }) => r.leadCount).length ?? ids.length} campaign(s)`]
-        if (data.warnings?.priorCampaignContacts > 0) {
+        if (data.warnings?.priorCampaignExcluded > 0) {
+          parts.push(`${data.warnings.priorCampaignExcluded} prior-contact leads skipped`)
+        } else if (data.warnings?.priorCampaignContacts > 0) {
           parts.push(`${data.warnings.priorCampaignContacts} already emailed in other campaigns`)
         }
         if (data.warnings?.doNotContactExcluded > 0) {
           parts.push(`${data.warnings.doNotContactExcluded} on do-not-contact list`)
         }
-        showQueueHint(parts.join(' · '), data.warnings?.priorCampaignContacts > 0 ? 'warn' : 'ok')
+        showQueueHint(
+          parts.join(' · '),
+          data.warnings?.priorCampaignContacts > 0 || data.warnings?.priorCampaignExcluded > 0
+            ? 'warn'
+            : 'ok'
+        )
       } else {
         const err = await res.json()
         startFlash.flashError()
@@ -501,6 +683,31 @@ export default function StepQueue({
       showQueueHint('Resumed', 'ok')
     } catch {
       showQueueHint('Resume failed', 'err')
+    }
+  }
+
+  async function resumeFollowUps() {
+    if (!queueStatus.followUpsPaused) {
+      showQueueHint('Follow-ups are not paused', 'warn')
+      return
+    }
+    if (
+      !window.confirm(
+        'Resume follow-ups now? This overrides Gmail block protection for all inboxes until the next block.'
+      )
+    ) {
+      return
+    }
+    try {
+      const res = await fetch('/api/queue/resume-follow-ups', { method: 'POST' })
+      if (!res.ok) {
+        showQueueHint('Failed to resume follow-ups', 'err')
+        return
+      }
+      await loadQueueStatus()
+      showQueueHint('Follow-ups resumed', 'ok')
+    } catch {
+      showQueueHint('Failed to resume follow-ups', 'err')
     }
   }
 
@@ -615,7 +822,8 @@ export default function StepQueue({
       activeCampaignIds.includes(c.id),
       queueStatus.running,
       queueStatus.paused,
-      waitingOnLimits
+      waitingOnLimits,
+      queueStatus.followUpsPaused ?? false
     )
     return st === 'paused'
   }).length
@@ -625,7 +833,8 @@ export default function StepQueue({
       activeCampaignIds.includes(c.id),
       queueStatus.running,
       queueStatus.paused,
-      waitingOnLimits
+      waitingOnLimits,
+      queueStatus.followUpsPaused ?? false
     )
     return st === 'idle'
   }).length
@@ -637,7 +846,8 @@ export default function StepQueue({
       activeCampaignIds.includes(c.id),
       queueStatus.running,
       queueStatus.paused,
-      waitingOnLimits
+      waitingOnLimits,
+      queueStatus.followUpsPaused ?? false
     )
     if (campaignFilter === 'sending') return st === 'sending' || st === 'in_queue'
     if (campaignFilter === 'done') return st === 'completed'
@@ -653,6 +863,7 @@ export default function StepQueue({
       value: string | number
       label: string
       tone: 'sent' | 'ready' | 'error' | 'replied' | 'unsub' | 'cap' | 'neutral'
+      title?: string
     }>
   }> = [
       {
@@ -667,8 +878,8 @@ export default function StepQueue({
         key: 'health',
         items: [
           { key: 'due', value: dueNow, label: 'Due Now', tone: 'ready' },
-          { key: 'err-run', value: queueStatus.failedInSession, label: 'SMTP Err', tone: 'error' },
-          { key: 'fail', value: queueStatus.failedSendsToday ?? 0, label: 'Failed', tone: 'error' },
+          { key: 'err-run', value: queueStatus.failedInSession, label: 'SMTP Err', tone: 'error', title: 'Send failures this queue session (SMTP errors during the current run)' },
+          { key: 'fail', value: queueStatus.failedSendsToday ?? 0, label: 'Failed', tone: 'error', title: 'All failed sends today (includes past sessions and retries)' },
         ],
       },
       {
@@ -713,6 +924,10 @@ export default function StepQueue({
       ? `${queueHintLine.slice(0, 69)}…`
       : queueHintLine
 
+  const followUpResumeLabel = queueStatus.followUpsPausedUntil
+    ? new Date(queueStatus.followUpsPausedUntil).toLocaleString()
+    : null
+
   const enabledSmtpAccounts =
     queueStatus.smtpAccounts?.filter((a) => a.enabled) ?? []
   const hasTelemetry =
@@ -740,10 +955,51 @@ export default function StepQueue({
                 )}
                 {queueStatus.followUpsPaused && !queueStatus.clusterBreakerActive && (
                   <p>
-                    <strong>Follow-ups paused</strong> — reputation protection after a Gmail block. Step 1 sends
-                    continue.
+                    <strong>Follow-ups paused</strong>
+                    {queueStatus.followUpsPausedGlobal === false &&
+                      (queueStatus.followUpsPausedInboxCount ?? 0) > 0
+                      ? ` — ${queueStatus.followUpsPausedInboxCount} inbox${queueStatus.followUpsPausedInboxCount === 1 ? '' : 'es'
+                      } blocked after Gmail. Other inboxes can still send follow-ups.`
+                      : ' — reputation protection after a Gmail block. Step 1 sends continue.'}
+                    {followUpResumeLabel && (
+                      <span className="queue-deliverability-banner__until">
+                        {' '}
+                        Auto-resume at {followUpResumeLabel}.
+                      </span>
+                    )}
                   </p>
                 )}
+              </div>
+            )}
+            {(queueStatus.queueSchedulingStatus?.message || queueStatus.followUpStarvation?.message) && (
+              <div
+                className={`queue-deliverability-banner${queueStatus.queueSchedulingStatus?.status === 'step1_cap_exhausted'
+                  ? ' queue-deliverability-banner--ok'
+                  : ' queue-deliverability-banner--info'
+                  }`}
+                role="status"
+              >
+                <p>
+                  {queueStatus.queueSchedulingStatus?.message ??
+                    queueStatus.followUpStarvation?.message}
+                </p>
+                {queueStatus.queueSchedulingStatus?.byCampaign &&
+                  queueStatus.queueSchedulingStatus.byCampaign.length > 1 && (
+                    <ul className="queue-due-breakdown">
+                      {queueStatus.queueSchedulingStatus.byCampaign.map((row) => {
+                        const name =
+                          queueStatus.activeCampaigns?.find((c) => c.campaignId === row.campaignId)
+                            ?.name ?? `Campaign ${row.campaignId}`
+                        if (row.step1Due === 0 && row.followUpDue === 0) return null
+                        return (
+                          <li key={row.campaignId}>
+                            <strong>{name}</strong>: {row.step1Due} Step 1 due · {row.followUpDue}{' '}
+                            follow-up due
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
               </div>
             )}
             <div className="queue-global-bar__header">
@@ -757,7 +1013,9 @@ export default function StepQueue({
                       <span className={`queue-global-stat__value queue-global-stat__value--${stat.tone}`}>
                         {stat.value}
                       </span>
-                      <span className="queue-global-stat__label">{stat.label}</span>
+                      <span className="queue-global-stat__label" title={stat.title}>
+                        {stat.label}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -792,6 +1050,11 @@ export default function StepQueue({
                     className="btn primary btn-sm"
                     disabled={queueStatus.running || !canStart || loading}
                     onClick={startQueue}
+                    title={
+                      queueStatus.running
+                        ? 'Queue is running — use Add on a campaign card to include another campaign'
+                        : undefined
+                    }
                   >
                     {loading
                       ? 'Starting...'
@@ -819,6 +1082,31 @@ export default function StepQueue({
                   >
                     Resume
                   </button>
+                  {queueStatus.followUpsPaused && (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm queue-btn-followups"
+                      title={
+                        followUpResumeLabel
+                          ? `Follow-ups auto-resume at ${followUpResumeLabel}`
+                          : 'Override Gmail block protection and resume Step 2+ sends'
+                      }
+                      onClick={() => void resumeFollowUps()}
+                    >
+                      Resume follow-ups
+                    </button>
+                  )}
+                  {(queueStatus.running || activeCampaignIds.length > 0) && (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      disabled={refreshingLeads}
+                      onClick={() => void refreshActiveLeads()}
+                      title="Re-scan verified leads for active campaigns (keeps priority settings)"
+                    >
+                      {refreshingLeads ? 'Refreshing…' : 'Refresh leads'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
@@ -828,20 +1116,41 @@ export default function StepQueue({
                   </button>
                 </div>
               </div>
+              <div className="queue-start-options">
+                <label
+                  className="queue-start-options__check"
+                  title="Skip leads that already received email in any other campaign"
+                >
+                  <input
+                    type="checkbox"
+                    checked={excludePriorContacts}
+                    onChange={(e) => setExcludePriorContacts(e.target.checked)}
+                  />
+                  Skip leads already emailed in other campaigns
+                </label>
+                {queueStatus.running && (
+                  <span className="queue-start-options__hint">
+                    Queue running — use <strong>Add</strong> on a campaign card to include another
+                    campaign.
+                  </span>
+                )}
+              </div>
             </div>
 
             {hasTelemetry && (
               <div className="queue-telemetry queue-surface-inset">
                 {queueStatus.currentJob && (
                   <div className="queue-runtime-line">
-                    <span className="job-label">Current:</span>
+                    <span className="job-label">Next scheduled:</span>
                     <span className="job-email">{queueStatus.currentJob.email}</span>
                     <span className="job-step">
                       {queueStatus.currentJob.status === 'completing'
                         ? 'Completing'
                         : queueStatus.currentJob.status === 'waiting_delay'
                           ? `Waiting · Step ${queueStatus.currentJob.stepOrder}`
-                          : `Sending · Step ${queueStatus.currentJob.stepOrder}`}
+                          : queueStatus.currentJob.status === 'follow_ups_paused'
+                            ? `Follow-ups paused · Step ${queueStatus.currentJob.stepOrder}`
+                            : `Step ${queueStatus.currentJob.stepOrder}`}
                     </span>
                     {queueStatus.currentJob.campaignName && (
                       <span className="job-campaign">{queueStatus.currentJob.campaignName}</span>
@@ -897,20 +1206,35 @@ export default function StepQueue({
                     </div>
                     <div className="smtp-queue-strip">
                       {enabledSmtpAccounts.map((account) => {
+                        const authBlocked =
+                          account.healthStatus === 'blocked' ||
+                          account.exhaustReason === 'auth_failure'
                         const cooling =
-                          account.exhaustedUntil && new Date(account.exhaustedUntil) > new Date()
+                          !authBlocked &&
+                          account.exhaustedUntil &&
+                          new Date(account.exhaustedUntil) > new Date()
                         const effectiveDailyCap = account.warmupEnabled
                           ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
                           : queueStatus.perInboxDailyCap
                         const atCap =
-                          effectiveDailyCap != null && account.sendsToday >= effectiveDailyCap
+                          !authBlocked &&
+                          effectiveDailyCap != null &&
+                          account.sendsToday >= effectiveDailyCap
                         return (
                           <div
                             key={account.id}
-                            className={`smtp-queue-strip-item${cooling ? ' smtp-queue-strip-item--cooling' : atCap ? ' smtp-queue-strip-item--capped' : ''}`}
+                            className={`smtp-queue-strip-item${authBlocked ? ' smtp-queue-strip-item--blocked' : cooling ? ' smtp-queue-strip-item--cooling' : atCap ? ' smtp-queue-strip-item--capped' : ''}`}
                           >
                             <span className="smtp-queue-strip-item__name">
                               {account.label || account.email}
+                              {authBlocked && (
+                                <span
+                                  className="smtp-queue-strip-item__chip"
+                                  title="Gmail auth failed — re-login in browser and update App Password in Connect"
+                                >
+                                  Auth failed
+                                </span>
+                              )}
                             </span>
                             <span className="smtp-queue-strip-item__stats">
                               {account.sendsToday}/
@@ -984,6 +1308,26 @@ export default function StepQueue({
                     queueRunning={queueStatus.running}
                     queuePaused={queueStatus.paused}
                     waitingOnLimits={waitingOnLimits}
+                    followUpsPaused={queueStatus.followUpsPaused ?? false}
+                    queueOptions={
+                      activeCampaignIds.includes(c.id)
+                        ? {
+                          priority:
+                            queueStatus.activeCampaigns?.find((a) => a.campaignId === c.id)
+                              ?.priority ?? 0,
+                          followUpsOnly: Boolean(
+                            queueStatus.activeCampaigns?.find((a) => a.campaignId === c.id)
+                              ?.followUpsOnly
+                          ),
+                          dailyStep1Quota:
+                            queueStatus.activeCampaigns?.find((a) => a.campaignId === c.id)
+                              ?.dailyStep1Quota ?? null,
+                        }
+                        : undefined
+                    }
+                    dueBreakdown={queueStatus.queueSchedulingStatus?.byCampaign?.find(
+                      (d) => d.campaignId === c.id
+                    )}
                     onView={() => onQueueCampaignChange(c.id)}
                     onToggleSelect={() => toggleSelected(c.id)}
                     onAnalytics={() => setAnalyticsCampaignId(c.id)}
@@ -991,6 +1335,11 @@ export default function StepQueue({
                       toggleActiveInQueue(c.id, activeCampaignIds.includes(c.id))
                     }
                     onDelete={() => deleteCampaign(c.id)}
+                    onUpdateOptions={
+                      activeCampaignIds.includes(c.id)
+                        ? (opts) => updateCampaignQueueOptions(c.id, opts)
+                        : undefined
+                    }
                   />
                 ))
               )}

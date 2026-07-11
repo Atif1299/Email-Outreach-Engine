@@ -234,6 +234,7 @@ export default function StepConnect({
       })
       if (res.ok) {
         setTestHints((prev) => ({ ...prev, [index]: { text: 'Test sent', type: 'ok' } }))
+        onSettingsSaved()
         setTimeout(() => {
           setTestHints((prev) => {
             const next = { ...prev }
@@ -381,6 +382,11 @@ export default function StepConnect({
                     </div>
                     {exhaustHint && (
                       <p className="smtp-account-health-hint">{exhaustHint}</p>
+                    )}
+                    {pub?.healthStatus === 'blocked' && (
+                      <p className="smtp-account-health-hint smtp-account-health-hint--blocked">
+                        Account recovered in Gmail? Run Test to restore sending.
+                      </p>
                     )}
                     <div className="settings-grid">
                       <div className="field">

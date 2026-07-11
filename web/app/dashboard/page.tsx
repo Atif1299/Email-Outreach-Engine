@@ -27,6 +27,7 @@ export interface SmtpAccountStatus {
   warmupEnabled?: boolean
   healthStatus?: string
   recoveryUntil?: string | null
+  followUpsPausedUntil?: string | null
 }
 
 export interface Settings {
@@ -105,7 +106,14 @@ export interface QueueStatus {
   paused: boolean
   activeCampaignId?: number | null
   activeCampaignIds?: number[]
-  activeCampaigns?: Array<{ campaignId: number; name: string; remainingLeads: number }>
+  activeCampaigns?: Array<{
+    campaignId: number
+    name: string
+    remainingLeads: number
+    priority?: number
+    followUpsOnly?: boolean
+    dailyStep1Quota?: number | null
+  }>
   aggregateDueNow?: number
   lastError: string | null
   processedInSession: number
@@ -129,9 +137,35 @@ export interface QueueStatus {
   dailyStep1Cap?: number
   dailyFollowUpCap?: number
   followUpsPaused?: boolean
+  followUpsPausedGlobal?: boolean
+  followUpsPausedInboxCount?: number
   followUpsPausedUntil?: string | null
   clusterBreakerActive?: boolean
   clusterBreakerUntil?: string | null
+  followUpStarvation?: {
+    blocked: boolean
+    step1DueCount: number
+    followUpDueCount: number
+    message: string | null
+  } | null
+  queueSchedulingStatus?: {
+    status:
+    | 'step1_priority_blocking'
+    | 'step1_cap_exhausted'
+    | 'both_caps_exhausted'
+    | 'follow_up_cap_exhausted'
+    | null
+    step1DueCount: number
+    followUpDueCount: number
+    message: string | null
+    step1CapExhausted: boolean
+    followUpCapAvailable: boolean
+    byCampaign?: Array<{
+      campaignId: number
+      step1Due: number
+      followUpDue: number
+    }>
+  } | null
   activeCampaignMetrics?: Array<{
     campaignId: number
     step1Sent: number
@@ -145,7 +179,7 @@ export interface QueueStatus {
     leadId: number
     stepOrder: number | null
     email: string
-    status?: 'sending' | 'completing' | 'waiting_delay'
+    status?: 'sending' | 'completing' | 'waiting_delay' | 'follow_ups_paused'
   } | null
 }
 

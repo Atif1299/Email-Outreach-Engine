@@ -5,6 +5,7 @@ import { withPrismaRetry } from '@/lib/prisma-retry'
 import { ensureSettings } from '@/lib/settings'
 import { computeCampaignProgress } from '@/lib/campaign-progress'
 import { getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
+import { getFollowUpPauseStatus } from '@/lib/inbox-cluster-guard'
 
 function leadDisplayName(dataJson: string): string {
   try {
@@ -28,11 +29,15 @@ function resolveCampaignStatus(opts: {
   isActive: boolean
   queueRunning: boolean
   queuePaused: boolean
+  followUpsPaused: boolean
+  activeStepOrder: number | null
   sendable: number
   leadsCompleted: number
-}): 'sending' | 'paused' | 'idle' | 'completed' {
+}): 'sending' | 'paused' | 'idle' | 'completed' | 'follow_ups_paused' {
   if (opts.isActive && opts.queueRunning) {
-    return opts.queuePaused ? 'paused' : 'sending'
+    if (opts.queuePaused) return 'paused'
+    if (opts.followUpsPaused && (opts.activeStepOrder ?? 1) > 1) return 'follow_ups_paused'
+    return 'sending'
   }
   if (opts.sendable > 0 && opts.leadsCompleted >= opts.sendable) return 'completed'
   return 'idle'
@@ -62,20 +67,24 @@ export async function getCampaignAnalytics(campaignId: number) {
     const sent = stats.leadsStarted
     const isActive = isCampaignActive(queueState, campaignId)
 
-    const status = resolveCampaignStatus({
-      isActive,
-      queueRunning: queueState?.running ?? false,
-      queuePaused: queueState?.paused ?? false,
-      sendable: stats.sendable,
-      leadsCompleted: stats.leadsCompleted,
-    })
-
     const progress = computeCampaignProgress(stats, {
       isActive,
       queueRunning: queueState?.running ?? false,
       queuePaused: queueState?.paused ?? false,
     })
     const progressPct = progress.progressPct
+    const followUpPause = await getFollowUpPauseStatus(queueState)
+    const followUpsPaused = followUpPause.paused
+
+    const status = resolveCampaignStatus({
+      isActive,
+      queueRunning: queueState?.running ?? false,
+      queuePaused: queueState?.paused ?? false,
+      followUpsPaused,
+      activeStepOrder: progress.activeStepOrder,
+      sendable: stats.sendable,
+      leadsCompleted: stats.leadsCompleted,
+    })
 
     const [successCount, failedCount, recentSends, engagements] = await Promise.all([
       prisma.leadSend.count({
@@ -148,6 +157,8 @@ export async function getCampaignAnalytics(campaignId: number) {
         startedAt: firstSend?.sentAt.toISOString() ?? null,
       },
       status,
+      followUpsPaused,
+      followUpsPausedUntil: followUpPause.resumeAt?.toISOString() ?? null,
       metrics: {
         sent,
         total: totalLeads,

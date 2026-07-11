@@ -145,11 +145,16 @@ export function getDeliveryHaltError(
 ): { reason: DeliveryHaltReason; userMessage: string } | null {
   const m = msg || ''
 
-  if (/EAUTH|535|invalid credentials|authentication failed|badcredentials/i.test(m)) {
+  if (
+    /EAUTH|535|534|invalid credentials|authentication failed|badcredentials|webloginrequired|web browser/i.test(
+      m
+    )
+  ) {
     return {
       reason: 'auth_failure',
-      userMessage:
-        'Paused: SMTP authentication failed — check Gmail App Password in Connect settings.',
+      userMessage: /534|webloginrequired|web browser/i.test(m)
+        ? 'Gmail requires browser login — re-authenticate inbox in Connect.'
+        : 'SMTP authentication failed — check Gmail App Password in Connect settings.',
     }
   }
 

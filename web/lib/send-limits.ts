@@ -180,16 +180,66 @@ export async function getStepTypeSendCounts(settings: SendLimitSettings, now = n
   return { step1SentToday, followUpSentToday }
 }
 
+/** Per-campaign Step 1 successful sends since day start (for dailyStep1Quota). */
+export async function getCampaignStep1SendCounts(
+  campaignIds: number[],
+  settings: SendLimitSettings,
+  now = new Date()
+): Promise<Map<number, number>> {
+  const map = new Map<number, number>()
+  if (campaignIds.length === 0) return map
+
+  const dayStart = getDayStartInTimezone(settings.sendTimezone, now)
+  const rows = await prisma.leadSend.groupBy({
+    by: ['campaignId'],
+    where: {
+      campaignId: { in: campaignIds },
+      sentAt: { gte: dayStart },
+      error: null,
+      subject: { notIn: ['SENDING', 'FAILED'] },
+      stepOrder: 1,
+    },
+    _count: { _all: true },
+  })
+
+  for (const row of rows) {
+    map.set(row.campaignId, row._count._all)
+  }
+  for (const id of campaignIds) {
+    if (!map.has(id)) map.set(id, 0)
+  }
+  return map
+}
+
+export type StepTypeCounts = { step1SentToday: number; followUpSentToday: number }
+
+export function isStep1CapExhausted(settings: SendLimitSettings, counts: StepTypeCounts): boolean {
+  if (!isStepTypeCapsEnabled(settings)) return false
+  return settings.dailyStep1Cap > 0 && counts.step1SentToday >= settings.dailyStep1Cap
+}
+
+export function isFollowUpCapAvailable(settings: SendLimitSettings, counts: StepTypeCounts): boolean {
+  if (!isStepTypeCapsEnabled(settings)) return true
+  if (settings.dailyFollowUpCap > 0 && counts.followUpSentToday >= settings.dailyFollowUpCap) {
+    return false
+  }
+  if (settings.maxFollowUpRatio > 0) {
+    const ratio = counts.followUpSentToday / Math.max(counts.step1SentToday, 1)
+    if (ratio > settings.maxFollowUpRatio) return false
+  }
+  return true
+}
+
 export function isStepTypeCapAvailable(
   settings: SendLimitSettings,
   stepOrder: number,
-  counts: { step1SentToday: number; followUpSentToday: number }
+  counts: StepTypeCounts
 ): boolean {
   if (!isStepTypeCapsEnabled(settings)) return true
   if (stepOrder <= 1) {
     return settings.dailyStep1Cap <= 0 || counts.step1SentToday < settings.dailyStep1Cap
   }
-  return settings.dailyFollowUpCap <= 0 || counts.followUpSentToday < settings.dailyFollowUpCap
+  return isFollowUpCapAvailable(settings, counts)
 }
 
 export async function evaluateStepTypeDailyCap(
@@ -315,7 +365,7 @@ export function toSendLimitSettings(
     dailyCap: settings.dailyCap,
     dailyStep1Cap,
     dailyFollowUpCap,
-    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0.4,
+    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0,
     hourlyCap: settings.hourlyCap,
     sendTimezone: settings.sendTimezone || 'Asia/Karachi',
     sendStartHour: settings.sendStartHour ?? 12,

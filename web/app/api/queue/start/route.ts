@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { campaignId, campaignIds, force } = body
+    const { campaignId, campaignIds, force, excludePriorCampaignContacts } = body
 
     const ids: number[] = campaignIds?.length
       ? campaignIds
@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
 
     let totalPriorContacts = 0
     let totalDncExcluded = 0
+    let totalPriorExcluded = 0
 
     let stateSnapshot = existing
 
@@ -47,7 +48,9 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      const resolved = await resolveLeadIdsForCampaign(id)
+      const resolved = await resolveLeadIdsForCampaign(id, {
+        excludePriorCampaignContacts: Boolean(excludePriorCampaignContacts),
+      })
       if ('error' in resolved) {
         results.push({ campaignId: id, error: resolved.error })
         continue
@@ -71,6 +74,7 @@ export async function POST(request: NextRequest) {
 
       totalPriorContacts += resolved.priorCampaignContacts
       totalDncExcluded += resolved.doNotContactExcluded
+      totalPriorExcluded += resolved.priorCampaignExcluded ?? 0
       results.push({ campaignId: id, leadCount: resolved.leadIds.length })
       stateSnapshot = await prisma.queueState.findUnique({ where: { id: 1 } })
     }
@@ -100,6 +104,7 @@ export async function POST(request: NextRequest) {
       warnings: {
         priorCampaignContacts: totalPriorContacts,
         doNotContactExcluded: totalDncExcluded,
+        priorCampaignExcluded: totalPriorExcluded,
       },
     })
   } catch (error) {

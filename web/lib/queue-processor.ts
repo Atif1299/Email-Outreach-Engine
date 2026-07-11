@@ -10,6 +10,9 @@ import { suppressLeadForBounce } from '@/lib/lead-suppression'
 import {
   parseActiveCampaigns,
   persistActiveCampaigns,
+  compareScheduledJobs,
+  pickPriorityJobPool,
+  isCampaignStep1QuotaExhausted,
   type ActiveCampaignEntry,
 } from '@/lib/queue-active'
 import { loadSequenceContext } from '@/lib/preview-context'
@@ -21,6 +24,7 @@ import {
   evaluateGlobalDailyCap,
   evaluateSendGate,
   evaluateStepTypeDailyCap,
+  getCampaignStep1SendCounts,
   getDayStartInTimezone,
   getStepTypeSendCounts,
   isStepTypeCapAvailable,
@@ -28,7 +32,7 @@ import {
   toSendLimitSettings,
   type SendLimitSettings,
 } from '@/lib/send-limits'
-import { isFollowUpsPaused } from '@/lib/inbox-cluster-guard'
+import { isFollowUpsPaused, clearExpiredFollowUpPauses } from '@/lib/inbox-cluster-guard'
 import {
   assignLeadToAccount,
   countInboxesAvailableForSend,
@@ -36,13 +40,14 @@ import {
   formatFromAddress,
   getEnabledSmtpAccounts,
   getNextInboxAvailableAt,
+  isLeadFollowUpPaused,
   markAccountExhausted,
   resolveAccountForSend,
   touchAccountUsed,
 } from '@/lib/smtp-accounts'
 
 const FAILURE_BACKOFF_MS = 60_000
-const MAX_CONSECUTIVE_FAILURES = 3
+const MAX_CONSECUTIVE_FAILURES = 5
 const STALE_SENDING_MS = 5 * 60 * 1000
 
 function addToSkipped(skippedIds: number[], leadId: number): number[] {
@@ -238,14 +243,33 @@ async function prepareNextLeadForSend(opts: {
   limitSettings: SendLimitSettings
   stepTypeCounts: { step1SentToday: number; followUpSentToday: number }
   followUpsPaused?: boolean
+  followUpsOnly?: boolean
+  step1QuotaExhausted?: boolean
 }): Promise<
   | { ok: true; prepared: PreparedLead }
   | { ok: false; reason: 'empty' | 'waiting' | 'type_cap'; message?: string }
 > {
-  const { activeLeadIds, blockedLeadIds, campaign, limitSettings, stepTypeCounts, followUpsPaused } = opts
+  const {
+    activeLeadIds,
+    blockedLeadIds,
+    campaign,
+    limitSettings,
+    stepTypeCounts,
+    followUpsPaused,
+    followUpsOnly,
+    step1QuotaExhausted,
+  } = opts
   if (activeLeadIds.length === 0) return { ok: false, reason: 'empty' }
 
-  const passes: Array<'followup' | 'step1'> = followUpsPaused ? ['step1'] : ['step1', 'followup']
+  const passes: Array<'followup' | 'step1'> = followUpsOnly
+    ? followUpsPaused
+      ? []
+      : ['followup']
+    : followUpsPaused
+      ? ['step1']
+      : step1QuotaExhausted
+        ? ['followup']
+        : ['step1', 'followup']
 
   for (const pass of passes) {
     for (let i = 0; i < activeLeadIds.length; i++) {
@@ -342,6 +366,7 @@ async function pickJobAcrossCampaigns(opts: {
   stepTypeCounts: { step1SentToday: number; followUpSentToday: number }
   lastServedCampaignId: number | null
   followUpsPaused?: boolean
+  campaignStep1SentToday?: Map<number, number>
 }): Promise<
   | {
     ok: true
@@ -357,8 +382,10 @@ async function pickJobAcrossCampaigns(opts: {
     prepared: PreparedLead
     stepOrder: number
     delayElapsedAt: number
+    priority: number
   }> = []
   let typeCapMessage: string | undefined
+  const campaignStep1SentToday = opts.campaignStep1SentToday ?? new Map<number, number>()
 
   for (const entry of opts.activeEntries) {
     if (entry.leadIds.length === 0) continue
@@ -373,6 +400,11 @@ async function pickJobAcrossCampaigns(opts: {
       limitSettings: opts.limitSettings,
       stepTypeCounts: opts.stepTypeCounts,
       followUpsPaused: opts.followUpsPaused,
+      followUpsOnly: entry.followUpsOnly,
+      step1QuotaExhausted: isCampaignStep1QuotaExhausted(
+        entry,
+        campaignStep1SentToday.get(entry.campaignId) ?? 0
+      ),
     })
 
     if (pick.ok) {
@@ -384,6 +416,7 @@ async function pickJobAcrossCampaigns(opts: {
         prepared: pick.prepared,
         stepOrder: pick.prepared.nextStepOrder,
         delayElapsedAt,
+        priority: entry.priority ?? 0,
       })
     } else if (pick.reason === 'type_cap' && pick.message) {
       typeCapMessage = pick.message
@@ -403,19 +436,32 @@ async function pickJobAcrossCampaigns(opts: {
     return { ok: false, reason: 'empty' }
   }
 
-  const followUps = candidates.filter((c) => c.stepOrder > 1)
-  const step1Only = candidates.filter((c) => c.stepOrder === 1)
-  const pool = step1Only.length > 0 ? step1Only : followUps
-
-  pool.sort((a, b) => {
-    if (a.stepOrder !== b.stepOrder) return a.stepOrder - b.stepOrder
-    if (a.delayElapsedAt !== b.delayElapsedAt) return a.delayElapsedAt - b.delayElapsedAt
-    const last = opts.lastServedCampaignId
-    const aAfter = last != null && a.campaign.id <= last ? 1 : 0
-    const bAfter = last != null && b.campaign.id <= last ? 1 : 0
-    if (aAfter !== bAfter) return aAfter - bAfter
-    return a.campaign.id - b.campaign.id
-  })
+  const pool = pickPriorityJobPool(
+    candidates.map((c) => ({
+      ...c,
+      campaignId: c.campaign.id,
+    })),
+    'step1_first',
+    { limitSettings: opts.limitSettings, stepTypeCounts: opts.stepTypeCounts }
+  )
+  pool.sort((a, b) =>
+    compareScheduledJobs(
+      {
+        stepOrder: a.stepOrder,
+        delayElapsedAt: a.delayElapsedAt,
+        campaignId: a.campaignId,
+        priority: a.priority,
+      },
+      {
+        stepOrder: b.stepOrder,
+        delayElapsedAt: b.delayElapsedAt,
+        campaignId: b.campaignId,
+        priority: b.priority,
+      },
+      opts.lastServedCampaignId,
+      'step1_first'
+    )
+  )
 
   const winner = pool[0]
   return { ok: true, campaign: winner.campaign, entry: winner.entry, prepared: winner.prepared }
@@ -438,7 +484,10 @@ async function inspectLeadForSend(
   const nextStep = campaign.steps.find((s) => s.stepOrder === nextStepOrder)
   if (!nextStep) return null
 
-  const due = !lastSend || isDelayElapsed(lastSend, nextStep)
+  let due = !lastSend || isDelayElapsed(lastSend, nextStep)
+  if (due && nextStepOrder > 1 && await isLeadFollowUpPaused(leadId, campaign.id)) {
+    due = false
+  }
   return {
     due,
     nextStepOrder,
@@ -447,6 +496,7 @@ async function inspectLeadForSend(
 }
 
 async function processQueueBatchInner(maxEmails?: number) {
+  await clearExpiredFollowUpPauses()
   const state = await prisma.queueState.findUnique({ where: { id: 1 } })
 
   let activeEntries = parseActiveCampaigns(state)
@@ -505,9 +555,12 @@ async function processQueueBatchInner(maxEmails?: number) {
   let nextSendAllowedAt: Date | null = null
   let lastServedCampaignId = state.lastServedCampaignId ?? null
   const stepTypeCounts = await getStepTypeSendCounts(limitSettings)
+  const campaignStep1SentToday = await getCampaignStep1SendCounts(
+    activeEntries.map((e) => e.campaignId),
+    limitSettings
+  )
   const batchLimit = Math.max(1, Math.min(maxEmails ?? enabledAccounts.length, enabledAccounts.length))
   const accountsUsedThisBatch = new Set<number>()
-  let lastAccountIdInBatch: number | null = null
   const followUpsPaused = isFollowUpsPaused(state)
 
   for (let i = 0; i < batchLimit; i++) {
@@ -527,6 +580,7 @@ async function processQueueBatchInner(maxEmails?: number) {
       stepTypeCounts,
       lastServedCampaignId,
       followUpsPaused,
+      campaignStep1SentToday,
     })
 
     if (!jobPick.ok) {
@@ -740,15 +794,9 @@ async function processQueueBatchInner(maxEmails?: number) {
           mailOptions.headers = extraHeaders
         }
 
-        if (
-          lastAccountIdInBatch !== null &&
-          lastAccountIdInBatch !== account.id &&
-          enabledAccounts.length >= 2
-        ) {
-          const jitterMs = 30_000 + Math.floor(Math.random() * 90_001)
-          await new Promise((resolve) => setTimeout(resolve, jitterMs))
-        }
-
+        // Each inbox in a batch is a different account — spacing is enforced per inbox via
+        // sendDelayMinMs on the next cron tick. In-batch sleeps (formerly 30–120s) exceeded
+        // serverless/cron limits and capped throughput at ~1 email per run.
         const smtpMessageId = await sendWithAccount({ account, settings, mailOptions })
 
         if (newlyAssigned) {
@@ -777,9 +825,15 @@ async function processQueueBatchInner(maxEmails?: number) {
         consecutiveFailures = 0
         sendCompleted = true
         accountsUsedThisBatch.add(account.id)
-        lastAccountIdInBatch = account.id
-        if (nextStepOrder <= 1) stepTypeCounts.step1SentToday++
-        else stepTypeCounts.followUpSentToday++
+        if (nextStepOrder <= 1) {
+          stepTypeCounts.step1SentToday++
+          campaignStep1SentToday.set(
+            campaign.id,
+            (campaignStep1SentToday.get(campaign.id) ?? 0) + 1
+          )
+        } else {
+          stepTypeCounts.followUpSentToday++
+        }
 
         if (nextStepOrder >= maxStepOrder) {
           activeLeadIds.shift()
@@ -830,6 +884,7 @@ async function processQueueBatchInner(maxEmails?: number) {
           data: {
             subject: 'FAILED',
             error: message,
+            smtpAccountId: account.id,
           },
         })
 
@@ -842,6 +897,7 @@ async function processQueueBatchInner(maxEmails?: number) {
           sendCompleted = true
         } else if (halt) {
           await markAccountExhausted(account.id, halt.reason)
+          consecutiveFailures = 0
 
           if (nextStepOrder > 1) {
             activeLeadIds.shift()
@@ -880,8 +936,13 @@ async function processQueueBatchInner(maxEmails?: number) {
               }
             }
 
+            const authPauseMessage =
+              halt.reason === 'auth_failure'
+                ? `All inboxes auth failed or unavailable — re-authenticate ${account.email} (and others) in Connect, then Resume.`
+                : `All inboxes limited — ${halt.userMessage}`
+
             await pauseQueueForDeliveryIssue({
-              lastError: `All inboxes limited — ${halt.userMessage}`,
+              lastError: authPauseMessage,
               activeEntries,
               nextSendAllowedAt: new Date(Date.now() + FAILURE_BACKOFF_MS),
               consecutiveFailures: 0,
@@ -905,7 +966,7 @@ async function processQueueBatchInner(maxEmails?: number) {
           if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
             await pauseQueueForDeliveryIssue({
               lastError:
-                'Paused: 3 delivery failures in a row — check spam score, slow down sends, or verify your lead list.',
+                `Paused: ${MAX_CONSECUTIVE_FAILURES} delivery failures in a row — check spam score, slow down sends, or verify your lead list.`,
               activeEntries,
               nextSendAllowedAt,
               consecutiveFailures,
@@ -945,10 +1006,12 @@ async function processQueueBatchInner(maxEmails?: number) {
 
   nextSendAllowedAt = await getNextInboxAvailableAt(limitSettings)
 
+  const streakToPersist = processed > 0 ? 0 : consecutiveFailures
+
   await persistActiveCampaigns(activeEntries, {
     processed,
     failed,
-    consecutiveFailures,
+    consecutiveFailures: streakToPersist,
     nextSendAllowedAt,
     lastServedCampaignId,
     clearLastError: processed > 0,

@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       verificationProvider: body.verificationProvider || 'none',
       unsubscribeEnabled: body.unsubscribeEnabled ?? true,
       unsubscribeFooterText: body.unsubscribeFooterText || '',
-      maxFollowUpRatio: body.maxFollowUpRatio ?? 0.4,
+      maxFollowUpRatio: body.maxFollowUpRatio ?? 0,
     }
 
     if (body.openaiKey) updateData.openaiKey = body.openaiKey

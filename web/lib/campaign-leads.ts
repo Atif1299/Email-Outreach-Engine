@@ -4,6 +4,7 @@ import {
   countPriorCampaignContacts,
   getIncompleteLeadIds,
   getMaxStepOrder,
+  getPriorCampaignContactLeadIds,
 } from '@/lib/queue-schedule'
 
 export type ResolveLeadIdsResult =
@@ -11,10 +12,19 @@ export type ResolveLeadIdsResult =
     leadIds: number[]
     priorCampaignContacts: number
     doNotContactExcluded: number
+    priorCampaignExcluded?: number
   }
   | { error: string; status: 404 | 400 }
 
-export async function resolveLeadIdsForCampaign(campaignId: number): Promise<ResolveLeadIdsResult> {
+export type ResolveLeadIdsOptions = {
+  /** When true, drop leads already emailed in any other campaign. */
+  excludePriorCampaignContacts?: boolean
+}
+
+export async function resolveLeadIdsForCampaign(
+  campaignId: number,
+  opts?: ResolveLeadIdsOptions
+): Promise<ResolveLeadIdsResult> {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
     include: { targetBatches: true, steps: true },
@@ -45,17 +55,34 @@ export async function resolveLeadIdsForCampaign(campaignId: number): Promise<Res
   const validLeadIds = leads.map((l) => l.id)
   const maxStepOrder = getMaxStepOrder(campaign.steps)
 
-  const [leadIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
+  const [incompleteIds, priorCampaignContacts, doNotContactExcluded] = await Promise.all([
     getIncompleteLeadIds(campaignId, validLeadIds, maxStepOrder),
     countPriorCampaignContacts(campaignId, validLeadIds),
     countDoNotContactInList(validLeadIds),
   ])
 
+  let leadIds = incompleteIds
+  let priorCampaignExcluded = 0
+
+  if (opts?.excludePriorCampaignContacts) {
+    const priorIds = await getPriorCampaignContactLeadIds(campaignId, leadIds)
+    if (priorIds.size > 0) {
+      const before = leadIds.length
+      leadIds = leadIds.filter((id) => !priorIds.has(id))
+      priorCampaignExcluded = before - leadIds.length
+    }
+  }
+
   if (leadIds.length === 0) {
     return { error: 'No sendable leads remaining for this campaign', status: 400 }
   }
 
-  return { leadIds, priorCampaignContacts, doNotContactExcluded }
+  return {
+    leadIds,
+    priorCampaignContacts,
+    doNotContactExcluded,
+    priorCampaignExcluded,
+  }
 }
 
 export async function resolveSendableLeadIdsFromCandidates(

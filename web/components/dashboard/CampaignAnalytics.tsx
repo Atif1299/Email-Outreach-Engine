@@ -21,7 +21,9 @@ interface AnalyticsData {
     createdAt: string
     startedAt: string | null
   }
-  status: 'sending' | 'paused' | 'idle' | 'completed'
+  status: 'sending' | 'paused' | 'idle' | 'completed' | 'follow_ups_paused'
+  followUpsPaused?: boolean
+  followUpsPausedUntil?: string | null
   metrics: {
     sent: number
     total: number
@@ -81,9 +83,17 @@ function formatRelative(iso: string): string {
 
 function statusLabel(status: AnalyticsData['status']): string {
   if (status === 'sending') return 'Sending'
+  if (status === 'follow_ups_paused') return 'Follow-ups paused'
   if (status === 'paused') return 'Paused'
   if (status === 'completed') return 'Completed'
   return 'Idle'
+}
+
+function formatResumeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return null
+  return at.toLocaleString()
 }
 
 function engagementPill(status: string): string {
@@ -109,9 +119,13 @@ function stepCompletionPct(step: AnalyticsStep): number {
 function StepAccordion({
   steps,
   activeStepOrder,
+  followUpsPaused,
+  followUpsPausedUntil,
 }: {
   steps: AnalyticsStep[]
   activeStepOrder: number | null
+  followUpsPaused?: boolean
+  followUpsPausedUntil?: string | null
 }) {
   const [openStep, setOpenStep] = useState<number | null>(activeStepOrder ?? null)
 
@@ -125,6 +139,9 @@ function StepAccordion({
         const isOpen = openStep === step.stepOrder
         const pct = stepCompletionPct(step)
         const isActive = activeStepOrder === step.stepOrder
+        const followUpBlocked =
+          followUpsPaused && step.stepOrder > 1 && (step.dueCount > 0 || isActive)
+        const resumeLabel = formatResumeTime(followUpsPausedUntil)
 
         return (
           <div
@@ -156,8 +173,15 @@ function StepAccordion({
                   {step.dueCount > 0 && (
                     <span className="campaign-analytics-accordion-due">{step.dueCount} due now</span>
                   )}
-                  {isActive && (
-                    <span className="campaign-analytics-accordion-live">Sending now</span>
+                  {followUpBlocked ? (
+                    <span className="campaign-analytics-accordion-paused">
+                      Due — follow-ups paused globally
+                      {resumeLabel ? ` · resumes ${resumeLabel}` : ''}
+                    </span>
+                  ) : (
+                    isActive && (
+                      <span className="campaign-analytics-accordion-live">Sending now</span>
+                    )
                   )}
                 </div>
                 {step.subjectTemplate && (
@@ -272,10 +296,17 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
                 <div className="campaign-metric-label">Progress</div>
                 <div className="campaign-metric-sub">
                   {data.metrics.activeStepOrder != null
-                    ? `Step ${data.metrics.activeStepOrder}${data.status === 'sending' ? ' · sending now…' : ''}`
+                    ? `Step ${data.metrics.activeStepOrder}${data.status === 'sending'
+                      ? ' · sending now…'
+                      : data.status === 'follow_ups_paused'
+                        ? ' · follow-ups paused'
+                        : ''
+                    }`
                     : data.status === 'sending'
                       ? 'sending now…'
-                      : `${data.metrics.dueNow} ready`}
+                      : data.status === 'follow_ups_paused'
+                        ? 'follow-ups paused'
+                        : `${data.metrics.dueNow} ready`}
                 </div>
               </div>
               <div className="campaign-metric-card">
@@ -348,6 +379,8 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
               <StepAccordion
                 steps={data.steps}
                 activeStepOrder={data.metrics.activeStepOrder}
+                followUpsPaused={data.followUpsPaused}
+                followUpsPausedUntil={data.followUpsPausedUntil}
               />
             </div>
 

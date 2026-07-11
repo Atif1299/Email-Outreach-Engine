@@ -3,7 +3,12 @@ import nodemailer from 'nodemailer'
 import prisma from '@/lib/db'
 import { ensureSettings } from '@/lib/settings'
 import { assertGmailSmtpUsername, enhanceSmtpError } from '@/lib/smtp'
-import { createAccountTransporter, formatFromAddress, getEnabledSmtpAccounts } from '@/lib/smtp-accounts'
+import {
+  createAccountTransporter,
+  formatFromAddress,
+  getEnabledSmtpAccounts,
+  restoreSmtpAccountAfterSuccessfulAuth,
+} from '@/lib/smtp-accounts'
 
 export async function POST(request: NextRequest) {
   const body = await request.json()
@@ -75,20 +80,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (smtpAccount) {
-      const update: Record<string, unknown> = {
-        exhaustedUntil: null,
-        exhaustReason: null,
-        lastInboxError: null,
-      }
-      if (smtpAccount.healthStatus !== 'blocked') {
-        update.healthStatus = 'healthy'
-        update.healthChangedAt = new Date()
-        update.recoveryUntil = null
-      }
-      await prisma.smtpAccount.update({
-        where: { id: smtpAccount.id },
-        data: update,
-      })
+      await restoreSmtpAccountAfterSuccessfulAuth(smtpAccount.id)
     }
 
     return NextResponse.json({ success: true })

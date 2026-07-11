@@ -133,6 +133,7 @@ model SmtpAccount {
   healthStatus       String    @default("healthy") @map("health_status")
   healthChangedAt    DateTime? @map("health_changed_at")
   recoveryUntil      DateTime? @map("recovery_until")
+  followUpsPausedUntil DateTime? @map("follow_ups_paused_until")
   createdAt          DateTime  @default(now()) @map("created_at")
 
   assignments  LeadSmtpAssignment[]
@@ -243,7 +244,7 @@ model Settings {
   verificationApiKey   String  @default("") @map("verification_api_key")
   unsubscribeEnabled   Boolean @default(true) @map("unsubscribe_enabled")
   unsubscribeFooterText String @default("") @map("unsubscribe_footer_text")
-  maxFollowUpRatio     Float   @default(0.4) @map("max_follow_up_ratio")
+  maxFollowUpRatio     Float   @default(0) @map("max_follow_up_ratio")
 
   @@map("settings")
 }

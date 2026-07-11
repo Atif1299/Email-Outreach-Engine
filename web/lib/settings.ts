@@ -91,7 +91,7 @@ export function toPublicSettings(
     verificationProvider: settings.verificationProvider,
     unsubscribeEnabled: settings.unsubscribeEnabled,
     unsubscribeFooterText: settings.unsubscribeFooterText || '',
-    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0.4,
+    maxFollowUpRatio: settings.maxFollowUpRatio ?? 0,
     hasOpenaiKey: !!settings.openaiKey,
     hasGeminiApiKey: !!settings.geminiApiKey,
     hasVerificationApiKey: !!settings.verificationApiKey,

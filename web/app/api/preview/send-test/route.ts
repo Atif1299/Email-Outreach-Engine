@@ -31,15 +31,13 @@ export async function POST(request: NextRequest) {
     if (!toEmail.includes('@')) {
       return NextResponse.json({ error: 'Enter a valid test inbox email' }, { status: 400 })
     }
-    if (!subject) {
-      return NextResponse.json({ error: 'Subject is empty — refresh preview first' }, { status: 400 })
-    }
+    const resolvedSubject = subject || `[Test] Step ${stepOrder}`
     if (!emailBody.trim()) {
       return NextResponse.json({ error: 'Body is empty — refresh preview first' }, { status: 400 })
     }
     if (!leadId || !campaignId) {
       return NextResponse.json(
-        { error: 'Select a lead and campaign in Preview before sending a test' },
+        { error: 'Save the campaign and use a real lead before sending a test' },
         { status: 400 }
       )
     }
@@ -63,25 +61,25 @@ export async function POST(request: NextRequest) {
 
     const leadSend = existing
       ? await prisma.leadSend.update({
-          where: { id: existing.id },
-          data: {
-            subject,
-            bodySnippet: emailBody.slice(0, 1500),
-            smtpAccountId: account.id,
-            sentAt: new Date(),
-            openedAt: null,
-          },
-        })
+        where: { id: existing.id },
+        data: {
+          subject: resolvedSubject,
+          bodySnippet: emailBody.slice(0, 1500),
+          smtpAccountId: account.id,
+          sentAt: new Date(),
+          openedAt: null,
+        },
+      })
       : await prisma.leadSend.create({
-          data: {
-            leadId,
-            campaignId,
-            stepOrder,
-            subject,
-            bodySnippet: emailBody.slice(0, 1500),
-            smtpAccountId: account.id,
-          },
-        })
+        data: {
+          leadId,
+          campaignId,
+          stepOrder,
+          subject: resolvedSubject,
+          bodySnippet: emailBody.slice(0, 1500),
+          smtpAccountId: account.id,
+        },
+      })
 
     const unsubEnabled = settings.unsubscribeEnabled !== false
     const mailContent = buildMailContent(
@@ -91,11 +89,11 @@ export async function POST(request: NextRequest) {
       bodyFormat,
       unsubEnabled
         ? {
-            unsubscribe: { leadId, campaignId, leadSendId: leadSend.id },
-            unsubscribeFooterText: settings.unsubscribeFooterText || undefined,
-            mailtoAddress: account.email,
-            includeTrackingPixel: false,
-          }
+          unsubscribe: { leadId, campaignId, leadSendId: leadSend.id },
+          unsubscribeFooterText: settings.unsubscribeFooterText || undefined,
+          mailtoAddress: account.email,
+          includeTrackingPixel: false,
+        }
         : { includeTrackingPixel: false }
     )
 
@@ -126,7 +124,7 @@ export async function POST(request: NextRequest) {
     const info = await transporter.sendMail({
       from,
       to: toEmail,
-      subject,
+      subject: resolvedSubject,
       text: mailContent.text,
       html: mailContent.html,
       ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),

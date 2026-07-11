@@ -232,6 +232,7 @@ export default function StepCampaign({
   const saveFlash = useButtonFlash()
   const { hint: briefHint, showHint: showBriefHint } = useInlineHint()
   const { hint: listHint, showHint: showListHint } = useInlineHint()
+  const { hint: sequenceHint, showHint: showSequenceHint } = useInlineHint(5000)
   const savedOutputLanguageRef = useRef<string | null>(null)
   const skipNextLoadRef = useRef(false)
   const aiPreviewCacheRef = useRef<Record<number, string>>({})
@@ -464,7 +465,31 @@ export default function StepCampaign({
       preview: { subject: string; body: string; bodyFormat: 'plain' | 'html' }
     ) => {
       const to = testSendTo.trim()
-      if (!to.includes('@')) return
+      if (!to.includes('@')) {
+        showSequenceHint('Enter a valid test inbox email', 'warn')
+        return
+      }
+
+      const currentDraft = draftRef.current
+      const lead = previewLeadRef.current
+      if (!currentDraft?.id) {
+        showSequenceHint('Save the campaign first, then send a test', 'warn')
+        return
+      }
+      if (!lead?.id || lead.isSample) {
+        showSequenceHint('Need a real lead in the target batch to send a test', 'warn')
+        return
+      }
+      if (!preview.body.trim()) {
+        showSequenceHint('Body is empty — refresh preview first', 'warn')
+        return
+      }
+
+      const stepOrder = currentDraft.steps[stepIndex]?.stepOrder ?? stepIndex + 1
+      const subject =
+        preview.subject.trim() ||
+        currentDraft.steps[stepIndex]?.subjectTemplate?.trim() ||
+        `[Test] Step ${stepOrder}`
 
       setTestSendLoading((prev) => ({ ...prev, [stepIndex]: true }))
       setTestSendSent((prev) => ({ ...prev, [stepIndex]: false }))
@@ -475,26 +500,37 @@ export default function StepCampaign({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             toEmail: to,
-            subject: preview.subject,
+            subject,
             body: preview.body,
             bodyFormat: preview.bodyFormat,
+            leadId: lead.id,
+            campaignId: currentDraft.id,
+            stepOrder,
           }),
         })
-        if (!res.ok) return
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          showSequenceHint(
+            (err as { error?: string }).error || 'Test send failed',
+            'err'
+          )
+          return
+        }
 
         setTestSendSent((prev) => ({ ...prev, [stepIndex]: true }))
+        showSequenceHint(`Test sent to ${to}`, 'ok')
         const existing = testSendSentTimerRef.current[stepIndex]
         if (existing) clearTimeout(existing)
         testSendSentTimerRef.current[stepIndex] = setTimeout(() => {
           setTestSendSent((prev) => ({ ...prev, [stepIndex]: false }))
         }, 2500)
       } catch {
-        /* ignore */
+        showSequenceHint('Test send failed', 'err')
       } finally {
         setTestSendLoading((prev) => ({ ...prev, [stepIndex]: false }))
       }
     },
-    [testSendTo]
+    [testSendTo, showSequenceHint]
   )
 
   const renderPreviewFooter = (
@@ -525,6 +561,11 @@ export default function StepCampaign({
               : 'Send test'}
         </button>
       </div>
+      {sequenceHint && (
+        <div className="step-item-preview-send-hint">
+          <InlineHint hint={sequenceHint} />
+        </div>
+      )}
     </div>
   )
 

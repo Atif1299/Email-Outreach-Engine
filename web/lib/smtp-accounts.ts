@@ -9,6 +9,7 @@ import {
 } from '@/lib/send-limits'
 import { assertGmailSmtpUsername } from '@/lib/smtp'
 import type { DeliveryHaltReason } from '@/lib/verify'
+import { isAccountFollowUpsPaused } from '@/lib/inbox-cluster-guard'
 
 const EXHAUST_DURATION_MS: Record<DeliveryHaltReason, number> = {
   gmail_rate_limit: 2 * 60 * 60 * 1000,
@@ -74,6 +75,7 @@ export interface PublicSmtpAccount {
   exhaustReason: string | null
   healthStatus: string
   recoveryUntil: string | null
+  followUpsPausedUntil: string | null
   sendsToday: number
   sendsThisHour: number
   warmupDay: number | null
@@ -175,11 +177,14 @@ export async function evaluateAccountSendGate(
   if (!account.password) {
     return { allowed: false, reason: 'no_password', message: `${account.email} has no app password` }
   }
-  if (account.healthStatus === 'blocked') {
+  if (account.healthStatus === 'blocked' || account.exhaustReason === 'auth_failure') {
     return {
       allowed: false,
       reason: 'blocked',
-      message: `${account.email} is blocked — restore with Google, run SMTP test, then re-enable`,
+      message:
+        account.exhaustReason === 'auth_failure'
+          ? `${account.email} needs re-auth — log in via Gmail browser, update App Password in Connect`
+          : `${account.email} is blocked — restore with Google, run SMTP test, then re-enable`,
     }
   }
   if (isExhausted(account, now)) {
@@ -302,6 +307,7 @@ export async function toPublicSmtpAccounts(
       exhaustReason: account.exhaustReason,
       healthStatus: getEffectiveHealthStatus(account),
       recoveryUntil: account.recoveryUntil?.toISOString() ?? null,
+      followUpsPausedUntil: account.followUpsPausedUntil?.toISOString() ?? null,
       sendsToday,
       sendsThisHour,
       warmupDay,
@@ -330,6 +336,7 @@ export async function pickBestAvailableAccount(
 
   for (const account of accounts) {
     if (excludeIds.has(account.id)) continue
+    if (getEffectiveHealthStatus(account) === 'blocked') continue
     const gate = await evaluateAccountSendGate(account, limitSettings)
     if (gate.allowed) eligible.push(account)
   }
@@ -407,6 +414,13 @@ export async function getLeadSmtpAssignment(leadId: number, campaignId: number) 
   })
 }
 
+/** True when follow-ups for this lead must wait (assigned inbox follow-up pause). */
+export async function isLeadFollowUpPaused(leadId: number, campaignId: number): Promise<boolean> {
+  const assignment = await getLeadSmtpAssignment(leadId, campaignId)
+  if (!assignment?.smtpAccount) return false
+  return isAccountFollowUpsPaused(assignment.smtpAccount)
+}
+
 export async function assignLeadToAccount(leadId: number, campaignId: number, smtpAccountId: number) {
   await prisma.leadSmtpAssignment.upsert({
     where: { leadId_campaignId: { leadId, campaignId } },
@@ -436,6 +450,13 @@ export async function resolveAccountForSend(opts: {
 
   if (assignment?.smtpAccount && opts.stepOrder > 1) {
     const account = assignment.smtpAccount
+    if (isAccountFollowUpsPaused(account)) {
+      return {
+        status: 'unavailable',
+        reason: 'assigned_unavailable',
+        message: `Follow-ups paused on ${account.email} after Gmail block — wait or resume follow-ups.`,
+      }
+    }
     if (!account.enabled || !account.password) {
       return {
         status: 'unavailable',
@@ -474,6 +495,22 @@ export async function resolveAccountForSend(opts: {
   }
 
   return { status: 'ok', account: picked, newlyAssigned: opts.stepOrder === 1 }
+}
+
+/** Clear blocked / auth-failure state after a successful SMTP verify or test send. */
+export async function restoreSmtpAccountAfterSuccessfulAuth(accountId: number) {
+  const now = new Date()
+  await prisma.smtpAccount.update({
+    where: { id: accountId },
+    data: {
+      healthStatus: 'healthy',
+      healthChangedAt: now,
+      recoveryUntil: null,
+      exhaustedUntil: null,
+      exhaustReason: null,
+      lastInboxError: null,
+    },
+  })
 }
 
 export async function markAccountExhausted(accountId: number, reason: DeliveryHaltReason) {
