@@ -39,6 +39,16 @@ export function isDelayElapsed(
   return now - new Date(lastSend.sentAt).getTime() >= delayMs
 }
 
+/** UTC ms when the next step becomes eligible (sentAt + delay). Step 1 with no prior send → 0. */
+export function computeDelayEligibleAt(
+  lastSend: { sentAt: Date } | null,
+  nextStep: CampaignStepLike
+): number {
+  if (!lastSend) return 0
+  const delayMs = (nextStep.delayHoursAfterPrevious ?? 0) * 60 * 60 * 1000
+  return new Date(lastSend.sentAt).getTime() + delayMs
+}
+
 export function computeDueJobs(
   leadIds: number[],
   steps: CampaignStepLike[],

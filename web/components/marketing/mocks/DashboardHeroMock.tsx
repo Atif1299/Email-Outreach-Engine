@@ -30,9 +30,9 @@ export default function DashboardHeroMock() {
               padding: '0.25rem 0.5rem',
               borderRadius: '0.375rem',
               fontSize: '0.6875rem',
-              background: step === 'Queue' ? 'rgba(139, 92, 246, 0.18)' : 'rgba(255,255,255,0.04)',
+              background: step === 'Queue' ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255,255,255,0.04)',
               color: step === 'Queue' ? 'var(--m-accent-bright)' : 'var(--m-dim)',
-              border: step === 'Queue' ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+              border: step === 'Queue' ? '1px solid rgba(56,189,248,0.35)' : '1px solid transparent',
               fontWeight: step === 'Queue' ? 600 : 400,
             }}
           >

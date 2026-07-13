@@ -68,14 +68,14 @@ export function LeadsMock() {
         <span>Engagement</span>
       </div>
       {[
-        { email: 'jan@webspring.io', status: 'valid', eng: '—' },
+        { email: 'jan@webspring.io', status: 'valid', eng: '-' },
         { email: 'sara@agency.co', status: 'valid', eng: 'replied' },
-        { email: 'bad@invalid', status: 'invalid', eng: '—' },
+        { email: 'bad@invalid', status: 'invalid', eng: '-' },
       ].map((row) => (
         <div key={row.email} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '0.5rem', padding: '0.375rem 0', borderTop: '1px solid var(--m-border)' }}>
           <span style={{ color: 'var(--m-text)' }}>{row.email}</span>
           <span className={`m-mock-pill ${row.status === 'valid' ? 'm-mock-pill--ok' : 'm-mock-pill--err'}`}>{row.status}</span>
-          <span>{row.eng === 'replied' ? <span className="m-mock-pill m-mock-pill--ok">replied</span> : '—'}</span>
+          <span>{row.eng === 'replied' ? <span className="m-mock-pill m-mock-pill--ok">replied</span> : '-'}</span>
         </div>
       ))}
     </div>
@@ -88,7 +88,7 @@ export function CampaignMock() {
       <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Agency outreach Q1</div>
       <div style={{ color: 'var(--m-dim)', fontSize: '0.6875rem', marginBottom: '0.75rem' }}>3 steps · AI voice: Professional</div>
       {[
-        { step: 1, delay: '—', label: 'Initial touch' },
+        { step: 1, delay: '-', label: 'Initial touch' },
         { step: 2, delay: '72h', label: 'Follow-up' },
         { step: 3, delay: '96h', label: 'Final nudge' },
       ].map((s) => (
@@ -138,7 +138,7 @@ export function QueueMock() {
           marginBottom: '0.5rem',
         }}
       >
-        Follow-ups paused — reputation protection
+        Follow-ups paused. Reputation protection
       </div>
       <div style={{ color: 'var(--m-dim)', fontSize: '0.6875rem' }}>Campaign: Agency outreach · 394 remaining</div>
     </div>

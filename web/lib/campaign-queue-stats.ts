@@ -56,6 +56,27 @@ async function computeCampaignQueueStatsInner(
     select: { leadId: true, stepOrder: true },
   })
 
+  const sentLeadIds = new Set(sends.map((s) => s.leadId))
+  const validLeadIdSet = new Set(validLeadIds)
+  const cohortLeadIds = new Set([...validLeadIds, ...sentLeadIds])
+  const cohortSize = cohortLeadIds.size
+  const invalidAfterSendCount = [...sentLeadIds].filter((id) => !validLeadIdSet.has(id)).length
+
+  const [failedSendCount, uniqueLeadOpenedCount] = await Promise.all([
+    prisma.leadSend.count({
+      where: { campaignId, error: { not: null } },
+    }),
+    prisma.leadSend.groupBy({
+      by: ['leadId'],
+      where: {
+        campaignId,
+        openedAt: { not: null },
+        error: null,
+        subject: { notIn: ['SENDING', 'FAILED'] },
+      },
+    }).then((rows) => rows.length),
+  ])
+
   const lastSendsByLead = await loadLastSuccessfulSends(campaignId, validLeadIds)
   const blockedLeadIds = await loadBlockedLeadIds(campaignId, validLeadIds)
 
@@ -171,9 +192,12 @@ async function computeCampaignQueueStatsInner(
     campaignName: campaign.name,
     isActiveCampaign: isCampaignActive(queueState, campaignId),
     sendable,
+    cohortSize,
+    invalidAfterSendCount,
     blocked,
     stepCount: campaign.steps.length,
     emailsSent: sends.length,
+    failedSendCount,
     leadsStarted,
     leadsCompleted,
     queueRemaining,
@@ -183,12 +207,13 @@ async function computeCampaignQueueStatsInner(
     outOfOfficeCount,
     priorCampaignContacts,
     doNotContactExcluded,
-    step1: { sent: step1Sent, eligible: sendable },
+    step1: { sent: step1Sent, eligible: cohortSize },
     followUps: { sent: followUpSent, due: followUpDue, eligible: followUpEligible },
     waitingOnDelay,
     notStarted,
     blockedEngaged,
     stepBreakdown,
     openedCount,
+    uniqueLeadOpenedCount,
   }
 }

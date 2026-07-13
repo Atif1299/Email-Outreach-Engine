@@ -63,8 +63,13 @@ export async function getCampaignAnalytics(campaignId: number) {
     const stats = await computeCampaignQueueStats(campaignId, queueState)
     if (!stats) return null
 
-    const totalLeads = stats.sendable
+    const totalLeads = stats.cohortSize ?? stats.sendable
     const sent = stats.leadsStarted
+    const step1Sent = stats.step1?.sent ?? stats.stepBreakdown?.find((b) => b.stepOrder === 1)?.sent ?? 0
+    const uniqueLeadOpenRate =
+      stats.leadsStarted > 0
+        ? Math.round(((stats.uniqueLeadOpenedCount ?? 0) / stats.leadsStarted) * 100)
+        : 0
     const isActive = isCampaignActive(queueState, campaignId)
 
     const progress = computeCampaignProgress(stats, {
@@ -162,6 +167,9 @@ export async function getCampaignAnalytics(campaignId: number) {
       metrics: {
         sent,
         total: totalLeads,
+        cohortSize: stats.cohortSize ?? stats.sendable,
+        sendableValid: stats.sendable,
+        invalidAfterSendCount: stats.invalidAfterSendCount ?? 0,
         progressPct,
         progressSent: progress.sent,
         progressTotal: progress.total,
@@ -179,6 +187,8 @@ export async function getCampaignAnalytics(campaignId: number) {
         emailsSent: stats.emailsSent,
         failedSends: failedCount,
         openedCount: stats.openedCount ?? 0,
+        uniqueLeadOpenedCount: stats.uniqueLeadOpenedCount ?? 0,
+        uniqueLeadOpenRate,
       },
       sendDelay: formatDelayRange(settings.sendDelayMinMs, settings.sendDelayMaxMs),
       steps: campaign.steps.map((step) => {
@@ -186,7 +196,11 @@ export async function getCampaignAnalytics(campaignId: number) {
         const prevBreakdown = stats.stepBreakdown?.find((b) => b.stepOrder === step.stepOrder - 1)
         const sentCount = breakdown?.sent ?? 0
         const eligible =
-          step.stepOrder === 1 ? stats.sendable : (prevBreakdown?.sent ?? 0)
+          step.stepOrder === 1 ? totalLeads : (prevBreakdown?.sent ?? 0)
+        const cohortPct =
+          step1Sent > 0 ? Math.min(100, Math.round((sentCount / step1Sent) * 100)) : 0
+        const stepPct =
+          eligible > 0 ? Math.min(100, Math.round((sentCount / eligible) * 100)) : 0
         return {
           stepOrder: step.stepOrder,
           delayHours: step.delayHoursAfterPrevious,
@@ -195,6 +209,8 @@ export async function getCampaignAnalytics(campaignId: number) {
           sentCount,
           dueCount: breakdown?.due ?? 0,
           eligible,
+          cohortPct,
+          stepPct,
         }
       }),
       recentSends: recentSends.map((send) => ({

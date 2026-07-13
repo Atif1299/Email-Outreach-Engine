@@ -1,19 +1,32 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import Reveal from '@/components/marketing/Reveal'
+import GsapReveal from '@/components/marketing/motion/GsapReveal'
+import CountUp from '@/components/marketing/motion/CountUp'
 import HeroHome from '@/components/marketing/HeroHome'
+import ProductScrollReveal from '@/components/marketing/motion/ProductScrollReveal'
+import SectionHeading from '@/components/marketing/motion/SectionHeading'
+import MagneticButton from '@/components/marketing/motion/MagneticButton'
+import { marketingMetadata } from '@/lib/marketing-seo'
 
-export const metadata: Metadata = {
-  title: 'Email Outreach Engine — AI cold email at scale',
+export const metadata: Metadata = marketingMetadata({
+  title: 'Email Outreach Engine | AI cold email at scale',
   description:
     'Import leads, generate AI-personalized emails, and run automated sequences. Your outreach engine runs 24/7 in the cloud.',
-}
+  path: '/',
+})
 
-const LIVE_STATS = [
-  { value: '406', label: 'in queue' },
-  { value: '12', label: 'sent today' },
-  { value: '3', label: 'replies' },
-  { value: '3', label: 'inboxes live' },
+const SAMPLE_STATS = [
+  { value: '406', label: 'sample queue' },
+  { value: '12', label: 'sample sent' },
+  { value: '3', label: 'sample replies' },
+  { value: '4', label: 'inboxes' },
+]
+
+const MANUAL_WORKFLOW = [
+  'Copy-paste templates across Gmail tabs',
+  'No caps or warmup across inboxes',
+  'Manual follow-up timing per lead',
+  'Replies buried in separate inboxes',
 ]
 
 const INFRA_ITEMS = [
@@ -22,7 +35,7 @@ const INFRA_ITEMS = [
     desc: 'Validate before send',
     mock: (
       <div className="m-infra-mock">
-        <span className="m-infra-dot m-infra-dot--ok" />
+        <span className="m-infra-dot m-infra-dot--ok infra-pulse-dot" />
         <span>98% valid · 8 skipped</span>
       </div>
     ),
@@ -33,7 +46,7 @@ const INFRA_ITEMS = [
     mock: (
       <div className="m-infra-mock">
         <span>Step 1</span>
-        <span className="m-infra-arrow">→</span>
+        <span className="m-infra-arrow infra-draw-arrow">→</span>
         <span>Step 2</span>
         <span className="m-infra-dim">+3d</span>
       </div>
@@ -44,10 +57,7 @@ const INFRA_ITEMS = [
     desc: 'Pixel per send',
     mock: (
       <div className="m-infra-mock">
-        <span className="m-infra-bar">
-          <span className="m-infra-bar-fill" />
-        </span>
-        <span>24% opened</span>
+        <span className="m-infra-stat">24% opened</span>
       </div>
     ),
   },
@@ -58,69 +68,59 @@ export default function HomePage() {
     <>
       <HeroHome />
 
-      <section className="m-section" id="features">
-        <Reveal>
-          <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-            <p className="m-bento-intro-label">Built for operators</p>
-            <h2 className="m-display-sm" style={{ marginBottom: '0.5rem' }}>
-              Everything you need for cold outreach
-            </h2>
-            <p style={{ color: 'var(--m-dim)' }}>A complete system, not just another tool.</p>
+      <ProductScrollReveal />
+
+      <section className="m-section" id="features" aria-label="Product features">
+        <GsapReveal>
+          <div className="m-section-intro">
+            <SectionHeading text="Everything you need for cold outreach" />
+            <p className="m-section-lead">A complete system, not just another tool.</p>
           </div>
-        </Reveal>
+        </GsapReveal>
 
         <div className="m-bento">
-          <Reveal className="m-bento-large">
-            <div className="m-card" style={{ height: '100%', minHeight: '300px' }}>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.75rem' }}>AI Personalization</h3>
-              <p style={{ color: 'var(--m-dim)', fontSize: '0.875rem', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-                Generate unique bodies and subjects per lead. Bulk AI with live progress — no copy-paste templates.
+          <GsapReveal className="m-bento-large" staggerChildren>
+            <div className="m-card m-bento-card m-bento-card--accent m-bento-tall">
+              <h3 className="m-bento-title">AI Personalization</h3>
+              <p className="m-bento-copy">
+                Generate unique bodies and subjects per lead. Bulk AI with live progress. No copy-paste templates.
               </p>
-              <div className="m-progress-block">
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.5rem' }}>
-                  <span style={{ color: 'var(--m-dim)' }}>Bulk AI generation</span>
-                  <span style={{ color: 'var(--m-accent-bright)' }}>142 / 406</span>
-                </div>
-                <div className="m-progress-track">
-                  <div className="m-progress-fill" style={{ width: '35%' }} />
-                </div>
+              <div className="m-bento-stat-line">
+                <span className="m-bento-stat-label">Sample bulk run</span>
+                <span className="m-bento-stat-value">142 / 406 leads</span>
               </div>
             </div>
-          </Reveal>
+          </GsapReveal>
 
-          <Reveal delay={80}>
-            <div className="m-card m-bento-medium">
-              <h3 style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Smart Import</h3>
-              <p style={{ color: 'var(--m-dim)', fontSize: '0.875rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-                CSV or Excel. Auto column mapping to lead fields.
-              </p>
+          <GsapReveal delay={80}>
+            <div className="m-card m-bento-medium m-bento-card m-bento-card--grid">
+              <h3 className="m-bento-title">Smart Import</h3>
+              <p className="m-bento-copy">CSV or Excel. Auto column mapping to lead fields.</p>
               <div className="m-terminal-mini">
                 <div><span className="m-terminal-dim">email</span> → Email</div>
                 <div><span className="m-terminal-dim">first_name</span> → First Name</div>
                 <div><span className="m-terminal-dim">company</span> → Company</div>
               </div>
             </div>
-          </Reveal>
+          </GsapReveal>
 
-          <Reveal delay={120}>
-            <div className="m-card m-bento-medium">
-              <h3 style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Reply intelligence</h3>
-              <p style={{ color: 'var(--m-dim)', fontSize: '0.875rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-                IMAP sync detects replies, unsubscribes, and out-of-office.
-              </p>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <GsapReveal delay={120}>
+            <div className="m-card m-bento-medium m-bento-card m-bento-card--ok">
+              <h3 className="m-bento-title">Reply intelligence</h3>
+              <p className="m-bento-copy">IMAP sync detects replies, unsubscribes, and out-of-office.</p>
+              <div className="m-bento-pills">
                 <span className="m-mock-pill m-mock-pill--ok">Replied</span>
                 <span className="m-mock-pill m-mock-pill--warn">Unsubscribed</span>
                 <span className="m-mock-pill m-mock-pill--accent">OOO</span>
               </div>
             </div>
-          </Reveal>
+          </GsapReveal>
 
-          <Reveal delay={60} className="m-bento-wide">
+          <GsapReveal delay={60} className="m-bento-wide" staggerChildren childSelector=".m-infra-item">
             <div className="m-card m-infra-card">
-              <h3 style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Infrastructure</h3>
-              <p style={{ color: 'var(--m-dim)', fontSize: '0.8125rem', marginBottom: '1.25rem' }}>
-                Verify, sequence, and track — the layer under every send.
+              <h3 className="m-bento-title">Infrastructure</h3>
+              <p className="m-bento-copy m-bento-copy--tight">
+                Verify, sequence, and track. The layer under every send.
               </p>
               <div className="m-infra-grid">
                 {INFRA_ITEMS.map((item) => (
@@ -132,54 +132,37 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
-          </Reveal>
+          </GsapReveal>
         </div>
       </section>
 
-      <section className="m-section m-section-tight">
-        <Reveal>
-          <div className="m-stats-band">
-            {LIVE_STATS.map((stat, i) => (
-              <div key={stat.label} className="m-stats-item">
-                <div className="m-stats-value">{stat.value}</div>
-                <div className="m-stats-label">{stat.label}</div>
-                {i < LIVE_STATS.length - 1 && <span className="m-stats-divider" aria-hidden="true" />}
-              </div>
-            ))}
-          </div>
-        </Reveal>
+      <section className="m-section m-section-tight" aria-label="Example queue snapshot">
+        <GsapReveal>
+          <p className="m-stats-caption">Illustrative numbers from a sample dashboard session</p>
+          <CountUp stats={SAMPLE_STATS} />
+        </GsapReveal>
       </section>
 
-      <section className="m-section">
-        <Reveal>
-          <h2 className="m-display-sm" style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            Before vs after
-          </h2>
-        </Reveal>
-        <div className="m-comparison">
-          <Reveal>
-            <div className="m-terminal">
-              <div className="m-terminal-bar">
-                <span className="m-product-dot" />
-                <span className="m-product-dot" />
-                <span className="m-product-dot" />
-                <span className="m-terminal-bar-title">~/outreach — zsh</span>
-              </div>
-              <div className="m-terminal-body">
-                <div><span className="m-terminal-prompt">$</span> open gmail --tabs 3</div>
-                <div><span className="m-terminal-prompt">$</span> open leads.csv</div>
-                <div><span className="m-terminal-prompt">$</span> copy_paste --manual</div>
-                <div className="m-terminal-err">error: no follow-up governance</div>
-                <div className="m-terminal-err">error: replies lost in inbox chaos</div>
-                <div><span className="m-terminal-prompt">$</span> <span className="m-terminal-cursor" /></div>
-              </div>
+      <section className="m-section m-section-tight" aria-label="Workflow comparison">
+        <GsapReveal>
+          <SectionHeading text="Before vs after" />
+        </GsapReveal>
+        <div className="m-comparison m-comparison--split">
+          <GsapReveal>
+            <div className="m-comparison-manual">
+              <h3 className="m-comparison-label">Manual outreach</h3>
+              <ul className="m-comparison-list">
+                {MANUAL_WORKFLOW.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </div>
-          </Reveal>
-          <Reveal delay={100}>
+          </GsapReveal>
+          <GsapReveal delay={100}>
             <div className="m-card m-comparison-after">
               <div className="m-after-header">
-                <span className="m-logo-mark" style={{ width: '1.5rem', height: '1.5rem', fontSize: '0.625rem' }}>✉</span>
-                <span style={{ fontWeight: 600 }}>Email Outreach Engine</span>
+                <span className="m-logo-mark m-logo-mark--sm" aria-hidden="true">✉</span>
+                <span className="m-after-brand">Email Outreach Engine</span>
                 <span className="m-after-live">live</span>
               </div>
               <ul className="m-after-list">
@@ -189,27 +172,27 @@ export default function HomePage() {
                 <li>Auto-detect replies & unsubs</li>
               </ul>
               <div className="m-after-footer">
-                <span className="hero-ticker">406 queued · 12 sent · 3 replies</span>
+                <span className="m-stats-caption m-stats-caption--inline">Sample: 406 queued · 12 sent · 3 replies</span>
               </div>
             </div>
-          </Reveal>
+          </GsapReveal>
         </div>
       </section>
 
-      <section className="m-section">
-        <Reveal>
+      <section className="m-section" aria-label="Get started">
+        <GsapReveal>
           <div className="m-cta-band">
-            <h2 className="m-display-sm" style={{ marginBottom: '0.75rem' }}>
-              Ready to scale your outreach?
-            </h2>
-            <p style={{ color: 'var(--m-dim)', maxWidth: '28rem', margin: '0 auto 1.5rem' }}>
+            <SectionHeading text="Ready to scale your outreach?" />
+            <p className="m-cta-lead">
               Stop sending emails one by one. Let the engine run while you close deals.
             </p>
-            <Link href="/dashboard" className="m-btn-primary m-btn-lg">
-              Open Dashboard
-            </Link>
+            <MagneticButton>
+              <Link href="/dashboard" className="m-btn-primary m-btn-lg">
+                Open Dashboard
+              </Link>
+            </MagneticButton>
           </div>
-        </Reveal>
+        </GsapReveal>
       </section>
     </>
   )

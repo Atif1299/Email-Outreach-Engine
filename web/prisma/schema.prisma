@@ -113,6 +113,7 @@ model LeadSend {
 
   @@index([leadId, campaignId])
   @@index([smtpAccountId, sentAt])
+  /// Partial unique index `lead_sends_success_unique` on (lead_id, campaign_id, step_order) WHERE error IS NULL — migration 20250619000000_queue_hardening
   @@map("lead_sends")
 }
 

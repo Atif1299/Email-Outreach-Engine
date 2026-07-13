@@ -6,9 +6,18 @@ export interface CampaignStepBreakdown {
 
 export interface CampaignProgressInput {
   sendable: number
+  cohortSize?: number
   leadsCompleted: number
   stepCount: number
   stepBreakdown?: CampaignStepBreakdown[]
+}
+
+function clampPct(pct: number): number {
+  return Math.min(100, Math.max(0, pct))
+}
+
+function cohortDenominator(stats: CampaignProgressInput): number {
+  return stats.cohortSize && stats.cohortSize > 0 ? stats.cohortSize : stats.sendable
 }
 
 export type CampaignProgressPhase = 'active' | 'completed' | 'idle'
@@ -64,32 +73,35 @@ export function computeCampaignProgress(
   opts: { isActive: boolean; queueRunning: boolean; queuePaused: boolean }
 ): CampaignProgress {
   const { sendable, leadsCompleted, stepBreakdown = [] } = stats
+  const cohort = cohortDenominator(stats)
   const sorted = sortedBreakdown(stepBreakdown)
 
-  if (sendable <= 0) {
+  if (cohort <= 0 && sendable <= 0) {
     return { activeStepOrder: null, sent: 0, total: 0, progressPct: 0, phase: 'idle' }
   }
 
-  if (leadsCompleted >= sendable) {
+  const completionDenominator = sendable > 0 ? sendable : cohort
+
+  if (leadsCompleted >= completionDenominator && completionDenominator > 0) {
     return {
       activeStepOrder: null,
       sent: leadsCompleted,
-      total: sendable,
+      total: completionDenominator,
       progressPct: 100,
       phase: 'completed',
     }
   }
 
   if (opts.isActive && sorted.length > 0) {
-    const active = resolveActiveStep(sorted, sendable)
+    const active = resolveActiveStep(sorted, cohort)
     if (active) {
-      const total = eligibleForStep(active.stepOrder, sorted, sendable)
+      const total = eligibleForStep(active.stepOrder, sorted, cohort)
       const sent = active.sent
       return {
         activeStepOrder: active.stepOrder,
         sent,
         total,
-        progressPct: total > 0 ? Math.round((sent / total) * 100) : 0,
+        progressPct: clampPct(total > 0 ? Math.round((sent / total) * 100) : 0),
         phase: 'active',
       }
     }
@@ -98,8 +110,10 @@ export function computeCampaignProgress(
   return {
     activeStepOrder: null,
     sent: leadsCompleted,
-    total: sendable,
-    progressPct: Math.round((leadsCompleted / sendable) * 100),
+    total: completionDenominator,
+    progressPct: clampPct(
+      completionDenominator > 0 ? Math.round((leadsCompleted / completionDenominator) * 100) : 0
+    ),
     phase: 'idle',
   }
 }

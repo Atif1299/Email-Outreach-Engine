@@ -2,7 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef } from 'react'
+import gsap from 'gsap'
+import MagneticButton from '@/components/marketing/motion/MagneticButton'
+import { registerScrollTrigger } from '@/lib/gsap/register'
 
 const LINKS = [
   { href: '/', label: 'Home' },
@@ -12,18 +15,33 @@ const LINKS = [
 
 export default function MarketingNav() {
   const pathname = usePathname()
-  const [scrolled, setScrolled] = useState(false)
+  const navRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    const nav = navRef.current
+    if (!nav) return
+
+    registerScrollTrigger().then((ST) => {
+      if (!ST || !nav) return
+
+      gsap.to(nav, {
+        backdropFilter: 'blur(16px)',
+        backgroundColor: 'rgba(6, 8, 13, 0.88)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.07)',
+        ease: 'none',
+        scrollTrigger: {
+          trigger: document.body,
+          start: 'top top',
+          end: '80px top',
+          scrub: 0.3,
+        },
+      })
+    })
   }, [])
 
   return (
     <>
-      <nav className={`m-nav ${scrolled ? 'is-scrolled' : ''}`}>
+      <nav ref={navRef} className="m-nav">
         <div className="m-nav-inner">
           <Link href="/" className="m-logo">
             <span className="m-logo-mark" aria-hidden="true">
@@ -44,9 +62,11 @@ export default function MarketingNav() {
             ))}
           </div>
 
-          <Link href="/dashboard" className="m-btn-primary">
-            Open Dashboard
-          </Link>
+          <MagneticButton>
+            <Link href="/dashboard" className="m-btn-primary">
+              Open Dashboard
+            </Link>
+          </MagneticButton>
         </div>
       </nav>
 

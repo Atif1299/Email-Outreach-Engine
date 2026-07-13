@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import HeroPipeline from '@/components/marketing/HeroPipeline'
+import HeroPipelineMotion from '@/components/marketing/animations/HeroPipelineMotion'
 
 const STEP_IDS = ['connect', 'import', 'leads', 'campaign', 'preview', 'queue', 'replies']
 
@@ -28,5 +28,5 @@ export default function PlatformPipelineNav() {
     return () => observer.disconnect()
   }, [])
 
-  return <HeroPipeline variant="nav" activeId={activeId} />
+  return <HeroPipelineMotion variant="nav" activeId={activeId} />
 }

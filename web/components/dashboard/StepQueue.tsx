@@ -21,9 +21,12 @@ interface CampaignStats {
   campaignName?: string
   isActiveCampaign?: boolean
   sendable: number
+  cohortSize?: number
+  invalidAfterSendCount?: number
   blocked: number
   stepCount: number
   emailsSent: number
+  failedSendCount?: number
   leadsStarted: number
   leadsCompleted: number
   queueRemaining?: number
@@ -38,6 +41,7 @@ interface CampaignStats {
   notStarted?: number
   blockedEngaged?: number
   openedCount?: number
+  uniqueLeadOpenedCount?: number
   stepBreakdown?: Array<{
     stepOrder: number
     label: string
@@ -83,6 +87,7 @@ function getCampaignCardState(
     const progress = computeCampaignProgress(
       {
         sendable: stats?.sendable ?? 0,
+        cohortSize: stats?.cohortSize,
         leadsCompleted: stats?.leadsCompleted ?? 0,
         stepCount: stats?.stepCount ?? 0,
         stepBreakdown: stats?.stepBreakdown,
@@ -97,6 +102,23 @@ function getCampaignCardState(
   return 'idle'
 }
 
+function followUpMixWarning(
+  queueStatus: Props['queueStatus'],
+  startingCampaignIds: number[]
+): string | null {
+  const activeFollowUpOnly = (queueStatus.activeCampaigns ?? []).filter((c) => c.followUpsOnly)
+  if (activeFollowUpOnly.length === 0) return null
+
+  const step1Starters = startingCampaignIds.filter((id) => {
+    const active = queueStatus.activeCampaigns?.find((c) => c.campaignId === id)
+    return !active?.followUpsOnly
+  })
+  if (step1Starters.length === 0) return null
+
+  const names = activeFollowUpOnly.map((c) => c.name).join(', ')
+  return `Follow-ups-only campaigns (${names}) will wait while Step 1 sends run on other campaigns. Enable Follow-ups only on new campaigns or raise priority on mature ones.`
+}
+
 function isFollowUpsPausedForCampaign(
   stats: CampaignStats | undefined,
   isActive: boolean,
@@ -108,6 +130,7 @@ function isFollowUpsPausedForCampaign(
   const progress = computeCampaignProgress(
     {
       sendable: stats?.sendable ?? 0,
+      cohortSize: stats?.cohortSize,
       leadsCompleted: stats?.leadsCompleted ?? 0,
       stepCount: stats?.stepCount ?? 0,
       stepBreakdown: stats?.stepBreakdown,
@@ -128,7 +151,6 @@ function campaignBadgeLabel(state: CampaignCardState, followUpsPausedWaiting = f
 interface CampaignCardProps {
   campaign: Campaign
   stats: CampaignStats | undefined
-  liveMetrics?: { step1Sent: number; leadsStarted: number }
   isActive: boolean
   isSelected: boolean
   isViewing: boolean
@@ -157,7 +179,6 @@ interface CampaignCardProps {
 function CampaignCard({
   campaign,
   stats,
-  liveMetrics,
   isActive,
   isSelected,
   isViewing,
@@ -185,9 +206,11 @@ function CampaignCard({
   const subject =
     campaign.steps.find((s) => s.stepOrder === 1)?.subjectTemplate || 'No subject template'
   const sendable = stats?.sendable ?? 0
+  const cohortSize = stats?.cohortSize ?? sendable
   const progress = computeCampaignProgress(
     {
       sendable,
+      cohortSize,
       leadsCompleted: stats?.leadsCompleted ?? 0,
       stepCount: stats?.stepCount ?? campaign.steps.length,
       stepBreakdown: stats?.stepBreakdown,
@@ -200,15 +223,14 @@ function CampaignCard({
   )
   const progressPct = progress.progressPct
   const displaySent = progress.phase === 'active' ? progress.sent : (stats?.leadsStarted ?? 0)
-  const displayTotal = progress.phase === 'active' ? progress.total : sendable
+  const displayTotal = progress.phase === 'active' ? progress.total : cohortSize
   const activeStepOrder = progress.activeStepOrder
   const emailsSent = stats?.emailsSent ?? 0
+  const failedSendCount = stats?.failedSendCount ?? 0
   const openedCount = stats?.openedCount ?? 0
   const openRate = emailsSent > 0 ? Math.round((openedCount / emailsSent) * 100) : 0
-  const successRate =
-    emailsSent > 0
-      ? Math.round(((emailsSent - (stats?.blockedEngaged ?? 0)) / emailsSent) * 100)
-      : 100
+  const attempted = emailsSent + failedSendCount
+  const successRate = attempted > 0 ? Math.round((emailsSent / attempted) * 100) : 100
   const followUpSent = stats?.followUps?.sent ?? 0
   const showProgress = cardState === 'sending' || (progressPct > 0 && progressPct < 100)
 
@@ -546,6 +568,8 @@ export default function StepQueue({
             : 'Campaign added to queue',
           'ok'
         )
+        const mixWarn = followUpMixWarning(queueStatus, [campaignId])
+        if (mixWarn) showQueueHint(mixWarn, 'warn')
       }
       await loadQueueStatus()
       await loadAllCampaignStats()
@@ -638,6 +662,8 @@ export default function StepQueue({
             ? 'warn'
             : 'ok'
         )
+        const mixWarn = followUpMixWarning(queueStatus, ids)
+        if (mixWarn) showQueueHint(mixWarn, 'warn')
       } else {
         const err = await res.json()
         startFlash.flashError()
@@ -1301,7 +1327,6 @@ export default function StepQueue({
                     key={c.id}
                     campaign={c}
                     stats={campaignStatsById[c.id]}
-                    liveMetrics={queueStatus.activeCampaignMetrics?.find((m) => m.campaignId === c.id)}
                     isActive={activeCampaignIds.includes(c.id)}
                     isSelected={selectedIds.has(c.id)}
                     isViewing={queueCampaignId === c.id}

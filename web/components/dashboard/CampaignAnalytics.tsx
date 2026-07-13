@@ -10,6 +10,8 @@ interface AnalyticsStep {
   sentCount: number
   dueCount: number
   eligible: number
+  cohortPct?: number
+  stepPct?: number
 }
 
 interface AnalyticsData {
@@ -27,6 +29,9 @@ interface AnalyticsData {
   metrics: {
     sent: number
     total: number
+    cohortSize?: number
+    sendableValid?: number
+    invalidAfterSendCount?: number
     progressPct: number
     progressSent: number
     progressTotal: number
@@ -44,6 +49,8 @@ interface AnalyticsData {
     emailsSent: number
     failedSends: number
     openedCount: number
+    uniqueLeadOpenedCount?: number
+    uniqueLeadOpenRate?: number
   }
   sendDelay: string
   steps: AnalyticsStep[]
@@ -112,8 +119,10 @@ function formatStepDelay(step: AnalyticsStep): string {
 }
 
 function stepCompletionPct(step: AnalyticsStep): number {
+  if (step.stepOrder > 1 && step.cohortPct != null) return step.cohortPct
   if (step.eligible <= 0) return 0
-  return Math.round((step.sentCount / step.eligible) * 100)
+  const raw = step.stepPct ?? Math.round((step.sentCount / step.eligible) * 100)
+  return Math.min(100, raw)
 }
 
 function StepAccordion({
@@ -167,8 +176,14 @@ function StepAccordion({
                   <span>
                     <strong>{step.sentCount}</strong> sent
                   </span>
+                  {step.stepOrder > 1 ? (
+                    <span>
+                      · <strong>{step.cohortPct ?? stepCompletionPct(step)}%</strong> of Step 1 cohort
+                    </span>
+                  ) : null}
                   <span>
-                    of <strong>{step.eligible}</strong> eligible
+                    · <strong>{step.sentCount}</strong> of <strong>{step.eligible}</strong>{' '}
+                    {step.stepOrder === 1 ? 'in cohort' : 'advanced'}
                   </span>
                   {step.dueCount > 0 && (
                     <span className="campaign-analytics-accordion-due">{step.dueCount} due now</span>
@@ -289,7 +304,12 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
               <div className="campaign-metric-card">
                 <div className="campaign-metric-value">{data.metrics.sent}</div>
                 <div className="campaign-metric-label">Sent</div>
-                <div className="campaign-metric-sub">of {data.metrics.total} leads</div>
+                <div className="campaign-metric-sub">
+                  of {data.metrics.cohortSize ?? data.metrics.total} in cohort
+                  {(data.metrics.invalidAfterSendCount ?? 0) > 0
+                    ? ` · ${data.metrics.invalidAfterSendCount} bounced`
+                    : ''}
+                </div>
               </div>
               <div className="campaign-metric-card campaign-metric-card--accent">
                 <div className="campaign-metric-value">{data.metrics.progressPct}%</div>
@@ -360,7 +380,10 @@ export default function CampaignAnalytics({ campaignId, onClose }: Props) {
                 <span>
                   {data.metrics.openedCount}
                   {data.metrics.emailsSent > 0
-                    ? ` (${Math.round((data.metrics.openedCount / data.metrics.emailsSent) * 100)}%)`
+                    ? ` (${Math.round((data.metrics.openedCount / data.metrics.emailsSent) * 100)}% emails)`
+                    : ''}
+                  {(data.metrics.uniqueLeadOpenRate ?? 0) > 0
+                    ? ` · ${data.metrics.uniqueLeadOpenRate}% unique leads`
                     : ''}
                 </span>
               </div>

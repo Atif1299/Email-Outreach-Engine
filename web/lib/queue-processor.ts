@@ -18,7 +18,7 @@ import {
 import { loadSequenceContext } from '@/lib/preview-context'
 import { ensureSettings } from '@/lib/settings'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
-import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds } from '@/lib/queue-schedule'
+import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds, computeDelayEligibleAt } from '@/lib/queue-schedule'
 import {
   countSuccessfulSendsSince,
   evaluateGlobalDailyCap,
@@ -272,20 +272,38 @@ async function prepareNextLeadForSend(opts: {
         : ['step1', 'followup']
 
   for (const pass of passes) {
+    let best: {
+      prepared: PreparedLead
+      leadId: number
+      delayElapsedAt: number
+    } | null = null
+
     for (let i = 0; i < activeLeadIds.length; i++) {
       const leadId = activeLeadIds[i]
-      const prepared = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
-      if (!prepared) continue
-      if (!prepared.due) continue
-      if (pass === 'followup' && prepared.nextStepOrder <= 1) continue
-      if (pass === 'step1' && prepared.nextStepOrder !== 1) continue
-      if (!isStepTypeCapAvailable(limitSettings, prepared.nextStepOrder, stepTypeCounts)) continue
+      const inspected = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
+      if (!inspected) continue
+      if (!inspected.due) continue
+      if (pass === 'followup' && inspected.nextStepOrder <= 1) continue
+      if (pass === 'step1' && inspected.nextStepOrder !== 1) continue
+      if (!isStepTypeCapAvailable(limitSettings, inspected.nextStepOrder, stepTypeCounts)) continue
 
-      if (i > 0) {
-        activeLeadIds.splice(i, 1)
-        activeLeadIds.unshift(leadId)
+      const nextStep = campaign.steps.find((s) => s.stepOrder === inspected.nextStepOrder)
+      const delayElapsedAt = nextStep
+        ? computeDelayEligibleAt(inspected.prepared.lastSend, nextStep)
+        : 0
+
+      if (!best || delayElapsedAt < best.delayElapsedAt) {
+        best = { prepared: inspected.prepared, leadId, delayElapsedAt }
       }
-      return { ok: true, prepared: prepared.prepared }
+    }
+
+    if (best) {
+      const idx = activeLeadIds.indexOf(best.leadId)
+      if (idx > 0) {
+        activeLeadIds.splice(idx, 1)
+        activeLeadIds.unshift(best.leadId)
+      }
+      return { ok: true, prepared: best.prepared }
     }
   }
 
@@ -409,7 +427,8 @@ async function pickJobAcrossCampaigns(opts: {
 
     if (pick.ok) {
       const lastSend = pick.prepared.lastSend
-      const delayElapsedAt = lastSend ? new Date(lastSend.sentAt).getTime() : 0
+      const nextStep = pick.prepared.nextStep
+      const delayElapsedAt = computeDelayEligibleAt(lastSend, nextStep)
       candidates.push({
         campaign,
         entry,

@@ -1,14 +1,19 @@
+'use client'
+
 import MarketingNav from './MarketingNav'
-import MarketingFooter from './MarketingFooter'
+import MotionFooter from '@/components/marketing/motion/MotionFooter'
+import MotionProvider from '@/components/marketing/motion/MotionProvider'
 
 export default function MarketingShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="marketing-page">
-      <div className="marketing-inner">
-        <MarketingNav />
-        <main>{children}</main>
-        <MarketingFooter />
-      </div>
+      <MotionProvider>
+        <div className="marketing-inner">
+          <MarketingNav />
+          <main>{children}</main>
+          <MotionFooter />
+        </div>
+      </MotionProvider>
     </div>
   )
 }

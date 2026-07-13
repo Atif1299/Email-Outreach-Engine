@@ -24,6 +24,7 @@
 import prisma from '@/lib/db'
 import {
   computeDueJobs,
+  computeDelayEligibleAt,
   getLeadQueueStatus,
   getNextStepOrder,
   loadBlockedLeadIds,
@@ -108,7 +109,10 @@ export function compareScheduledJobs(
   if (aPri !== bPri) return bPri - aPri
 
   if (priority === 'step1_first') {
-    if (a.stepOrder !== b.stepOrder) return a.stepOrder - b.stepOrder
+    const bothFollowUp = a.stepOrder > 1 && b.stepOrder > 1
+    // Step 1 vs follow-up: Step 1 wins (pool usually pre-filters; guard for mixed pools)
+    if (!bothFollowUp && a.stepOrder !== b.stepOrder) return a.stepOrder - b.stepOrder
+    // Among follow-ups: do not prefer lower stepOrder — most overdue first
     if (a.delayElapsedAt !== b.delayElapsedAt) return a.delayElapsedAt - b.delayElapsedAt
   } else {
     if (a.stepOrder !== b.stepOrder) return b.stepOrder - a.stepOrder
@@ -152,6 +156,11 @@ export interface QueueSchedulingStatus {
   step1CapExhausted: boolean
   followUpCapAvailable: boolean
   byCampaign?: CampaignDueBreakdown[]
+}
+
+export type ActiveCampaignSchedulingMeta = {
+  campaignId: number
+  followUpsOnly?: boolean
 }
 
 /** @deprecated Use QueueSchedulingStatus — kept for response shape compatibility */
@@ -206,7 +215,8 @@ export function computeQueueSchedulingStatus(
   dueCounts: { step1Due: number; followUpDue: number; byCampaign?: CampaignDueBreakdown[] },
   limitSettings: SendLimitSettings,
   stepTypeCounts: StepTypeCounts,
-  campaignNames?: Map<number, string>
+  campaignNames?: Map<number, string>,
+  activeCampaignMeta?: ActiveCampaignSchedulingMeta[]
 ): QueueSchedulingStatus {
   const step1CapExhausted = isStep1CapExhausted(limitSettings, stepTypeCounts)
   const followUpCapAvailable = isFollowUpCapAvailable(limitSettings, stepTypeCounts)
@@ -260,6 +270,28 @@ export function computeQueueSchedulingStatus(
     message = `Follow-ups waiting — Step 1 in progress on other campaigns (${step1Due} Step 1 due).`
     const detail = breakdownHint()
     if (detail) message = `${message} (${detail})`
+  }
+
+  if (
+    status === 'step1_priority_blocking' &&
+    byCampaign &&
+    activeCampaignMeta &&
+    activeCampaignMeta.length > 0
+  ) {
+    const metaById = new Map(activeCampaignMeta.map((m) => [m.campaignId, m]))
+    const step1Blockers = byCampaign.filter(
+      (c) =>
+        c.step1Due > 0 && !metaById.get(c.campaignId)?.followUpsOnly
+    )
+    const followUpOnlyWaiting = byCampaign.filter(
+      (c) => c.followUpDue > 0 && metaById.get(c.campaignId)?.followUpsOnly
+    )
+    if (step1Blockers.length > 0 && followUpOnlyWaiting.length > 0) {
+      const blockerNames = step1Blockers
+        .map((c) => campaignNames?.get(c.campaignId) ?? `Campaign ${c.campaignId}`)
+        .join(', ')
+      message = `${message ?? 'Follow-ups waiting.'} Follow-ups-only campaigns paused — Step 1 due on: ${blockerNames}.`
+    }
   }
 
   return {
@@ -685,6 +717,8 @@ export async function collectDueJobCandidates(
     let entryCandidate: DueJobCandidate | null = null
 
     for (const pass of passes) {
+      let passBest: DueJobCandidate | null = null
+
       for (let i = 0; i < entry.leadIds.length; i++) {
         const leadId = entry.leadIds[i]
         if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
@@ -712,21 +746,25 @@ export async function collectDueJobCandidates(
         }
 
         const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
-        const delayElapsedAt = lastSend
-          ? new Date(lastSend.sentAt).getTime() +
-          (nextStep?.delayHoursAfterPrevious ?? 0) * 60 * 60 * 1000
-          : 0
+        const delayElapsedAt = nextStep ? computeDelayEligibleAt(lastSend, nextStep) : 0
 
-        entryCandidate = {
+        const candidate: DueJobCandidate = {
           campaignId: entry.campaignId,
           leadId,
           stepOrder: nextStepOrder,
           delayElapsedAt,
           priority: entry.priority ?? 0,
         }
+
+        if (!passBest || delayElapsedAt < passBest.delayElapsedAt) {
+          passBest = candidate
+        }
+      }
+
+      if (passBest) {
+        entryCandidate = passBest
         break
       }
-      if (entryCandidate) break
     }
 
     if (entryCandidate) {

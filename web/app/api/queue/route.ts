@@ -191,7 +191,11 @@ export async function GET() {
           dueCounts,
           limitSettings,
           stepTypeCounts,
-          campaignNames
+          campaignNames,
+          activeEntries.map((e) => ({
+            campaignId: e.campaignId,
+            followUpsOnly: e.followUpsOnly,
+          }))
         )
         followUpStarvation = toFollowUpStarvationInfo(queueSchedulingStatus)
 
