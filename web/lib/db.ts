@@ -1,6 +1,4 @@
 import { PrismaClient, Prisma } from '@prisma/client'
-import { PrismaNeon } from '@prisma/adapter-neon'
-import { Pool, neonConfig } from '@neondatabase/serverless'
 
 const PLACEHOLDER_HOSTS = ['host', 'localhost', '127.0.0.1']
 
@@ -8,25 +6,22 @@ function assertDatabaseUrl() {
   const url = process.env.DATABASE_URL?.trim()
   if (!url) {
     throw new Error(
-      'DATABASE_URL is not set. Add your Neon Postgres connection string to web/.env.local'
+      'DATABASE_URL is not set. Add your Postgres connection string (Neon, Supabase, etc.) to environment variables.'
     )
   }
 
   if (PLACEHOLDER_HOSTS.some((h) => url.includes(`@${h}:`))) {
     throw new Error(
-      'DATABASE_URL is still using the placeholder host. Copy your Neon connection string into web/.env.local (it overrides .env).'
+      'DATABASE_URL is still using the placeholder host. Set a real Postgres connection string in your environment.'
     )
   }
 }
 
 assertDatabaseUrl()
 
-// require() keeps ws out of the webpack bundle (see next.config.mjs externals)
-neonConfig.webSocketConstructor = require('ws')
-
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
-  neonPool: Pool | undefined
+  neonPool: { end: () => Promise<void> } | undefined
 }
 
 function getConnectionString(): string {
@@ -42,10 +37,37 @@ function getConnectionString(): string {
   }
 }
 
-function createPrismaClient(): PrismaClient {
+/** Neon serverless URLs use the Neon driver; Supabase/Railway/Render Postgres use standard Prisma. */
+function useNeonDriver(url: string): boolean {
+  if (process.env.DATABASE_DRIVER === 'postgres') return false
+  if (process.env.DATABASE_DRIVER === 'neon') return true
+  return /neon\.tech|\.neon\./i.test(url)
+}
+
+function createStandardPrismaClient(): PrismaClient {
+  return new PrismaClient({
+    datasources: { db: { url: getConnectionString() } },
+  })
+}
+
+function createNeonPrismaClient(): PrismaClient {
+  // Dynamic require keeps ws out of the webpack bundle (see next.config.mjs externals)
+  const { PrismaNeon } = require('@prisma/adapter-neon') as typeof import('@prisma/adapter-neon')
+  const { Pool, neonConfig } = require('@neondatabase/serverless') as typeof import('@neondatabase/serverless')
+
+  neonConfig.webSocketConstructor = require('ws')
+
   const pool = new Pool({ connectionString: getConnectionString() })
   globalForPrisma.neonPool = pool
   return new PrismaClient({ adapter: new PrismaNeon(pool) })
+}
+
+function createPrismaClient(): PrismaClient {
+  const url = getConnectionString()
+  if (useNeonDriver(url)) {
+    return createNeonPrismaClient()
+  }
+  return createStandardPrismaClient()
 }
 
 let prisma = globalForPrisma.prisma ?? createPrismaClient()
@@ -82,6 +104,7 @@ function sleep(ms: number): Promise<void> {
 export async function reconnectPrisma(): Promise<PrismaClient> {
   await prisma.$disconnect().catch(() => { })
   await globalForPrisma.neonPool?.end().catch(() => { })
+  globalForPrisma.neonPool = undefined
   prisma = createPrismaClient()
   if (process.env.NODE_ENV !== 'production') {
     globalForPrisma.prisma = prisma

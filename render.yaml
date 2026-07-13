@@ -1,0 +1,26 @@
+# Render Blueprint — free web service for Email Outreach Engine
+# Docs: https://render.com/docs/blueprint-spec
+#
+# After connecting this repo in Render Dashboard:
+# 1. Set environment variables (see web/MIGRATION.md)
+# 2. Export Neon → import Supabase first, then deploy
+# 3. Point cron-job.org at https://YOUR-SERVICE.onrender.com/api/cron/...
+
+services:
+  - type: web
+    name: email-outreach-web
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    healthCheckPath: /dashboard
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_DRIVER
+        value: postgres
+      - key: NEXT_PUBLIC_USE_CRON_WORKER
+        value: "true"
+      # Set these in Render Dashboard (never commit secrets):
+      # DATABASE_URL, CRON_SECRET, TRACKING_SECRET, OPENAI_API_KEY, NEXT_PUBLIC_APP_URL
