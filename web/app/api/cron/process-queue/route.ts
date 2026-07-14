@@ -16,9 +16,17 @@ function resolveMaxBatches(): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(n, 5) : 1
 }
 
+/** Tiny responses — cron-job.org aborts above ~64KB (cold-start HTML trips this). */
+function tinyOk(body: Record<string, string | number>) {
+  return NextResponse.json(body, {
+    status: 200,
+    headers: { 'Cache-Control': 'no-store' },
+  })
+}
+
 async function handleCron(request: NextRequest) {
   if (!isAuthorizedCron(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ ok: 0, error: 'unauthorized' }, { status: 401 })
   }
 
   try {
@@ -26,14 +34,25 @@ async function handleCron(request: NextRequest) {
       maxRuntimeMs: CRON_QUEUE_BUDGET_MS,
       maxBatches: resolveMaxBatches(),
     })
-    return NextResponse.json({ queue: queueResult })
+    return tinyOk({
+      ok: 1,
+      status: queueResult.status,
+      processed: queueResult.processed,
+      failed: queueResult.failed,
+      remaining: queueResult.remaining,
+      batches: queueResult.batches,
+      ms: queueResult.ranMs,
+    })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Processing failed'
     await prisma.queueState.update({
       where: { id: 1 },
-      data: { lastError: message },
+      data: { lastError: message.slice(0, 500) },
     })
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json(
+      { ok: 0, error: message.slice(0, 200) },
+      { status: 500 }
+    )
   }
 }
 
