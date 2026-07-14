@@ -1,0 +1,60 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+.next
+out
+build
+dist
+
+# Environment files
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docs and misc
+*.md
+README*
+CHANGELOG*
+LICENSE*
+
+# Backups and dumps
+*.dump
+*.sql
+*.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+__tests__
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage
+
+# Scripts not needed in prod
+scripts/
+
+# Misc
+.eslintcache
+.turbo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

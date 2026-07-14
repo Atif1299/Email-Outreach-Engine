@@ -3,7 +3,9 @@ import type { Metadata } from 'next'
 export function getSiteUrl() {
   if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  if (process.env.NODE_ENV === 'production') return 'https://web-chi-ten-9z0rovrlej.vercel.app'
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://email-outreach-web-95044197271.europe-west1.run.app'
+  }
   return 'http://localhost:3000'
 }
 

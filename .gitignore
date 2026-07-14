@@ -10,6 +10,8 @@ out/
 .env
 .env.*
 !.env.example
+new setup.md
+cloud_build_logs.txt
 
 # Logs
 logs/

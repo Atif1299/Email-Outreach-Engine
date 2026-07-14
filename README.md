@@ -1,236 +1,210 @@
-<p align="center">
-  <img src="./docs/readme-banner.svg" alt="Email Outreach" width="100%" />
-</p>
+# Email Outreach Engine
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black" alt="JavaScript" />
-  <img src="https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/OpenAI-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI" />
-  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node" />
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
-</p>
+Cloud-based cold email outreach platform: import leads, build multi-step sequences, personalize with AI, send through your own Gmail SMTP accounts, track opens, and sync replies via IMAP.
 
-<p align="center">
-  <strong>Import your leads. Build sequences. Personalize with AI. Send through your SMTP — with pacing you control.</strong>
-</p>
-
-<p align="center">
-  <a href="#quick-start">Quick start</a>
-  &nbsp;·&nbsp;
-  <a href="#capabilities">Capabilities</a>
-  &nbsp;·&nbsp;
-  <a href="#workflow">Workflow</a>
-  &nbsp;·&nbsp;
-  <a href="#data-storage">Data</a>
-  &nbsp;·&nbsp;
-  <a href="#repository-layout">Layout</a>
-  &nbsp;·&nbsp;
-  <a href="#email-verification">Verification</a>
-  &nbsp;·&nbsp;
-  <a href="#compliance-and-deliverability">Compliance</a>
-</p>
+**Live app:** [email-outreach-web (Cloud Run)](https://email-outreach-web-95044197271.europe-west1.run.app) · **Dashboard:** `/dashboard`
 
 ---
 
-## What is Email Outreach?
+## What this system is
 
-Email Outreach is a **desktop operator tool** for teams that export contacts from LinkedIn or other sources as spreadsheets. You bring the file; the app handles **column mapping**, **merge-field templates**, **multi-step follow-ups** timed by hours after the previous send, and **SMTP delivery** through your own account so credentials stay under your control.
+An operator tool for running outbound cold email at scale from a browser. You own the sending accounts (Gmail App Passwords). The app orchestrates:
 
-The workflow is intentionally linear: connect mail settings, import data, review leads, save a campaign definition, preview personalized content, then start a queue that respects **delay between messages** and a **daily cap**. Optional **OpenAI** integration can draft subject lines and bodies from your pitch block and lead fields when you enable it per step.
+1. **Lead intake** — CSV / Excel import with column mapping and local (plus optional ZeroBounce) verification  
+2. **Campaign design** — pitch, voice, language, multi-step sequences with per-step delays  
+3. **AI personalization** — OpenAI or Gemini drafts subject/body from your pitch and lead fields  
+4. **Controlled sending** — multi-inbox rotation, daily/hourly/step caps, send windows, delays  
+5. **Follow-ups** — later steps only after delays, stopped when someone replies / unsubscribes / OOOs / bounces  
+6. **Inbox sync** — IMAP checks for engagement signals  
+7. **Open tracking** — 1×1 pixel + unsubscribe links signed with HMAC  
 
-Data lives on disk in **SQLite**. SMTP passwords and API keys use Electron **`safeStorage`** where the operating system provides keychain-backed encryption.
+Credentials for SMTP and AI live mainly in the app database (Connect settings), not only in host env vars.
 
-## Capabilities
+---
 
-- **Import** — `.csv`, `.xlsx`, `.xls` with preview and column mapping; rows without a valid email are skipped; **local verification runs on import**.
-- **Leads** — Search, filter by batch or verification status, select recipients, bulk delete, **Verify Batch / Verify Selected**.
-- **Email verification** — Syntax, MX, disposable domain, and role-address checks locally; optional **ZeroBounce** deep verify when an API key is configured.
-- **Campaigns** — Pitch block, sender sign-off, target batch, multi-step sequences with Overview and Sequences tabs.
-- **Optional AI** — OpenAI-backed subject and body per lead when configured.
-- **Preview** — Merge preview, per-lead AI generation, bulk AI, saved overrides.
-- **Sending** — Nodemailer over SMTP; configurable inter-send delay, daily cap, pause/resume/stop.
-
-## Requirements
-
-- **Node.js** 18+ (LTS recommended).
-- **Windows, macOS, or Linux** for development and runtime.
-
-For Gmail SMTP, use an [App Password](https://support.google.com/accounts/answer/185833) with 2-Step Verification enabled.
-
-## Quick start
-
-```bash
-git clone https://github.com/Atif1299/Email-Outreach-Engine.git
-cd Email-Outreach-Engine
-npm install
-npm run rebuild
-npm start
-
-
-```
-
-`npm run rebuild` compiles `better-sqlite3` for your Electron version. Run it again after upgrading Electron or Node.
-
-Configure SMTP (and optionally OpenAI) in the **Connect** step before sending.
-
-## Workflow
-
-| Step | Purpose |
-|------|---------|
-| **Connect** | SMTP settings, send delays, daily cap, OpenAI API key, optional verification provider |
-| **Import** | Upload leads, map columns, import batch (local verify on commit) |
-| **Leads** | Review, search, filter by status, verify batch or selected leads |
-| **Campaign** | Create campaign — Overview (pitch, sign-off) + Sequences (email steps) |
-| **Preview** | Merge or AI-generate subject and body per lead |
-| **Queue** | Start, pause, resume, or stop the send queue (**valid leads only**) |
-
-## Email verification
-
-Verification runs **before outreach** so bad addresses are filtered out early. Only leads with status **`valid`** appear in Preview lead counts and can be sent from the Queue.
+## Architecture
 
 ```text
-Import → local verify → Leads (status column) → optional API verify → Queue (valid only)
+Browser (/dashboard)
+        │
+        ▼
+Next.js 14 app (API routes + UI)
+        │
+        ├── PostgreSQL (Prisma)     ← campaigns, leads, queue, sends, inboxes
+        ├── Gmail SMTP (Nodemailer) ← outbound mail
+        ├── Gmail IMAP (imapflow)   ← replies / unsub / bounce
+        └── OpenAI / Gemini         ← optional personalization
+
+External cron (e.g. cron-job.org)
+        ├── GET /api/cron/process-queue   → send batches
+        └── GET /api/cron/check-inbox     → sync inboxes
 ```
 
-### Status meanings
+| Layer | Choice |
+|--------|--------|
+| App | Next.js 14 (App Router), React 18, TypeScript, Tailwind |
+| API | Next.js route handlers under `web/app/api/` |
+| DB | PostgreSQL via Prisma (`DATABASE_DRIVER=postgres` for Supabase / standard Postgres; Neon adapter supported) |
+| Mail | Nodemailer → `smtp.gmail.com:465`; IMAP → `imap.gmail.com:993` |
+| AI | OpenAI SDK; OpenAI or Gemini models configured in Connect |
+| Host | Google Cloud Run (`web/Dockerfile`, Node 20, standalone output, port `8080`) |
+| Cron | External scheduler with `Authorization: Bearer <CRON_SECRET>` |
 
-| Status | Meaning | Can send? |
-|--------|---------|-----------|
-| **valid** | Passed checks (and API if used) | Yes |
-| **invalid** | Bad syntax, no MX, disposable domain, API reject, or hard bounce after send | No |
-| **risky** | Role address (`info@`, `admin@`, etc.) or catch-all from API | No |
-| **pending** | Imported, not yet re-verified | No |
-| **unknown** | API timeout or inconclusive result | No |
+> The repo root also contains a legacy **Electron + SQLite** desktop app. The product described here is the **`web/`** Cloud application.
 
-### Local checks (always)
+---
 
-On import and on **Verify Batch / Verify Selected**, the app always runs:
+## Operator workflow (dashboard)
 
-1. Email syntax validation  
-2. MX record lookup  
-3. Disposable domain blocklist  
-4. Role-address detection → marked **risky** (not invalid)
+| Step | What you do |
+|------|-------------|
+| **Connect** | Add one or more Gmail inboxes (App Password), send delays, daily/hourly caps, Step‑1 vs follow‑up caps, send timezone/hours, AI keys, unsubscribe footer |
+| **Import** | Upload `.csv` / `.xlsx`, map columns, create an import batch |
+| **Leads** | Search/filter, verify, suppress / do-not-contact |
+| **Campaign** | Pitch, sign-off, AI voice/language; multi-step sequence (templates and/or AI per step) |
+| **Preview** | Merge preview, per-lead overrides, bulk AI, send a test email |
+| **Queue** | Start / pause / resume / stop; multi-campaign fairness; open-rate and send stats |
+| **Replies** | View reply / unsubscribe / OOO / bounce engagement from IMAP sync |
 
-### Optional ZeroBounce API
+Marketing site: `/`, `/platform`, `/deliverability`.
 
-On **Connect**, set **Provider** to ZeroBounce and paste your API key. **Verify Batch** and **Verify Selected** will then call ZeroBounce for leads that are pending, unknown, or risky (when you choose deep verify).
+---
 
-Without an API key, verification stays local-only — still useful, but cannot detect catch-alls or spam traps.
+## Sending & cron
 
-### Bounce feedback
+With `NEXT_PUBLIC_USE_CRON_WORKER=true` (production default on Cloud Run), the queue does **not** rely on an open browser tab.
 
-If SMTP returns a hard bounce (`550`, mailbox not found, etc.), the lead is automatically marked **invalid** and skipped on future steps.
+| Endpoint | Role |
+|----------|------|
+| `/api/cron/process-queue` | Process due sends under rate limits and time budget |
+| `/api/cron/check-inbox` | Sync Gmail for replies, unsubscribes, bounces, OOO |
 
-Verification **reduces** bounces but cannot eliminate them entirely. Pair it with conservative daily caps and the hard-bounce auto-suppress loop above.
-
-## Data storage
-
-App data is stored in Electron `userData` (not inside the project folder):
-
-| OS | Path |
-|----|------|
-| Windows | `%APPDATA%\Email Outreach\` |
-| macOS | `~/Library/Application Support/Email Outreach/` |
-| Linux | `~/.config/Email Outreach/` |
-
-| File | Purpose |
-|------|---------|
-| `outreach.db` | Leads, campaigns, send history, AI overrides |
-| `settings.json` | SMTP/OpenAI settings (secrets encrypted via OS keychain when available) |
-
-Uninstalling the app removes the program but **keeps** the data above. Delete that folder manually for a full reset.
-
-## Configuration
-
-### SMTP
-
-| Field | Example |
-|-------|---------|
-| Host | `smtp.gmail.com` |
-| Port | `465` (TLS) |
-| Username | Full email address |
-| Password | App password (Gmail) |
-| From Name / From Email | What recipients see |
-
-### Merge tags
-
-```
-{{first_name}}  {{last_name}}  {{email}}
-{{current_employer}}  {{current_title}}
-{{pitch_block}}  {{sender_info}}
+```http
+Authorization: Bearer <CRON_SECRET>
 ```
 
-### Writing great pitch blocks (for AI)
+Suggested schedules: queue every **10–15 minutes**, inbox every **~30 minutes** (adjust to volume).
 
-When AI is enabled on a sequence step, the model uses a **pain-first** framework: hook on their role's problem → tie to title/company → bridge your product → soft CTA. Give it structured input:
+Without the cron worker flag, the queue can tick from the dashboard via `/api/queue/tick` while the tab is open. Manual inbox sync is also available from Replies / Queue.
 
-```
-Product: Schmoozzer
-For: sales teams on ActiveCampaign
-Pain: replies leak across LinkedIn, email, WhatsApp; CRM notes go stale
-Solution: multi-channel outreach in one flow, synced to CRM
-Integrations/channels: LinkedIn, Instagram, email, WhatsApp, ActiveCampaign
-Offer/CTA: 15-minute benchmark of outbound gaps
-Proof (optional): teams book more meetings with cleaner follow-up
-```
+---
 
-**AI Voice** (Campaign Overview): **Founder** uses "I built…"; **Company** uses "We help…". Add optional **AI Instructions** for tone tweaks.
+## Multi-inbox, follow-ups, tracking
 
-Default AI model is **GPT-4o Mini** on the Connect step. You can switch to **GPT-4.1 Mini** in the Model dropdown.
+- **Multi-inbox** — Multiple SMTP accounts; sticky assignment per lead+campaign; rotation with per-inbox health and caps  
+- **Follow-ups** — `CampaignStep` delays after previous send; engagement stops further steps  
+- **Open tracking** — Pixel → `/api/track/open` → `lead_sends.opened_at`  
+- **Unsubscribe** — Footer / List-Unsubscribe style links → `/api/track/unsubscribe`  
+- Requires production `NEXT_PUBLIC_APP_URL` + `TRACKING_SECRET` (or `CRON_SECRET`)
+
+---
 
 ## Repository layout
 
-| Path | Role |
-|------|------|
-| `main.js` | Electron main process — IPC, SQLite, SMTP, AI, send queue, verification |
-| `aiPrompts.js` | Pain-first AI prompt builder and pitch parser |
-| `prompts/cold_outreach/` | Editable system prompts and few-shot example |
-| `verify.js` | Email verification — local checks + ZeroBounce adapter |
-| `preload.js` | Context bridge exposing `window.api` to the UI |
-| `renderer.js` | UI logic and wizard flow |
-| `index.html` | App layout |
-| `styles.css` | Dark theme and component styles |
-| `docs/` | README assets |
-
-## Troubleshooting
-
-**`better-sqlite3` errors after install**
-
-```bash
-npm run rebuild
+```text
+Email-Outreach-Engine/
+├── README.md                 # This file
+├── render.yaml               # Optional Render blueprint
+├── main.js, renderer.js, …   # Legacy Electron desktop app
+└── web/                      # ← Production Cloud app
+    ├── app/
+    │   ├── (marketing)/      # Landing / platform / deliverability
+    │   ├── dashboard/        # Operator UI
+    │   └── api/              # Import, campaigns, queue, cron, track, …
+    ├── components/dashboard/ # Connect → Replies steps
+    ├── components/marketing/
+    ├── lib/                  # db, smtp, queue, inbox, ai, verify, …
+    ├── prisma/               # Schema + migrations
+    ├── prompts/cold_outreach/
+    ├── Dockerfile            # Cloud Run image
+    └── scripts/              # DB helper scripts
 ```
 
-**Gmail authentication failed**
+---
 
-- Use an App Password, not your normal Google password
-- Set SMTP username to your full Gmail address
+## Local development
 
-**Database corrupt (`SQLITE_CORRUPT`)**
+```bash
+cd web
+npm install
+```
 
-Close the app and delete `outreach.db`, `outreach.db-wal`, and `outreach.db-shm` from the `userData` folder. The app creates a fresh database on next launch.
+Create `web/.env.local`:
 
-## Compliance and deliverability
+```env
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=require"
+DATABASE_DRIVER="postgres"
+CRON_SECRET="generate-a-long-random-string"
+TRACKING_SECRET="generate-a-long-random-string"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+NEXT_PUBLIC_USE_CRON_WORKER="false"
+# Optional
+OPENAI_API_KEY=""
+```
 
-Outbound cold email must comply with **CAN-SPAM**, **GDPR** (for EU/UK contacts), and your mail provider's policies. **Lawful basis, list sourcing, and message content remain your responsibility.**
+```bash
+npx prisma db push
+npx prisma generate
+npm run dev
+```
 
-### Recommended settings
+Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard). Configure Gmail inboxes in **Connect** (App Password, not your normal Google password).
 
-| Setup | Daily cap | Delay between sends | Notes |
-|-------|-----------|---------------------|-------|
-| Personal Gmail | ≤50 | 15–45 seconds | App Password required; match From email to Gmail username |
-| Google Workspace | Start ≤100 | 15–45 seconds | Use your domain; configure SPF/DKIM in Admin |
-| Custom SMTP | Provider limits | 15–45 seconds | From domain must match authenticated domain |
+---
 
-### First run checklist
+## Production (Google Cloud Run)
 
-1. Connect SMTP on **Connect** and verify with a test address.
-2. Import leads, create a campaign, generate **AI body + subject** per lead on **Preview**.
-3. Send to **5–10 test leads** on **Queue**; check your inbox for bounce notices.
-4. Scale slowly only if delivery looks clean.
+Deploy from repo root (project must have Cloud Run + Cloud Build + Artifact Registry):
 
-Preview **Generate AI** saves a **unique subject and body per lead** for the queue to send.
+```bash
+gcloud run deploy email-outreach-web \
+  --source=web \
+  --region=europe-west1 \
+  --allow-unauthenticated \
+  --port=8080 \
+  --memory=1Gi \
+  --cpu=1 \
+  --timeout=300 \
+  --project=YOUR_GCP_PROJECT_ID
+```
+
+Set on the service (example):
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | Postgres URI (use Supabase **session pooler** if using Supabase) |
+| `DATABASE_DRIVER` | `postgres` |
+| `CRON_SECRET` | Bearer token for cron routes |
+| `TRACKING_SECRET` | HMAC for open/unsubscribe tokens |
+| `NEXT_PUBLIC_APP_URL` | Public Cloud Run HTTPS origin |
+| `NEXT_PUBLIC_USE_CRON_WORKER` | `true` |
+
+Point your external cron at:
+
+- `{NEXT_PUBLIC_APP_URL}/api/cron/process-queue`  
+- `{NEXT_PUBLIC_APP_URL}/api/cron/check-inbox`  
+
+---
+
+## Gmail setup
+
+1. Enable 2-Step Verification on the Google account  
+2. Create an [App Password](https://support.google.com/accounts/account-password)  
+3. In **Connect**: username = full Gmail address, password = App Password  
+4. SMTP: `smtp.gmail.com` / `465` / secure; IMAP: `imap.gmail.com` / `993`  
+
+Deliverability (inbox vs spam) depends on Gmail reputation, send pace, content, and link domains — not only on hosting. Prefer conservative caps and delays for cold outreach.
+
+---
+
+## Data model (high level)
+
+Core Prisma models: `Lead`, `ImportBatch`, `Campaign`, `CampaignStep`, `LeadSend`, `SmtpAccount`, `LeadSmtpAssignment`, `LeadCampaignEngagement`, `Settings`, `QueueState`, `InboxSyncState`, plus AI bulk / preview override tables.
+
+All campaign and queue state lives in Postgres — no spreadsheet is required after import.
+
+---
 
 ## License
 
-MIT
+See repository license file if present; otherwise treat as private unless stated otherwise.
