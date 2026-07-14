@@ -14,9 +14,9 @@ async function handleCron(request: NextRequest) {
     const aiBulkResult = await runAiBulkCron(CRON_QUEUE_BUDGET_MS)
     return NextResponse.json({
       ok: 1,
-      status: typeof aiBulkResult === 'object' && aiBulkResult && 'status' in aiBulkResult
-        ? String((aiBulkResult as { status?: string }).status ?? 'ok')
-        : 'ok',
+      status: aiBulkResult.status,
+      ticks: aiBulkResult.ticks,
+      ms: aiBulkResult.ranMs,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'AI bulk processing failed'
