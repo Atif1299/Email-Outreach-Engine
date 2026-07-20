@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/db'
 import { loadDoNotContactLeadIds } from '@/lib/lead-suppression'
 
@@ -85,21 +86,21 @@ export async function loadLastSuccessfulSends(
   const map = new Map<number, { stepOrder: number; sentAt: Date }>()
   if (leadIds.length === 0) return map
 
-  const sends = await prisma.leadSend.findMany({
-    where: {
-      campaignId,
-      leadId: { in: leadIds },
-      error: null,
-      subject: { notIn: ['SENDING', 'FAILED'] },
-    },
-    orderBy: { stepOrder: 'desc' },
-    select: { leadId: true, stepOrder: true, sentAt: true },
-  })
+  // One row per lead (latest step) — avoids pulling full send history across region.
+  const sends = await prisma.$queryRaw<
+    Array<{ lead_id: number; step_order: number; sent_at: Date }>
+  >`
+    SELECT DISTINCT ON (lead_id) lead_id, step_order, sent_at
+    FROM lead_sends
+    WHERE campaign_id = ${campaignId}
+      AND lead_id IN (${Prisma.join(leadIds)})
+      AND error IS NULL
+      AND subject NOT IN ('SENDING', 'FAILED')
+    ORDER BY lead_id, step_order DESC
+  `
 
   for (const send of sends) {
-    if (!map.has(send.leadId)) {
-      map.set(send.leadId, { stepOrder: send.stepOrder, sentAt: send.sentAt })
-    }
+    map.set(send.lead_id, { stepOrder: send.step_order, sentAt: send.sent_at })
   }
 
   return map

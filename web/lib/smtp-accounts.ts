@@ -80,6 +80,10 @@ export interface PublicSmtpAccount {
   sendsThisHour: number
   warmupDay: number | null
   warmupDailyCap: number | null
+  /** Cap actually enforced today (warmup or Connect dailyCap). */
+  effectiveDailyCap: number
+  /** Connect SEND SETTINGS daily cap (for UI contrast with warmup). */
+  settingsDailyCap: number
   warmupEnabled: boolean
   lastInboxCheckedAt: string | null
   lastInboxError: string | null
@@ -152,15 +156,15 @@ export function getWarmupDay(account: SmtpAccount, now = new Date()): number | n
   return Math.floor((now.getTime() - account.warmupStartedAt.getTime()) / MS_PER_DAY) + 1
 }
 
-function isForcedRecovery(account: SmtpAccount, now = new Date()): boolean {
-  return getEffectiveHealthStatus(account, now) === 'recovery'
-}
-
+/**
+ * Effective per-inbox daily cap from Connect settings.
+ * Gradual warmup (only when user enabled it) uses 15 → 30 → full dailyCap.
+ * Gmail cooldown uses exhaustedUntil — it must not secretly clamp daily Cap to 15.
+ */
 export function getWarmupDailyCap(account: SmtpAccount, userDailyCap: number, now = new Date()): number {
-  const forceWarmup = isForcedRecovery(account, now) || account.warmupEnabled
-  if (!forceWarmup) return userDailyCap
-  if (!account.warmupStartedAt && !isForcedRecovery(account, now)) return userDailyCap
-  const day = getWarmupDay(account, now) ?? 1
+  if (!account.warmupEnabled || !account.warmupStartedAt) return userDailyCap
+  const day = getWarmupDay(account, now)
+  if (day == null) return userDailyCap
   if (day <= 3) return Math.min(userDailyCap, 15)
   if (day <= 7) return Math.min(userDailyCap, 30)
   return userDailyCap
@@ -246,13 +250,19 @@ async function getBatchAccountSendCounts(
   const dayStart = getDayStartInTimezone(limitSettings.sendTimezone, now)
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000)
 
+  // Match countSuccessfulSendsSince — exclude in-flight / failed placeholders.
+  const successfulSendWhere = {
+    error: null as null,
+    subject: { notIn: ['SENDING', 'FAILED'] },
+  }
+
   const [todayCounts, hourCounts] = await Promise.all([
     prisma.leadSend.groupBy({
       by: ['smtpAccountId'],
       where: {
         smtpAccountId: { in: accountIds },
         sentAt: { gte: dayStart },
-        error: null,
+        ...successfulSendWhere,
       },
       _count: true,
     }),
@@ -261,7 +271,7 @@ async function getBatchAccountSendCounts(
       where: {
         smtpAccountId: { in: accountIds },
         sentAt: { gte: hourAgo },
-        error: null,
+        ...successfulSendWhere,
       },
       _count: true,
     }),
@@ -293,9 +303,9 @@ export async function toPublicSmtpAccounts(
   return accounts.map(account => {
     const { sendsToday, sendsThisHour } = sendCountsMap.get(account.id) ?? { sendsToday: 0, sendsThisHour: 0 }
     const warmupDay = getWarmupDay(account)
-    const warmupDailyCap = account.warmupEnabled && warmupDay
-      ? getWarmupDailyCap(account, limitSettings.dailyCap)
-      : null
+    const effectiveDailyCap = getWarmupDailyCap(account, limitSettings.dailyCap)
+    const warmupDailyCap =
+      account.warmupEnabled && effectiveDailyCap < limitSettings.dailyCap ? effectiveDailyCap : null
     return {
       id: account.id,
       email: account.email,
@@ -312,6 +322,8 @@ export async function toPublicSmtpAccounts(
       sendsThisHour,
       warmupDay,
       warmupDailyCap,
+      effectiveDailyCap,
+      settingsDailyCap: limitSettings.dailyCap,
       warmupEnabled: account.warmupEnabled,
       lastInboxCheckedAt: account.lastInboxCheckedAt?.toISOString() ?? null,
       lastInboxError: account.lastInboxError,
@@ -421,6 +433,75 @@ export async function isLeadFollowUpPaused(leadId: number, campaignId: number): 
   return isAccountFollowUpsPaused(assignment.smtpAccount)
 }
 
+/**
+ * Batch version of isLeadFollowUpPaused — one query per campaign instead of N.
+ * Returns lead IDs whose assigned inbox currently has follow-ups paused.
+ */
+export async function loadFollowUpPausedLeadIds(
+  campaignId: number,
+  leadIds: number[],
+  now = new Date()
+): Promise<Set<number>> {
+  const paused = new Set<number>()
+  if (leadIds.length === 0) return paused
+
+  const assignments = await prisma.leadSmtpAssignment.findMany({
+    where: {
+      campaignId,
+      leadId: { in: leadIds },
+    },
+    select: {
+      leadId: true,
+      smtpAccount: { select: { followUpsPausedUntil: true } },
+    },
+  })
+
+  for (const row of assignments) {
+    if (isAccountFollowUpsPaused(row.smtpAccount, now)) {
+      paused.add(row.leadId)
+    }
+  }
+  return paused
+}
+
+/** Batch lead → sticky inbox id for a campaign. */
+export async function loadLeadSmtpAccountIds(
+  campaignId: number,
+  leadIds: number[]
+): Promise<Map<number, number>> {
+  const map = new Map<number, number>()
+  if (leadIds.length === 0) return map
+
+  const assignments = await prisma.leadSmtpAssignment.findMany({
+    where: {
+      campaignId,
+      leadId: { in: leadIds },
+    },
+    select: { leadId: true, smtpAccountId: true },
+  })
+
+  for (const row of assignments) {
+    map.set(row.leadId, row.smtpAccountId)
+  }
+  return map
+}
+
+/** Account IDs that can send right now (not capped / throttled / blocked). */
+export async function getSendReadyAccountIds(
+  limitSettings: SendLimitSettings,
+  excludeIds: Set<number> = new Set()
+): Promise<Set<number>> {
+  const accounts = await getEnabledSmtpAccounts()
+  const ready = new Set<number>()
+  for (const account of accounts) {
+    if (excludeIds.has(account.id)) continue
+    if (getEffectiveHealthStatus(account) === 'blocked') continue
+    const gate = await evaluateAccountSendGate(account, limitSettings)
+    if (gate.allowed) ready.add(account.id)
+  }
+  return ready
+}
+
 export async function assignLeadToAccount(leadId: number, campaignId: number, smtpAccountId: number) {
   await prisma.leadSmtpAssignment.upsert({
     where: { leadId_campaignId: { leadId, campaignId } },
@@ -450,6 +531,13 @@ export async function resolveAccountForSend(opts: {
 
   if (assignment?.smtpAccount && opts.stepOrder > 1) {
     const account = assignment.smtpAccount
+    if (excludeIds.has(account.id)) {
+      return {
+        status: 'unavailable',
+        reason: 'assigned_unavailable',
+        message: `Assigned inbox ${account.email} already used in this batch — trying another lead.`,
+      }
+    }
     if (isAccountFollowUpsPaused(account)) {
       return {
         status: 'unavailable',
@@ -530,7 +618,8 @@ export async function markAccountExhausted(accountId: number, reason: DeliveryHa
     data.healthStatus = 'recovery'
     data.healthChangedAt = now
     data.recoveryUntil = until
-    data.warmupEnabled = true
+    // Do not force warmupEnabled — that silently overrides Connect daily cap (e.g. 50 → 15).
+    // Cooldown is exhaustedUntil; user controls gradual warmup in Connect.
   }
 
   await prisma.smtpAccount.update({
@@ -626,6 +715,7 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
 
   for (const account of normalized) {
     if (account.id) {
+      const existing = await prisma.smtpAccount.findUnique({ where: { id: account.id } })
       const update: Record<string, unknown> = {
         email: account.email,
         label: account.label,
@@ -634,6 +724,11 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
         warmupEnabled: account.warmupEnabled,
       }
       if (account.password) update.password = account.password
+      if (!account.warmupEnabled) {
+        update.warmupStartedAt = null
+      } else if (account.warmupEnabled && !existing?.warmupStartedAt) {
+        update.warmupStartedAt = new Date()
+      }
 
       await prisma.smtpAccount.update({
         where: { id: account.id },
@@ -648,9 +743,9 @@ export async function saveSmtpAccounts(accounts: SmtpAccountInput[]) {
           label: account.label,
           enabled: account.enabled,
           sortOrder: account.sortOrder,
-          warmupEnabled: true,
+          warmupEnabled: account.warmupEnabled,
           healthStatus: 'healthy',
-          warmupStartedAt: new Date(),
+          warmupStartedAt: account.warmupEnabled ? new Date() : null,
         },
       })
       keptIds.add(created.id)

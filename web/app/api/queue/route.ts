@@ -3,15 +3,8 @@ import prisma from '@/lib/db'
 import { withPrismaRetry } from '@/lib/prisma-retry'
 import { ensureSettings } from '@/lib/settings'
 import {
-  getLeadQueueStatus,
-  getNextStepOrder,
-  loadBlockedLeadIds,
-  loadLastSuccessfulSends,
-} from '@/lib/queue-schedule'
-import {
   countFailedSendsSince,
   countSuccessfulSendsSince,
-  evaluateGlobalDailyCap,
   getCampaignStep1SendCounts,
   getDayStartInTimezone,
   getStepTypeSendCounts,
@@ -19,8 +12,8 @@ import {
   isWithinSendWindow,
   toSendLimitSettings,
 } from '@/lib/send-limits'
-import { ensureSmtpAccounts, isLeadFollowUpPaused, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
-import { isClusterBreakerActive, getFollowUpPauseStatus, clearExpiredFollowUpPauses } from '@/lib/inbox-cluster-guard'
+import { ensureSmtpAccounts, toPublicSmtpAccounts } from '@/lib/smtp-accounts'
+import { isClusterBreakerActive, getFollowUpPauseStatus } from '@/lib/inbox-cluster-guard'
 import {
   computeAggregateDueByStepType,
   computeAggregateDueNow,
@@ -31,21 +24,30 @@ import {
   toFollowUpStarvationInfo,
   type QueueSchedulingStatus,
 } from '@/lib/queue-active'
+import { getCachedQueueStatus, setCachedQueueStatus } from '@/lib/stats-cache'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
+    const cached = getCachedQueueStatus<Record<string, unknown>>()
+    if (cached) {
+      return NextResponse.json(cached)
+    }
+
     return await withPrismaRetry(async () => {
-      await clearExpiredFollowUpPauses()
-      let state = await prisma.queueState.findUnique({ where: { id: 1 } })
+      // Cosmetic pause cleanup runs in the worker; skip on status reads.
+      const [stateRow, settings, accounts] = await Promise.all([
+        prisma.queueState.findUnique({ where: { id: 1 } }),
+        ensureSettings(),
+        ensureSmtpAccounts(),
+      ])
+      let state = stateRow
 
       if (!state) {
         state = await prisma.queueState.create({ data: { id: 1 } })
       }
 
-      const settings = await ensureSettings()
-      const accounts = await ensureSmtpAccounts()
       const enabledCount = accounts.filter((a) => a.enabled && a.password).length
       const limitSettings = toSendLimitSettings(settings, Math.max(enabledCount, 1))
 
@@ -70,6 +72,9 @@ export async function GET() {
         activeSendsToday,
         activeSendsThisHour,
         activeSendsThisSession,
+        smtpAccounts,
+        followUpPause,
+        campaigns,
       ] = await Promise.all([
         countSuccessfulSendsSince(dayStart),
         countSuccessfulSendsSince(hourAgo),
@@ -80,6 +85,14 @@ export async function GET() {
         activeScope ? countSuccessfulSendsSince(dayStart, activeScope) : Promise.resolve(0),
         activeScope ? countSuccessfulSendsSince(hourAgo, activeScope) : Promise.resolve(0),
         activeScope ? countSuccessfulSendsSince(sessionStart, activeScope) : Promise.resolve(0),
+        toPublicSmtpAccounts(accounts, limitSettings),
+        getFollowUpPauseStatus(state),
+        activeCampaignIds.length > 0
+          ? prisma.campaign.findMany({
+            where: { id: { in: activeCampaignIds } },
+            select: { id: true, name: true },
+          })
+          : Promise.resolve([] as Array<{ id: number; name: string }>),
       ])
 
       const stepTypeCapsEnabled = isStepTypeCapsEnabled(limitSettings)
@@ -87,12 +100,10 @@ export async function GET() {
       const effectiveDailyCap = limitSettings.dailyCap * Math.max(enabledCount, 1)
       const effectiveHourlyCap = limitSettings.hourlyCap * Math.max(enabledCount, 1)
 
-      const dailyGate = await evaluateGlobalDailyCap(limitSettings, Math.max(enabledCount, 1))
-      const capReached = !dailyGate.allowed
+      const capReached =
+        enabledCount <= 0 || sendsToday >= limitSettings.dailyCap * Math.max(enabledCount, 1)
       const hourCapReached = sendsThisHour >= effectiveHourlyCap
       const outsideWindow = state.running && !isWithinSendWindow(limitSettings)
-
-      const smtpAccounts = await toPublicSmtpAccounts(accounts, limitSettings)
 
       const authFailedEmails = accounts
         .filter((a) => a.exhaustReason === 'auth_failure' || a.healthStatus === 'blocked')
@@ -107,10 +118,6 @@ export async function GET() {
         }
       }
 
-      const campaigns = await prisma.campaign.findMany({
-        where: { id: { in: activeCampaignIds } },
-        select: { id: true, name: true },
-      })
       const campaignNames = new Map(campaigns.map((c) => [c.id, c.name]))
 
       const activeCampaigns = activeEntries.map((e) => ({
@@ -122,43 +129,12 @@ export async function GET() {
         dailyStep1Quota: e.dailyStep1Quota ?? null,
       }))
 
-      const aggregateDueNow = await computeAggregateDueNow(activeEntries)
-
-      let activeCampaignMetrics: Array<{
+      let aggregateDueNow = 0
+      const activeCampaignMetrics: Array<{
         campaignId: number
         step1Sent: number
         leadsStarted: number
       }> = []
-
-      if (activeCampaignIds.length > 0) {
-        activeCampaignMetrics = await Promise.all(
-          activeCampaignIds.map(async (campaignId) => {
-            const [step1Sent, leadGroups] = await Promise.all([
-              prisma.leadSend.count({
-                where: {
-                  campaignId,
-                  stepOrder: 1,
-                  error: null,
-                  subject: { notIn: ['SENDING', 'FAILED'] },
-                },
-              }),
-              prisma.leadSend.groupBy({
-                by: ['leadId'],
-                where: {
-                  campaignId,
-                  error: null,
-                  subject: { notIn: ['SENDING', 'FAILED'] },
-                },
-              }),
-            ])
-            return {
-              campaignId,
-              step1Sent,
-              leadsStarted: leadGroups.length,
-            }
-          })
-        )
-      }
 
       let currentJob: {
         campaignId: number
@@ -177,16 +153,40 @@ export async function GET() {
         message: string | null
       } | null = null
 
-      const followUpPause = await getFollowUpPauseStatus(state)
-
       if (state.running && !state.paused && activeEntries.length > 0) {
-        const fullCampaigns = await prisma.campaign.findMany({
-          where: { id: { in: activeCampaignIds } },
-          include: { steps: { orderBy: { stepOrder: 'asc' } } },
-        })
+        const [fullCampaigns, campaignStep1SentToday] = await Promise.all([
+          prisma.campaign.findMany({
+            where: { id: { in: activeCampaignIds } },
+            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+          }),
+          outsideWindow
+            ? Promise.resolve(new Map<number, number>())
+            : getCampaignStep1SendCounts(activeCampaignIds, limitSettings),
+        ])
         const campaignsById = new Map(fullCampaigns.map((c) => [c.id, c]))
 
-        const dueCounts = await computeAggregateDueByStepType(activeEntries, campaignsById)
+        let dueCounts: Awaited<ReturnType<typeof computeAggregateDueByStepType>>
+        let pickResult: Awaited<ReturnType<typeof pickNextDueJob>> | null = null
+
+        if (outsideWindow) {
+          dueCounts = await computeAggregateDueByStepType(activeEntries, campaignsById)
+        } else {
+          pickResult = await pickNextDueJob(
+            activeEntries,
+            campaignsById,
+            limitSettings,
+            stepTypeCounts,
+            state.lastServedCampaignId ?? null,
+            {
+              followUpsPaused: followUpPause.globalPaused,
+              anyInboxFollowUpsPaused: followUpPause.pausedInboxCount > 0,
+              campaignStep1SentToday,
+            }
+          )
+          dueCounts = pickResult.dueCounts
+        }
+
+        aggregateDueNow = dueCounts.step1Due + dueCounts.followUpDue
         queueSchedulingStatus = computeQueueSchedulingStatus(
           dueCounts,
           limitSettings,
@@ -199,100 +199,47 @@ export async function GET() {
         )
         followUpStarvation = toFollowUpStarvationInfo(queueSchedulingStatus)
 
-        if (!outsideWindow) {
-          const campaignStep1SentToday = await getCampaignStep1SendCounts(
-            activeCampaignIds,
-            limitSettings
-          )
-          const pickResult = await pickNextDueJob(
-            activeEntries,
-            campaignsById,
-            limitSettings,
-            stepTypeCounts,
-            state.lastServedCampaignId ?? null,
-            {
-              followUpsPaused: followUpPause.globalPaused,
-              campaignStep1SentToday,
-            }
-          )
-
-          const previewLeadId =
-            pickResult.candidate?.leadId ??
-            activeEntries.find((e) => e.leadIds.length > 0)?.leadIds[0]
-
-          const previewCampaignId =
-            pickResult.candidate?.campaignId ??
-            activeEntries.find((e) => e.leadIds.length > 0)?.campaignId
-
-          if (previewLeadId && previewCampaignId) {
-            const campaign = campaignsById.get(previewCampaignId)
-            const entry = activeEntries.find((e) => e.campaignId === previewCampaignId)
-            const [lead] = await Promise.all([
-              prisma.lead.findUnique({ where: { id: previewLeadId } }),
-            ])
-
-            if (lead && campaign) {
-              const skippedLeadIds = new Set(entry?.skippedLeadIds ?? [])
-              const [lastSends, engagedLeadIds] = await Promise.all([
-                loadLastSuccessfulSends(previewCampaignId, [previewLeadId]),
-                loadBlockedLeadIds(previewCampaignId, [previewLeadId]),
-              ])
-              const lastSend = lastSends.get(previewLeadId) ?? null
-              const queueStatus = getLeadQueueStatus(
-                previewLeadId,
-                campaign.steps,
-                lastSend,
-                skippedLeadIds,
-                engagedLeadIds
-              )
-              const nextStepOrder = getNextStepOrder(lastSend)
-
-              if (queueStatus === 'completing') {
-                currentJob = {
-                  campaignId: previewCampaignId,
-                  campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
-                  leadId: previewLeadId,
-                  email: lead.email,
-                  stepOrder: lastSend?.stepOrder ?? null,
-                  status: 'completing',
-                }
-              } else if (queueStatus === 'waiting_delay') {
-                currentJob = {
-                  campaignId: previewCampaignId,
-                  campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
-                  leadId: previewLeadId,
-                  email: lead.email,
-                  stepOrder: nextStepOrder,
-                  status: 'waiting_delay',
-                }
-              } else if (
-                nextStepOrder > 1 &&
-                (followUpPause.paused || (await isLeadFollowUpPaused(previewLeadId, previewCampaignId)))
-              ) {
-                currentJob = {
-                  campaignId: previewCampaignId,
-                  campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
-                  leadId: previewLeadId,
-                  email: lead.email,
-                  stepOrder: nextStepOrder,
-                  status: 'follow_ups_paused',
-                }
-              } else {
-                currentJob = {
-                  campaignId: previewCampaignId,
-                  campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
-                  leadId: previewLeadId,
-                  email: lead.email,
-                  stepOrder: nextStepOrder,
-                  status: 'sending',
-                }
-              }
+        if (pickResult?.candidate) {
+          const { campaignId: previewCampaignId, leadId: previewLeadId, stepOrder } =
+            pickResult.candidate
+          const campaign = campaignsById.get(previewCampaignId)
+          const lead = await prisma.lead.findUnique({
+            where: { id: previewLeadId },
+            select: { email: true },
+          })
+          if (lead && campaign) {
+            currentJob = {
+              campaignId: previewCampaignId,
+              campaignName: campaignNames.get(previewCampaignId) ?? campaign.name,
+              leadId: previewLeadId,
+              email: lead.email,
+              stepOrder,
+              status: 'sending',
             }
           }
         }
+      } else if (activeEntries.length > 0) {
+        aggregateDueNow = await computeAggregateDueNow(activeEntries)
       }
 
-      return NextResponse.json({
+      const useCronWorker = process.env.NEXT_PUBLIC_USE_CRON_WORKER === 'true'
+      const workerStaleAfterMs = 20 * 60 * 1000
+      const workerStatus =
+        !useCronWorker
+          ? 'browser'
+          : !state.running || state.paused
+            ? 'idle'
+            : !state.lastCronAt
+              ? 'never'
+              : Date.now() - state.lastCronAt.getTime() > workerStaleAfterMs
+                ? 'stale'
+                : state.lastCronStatus === 'busy'
+                  ? 'busy'
+                  : state.processingLockUntil && state.processingLockUntil.getTime() > Date.now()
+                    ? 'processing'
+                    : 'healthy'
+
+      const payload = {
         running: state.running,
         paused: state.paused,
         activeCampaignId: activeCampaignIds[0] ?? null,
@@ -317,7 +264,12 @@ export async function GET() {
         capReached,
         hourCapReached,
         outsideWindow,
-        useCronWorker: process.env.NEXT_PUBLIC_USE_CRON_WORKER === 'true',
+        useCronWorker,
+        workerStatus,
+        workerLastCronAt: state.lastCronAt?.toISOString() ?? null,
+        workerLastCronStatus: state.lastCronStatus,
+        workerLastCronProcessed: state.lastCronProcessed,
+        workerLockUntil: state.processingLockUntil?.toISOString() ?? null,
         stepTypeCapsEnabled,
         step1SentToday: stepTypeCounts.step1SentToday,
         followUpSentToday: stepTypeCounts.followUpSentToday,
@@ -332,7 +284,9 @@ export async function GET() {
         queueSchedulingStatus,
         followUpStarvation,
         currentJob,
-      })
+      }
+      setCachedQueueStatus(payload)
+      return NextResponse.json(payload)
     })
   } catch (error) {
     console.error('Failed to get queue status:', error)

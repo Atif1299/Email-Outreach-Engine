@@ -166,7 +166,7 @@ export function getDeliveryHaltError(
     return {
       reason: 'gmail_rate_limit',
       userMessage:
-        'Paused: Gmail sending limit hit — wait ~24 hours, lower daily cap to 50–80, increase delays, then Resume.',
+        'Gmail sending limit hit — this inbox cools ~2h (warmup may cap at 15–30/day). Follow-ups on that inbox pause ~24h. Lower volume or wait, then Resume.',
     }
   }
 
@@ -178,7 +178,7 @@ export function getDeliveryHaltError(
     return {
       reason: 'message_blocked',
       userMessage:
-        'Paused: Gmail blocked outbound mail (spam/policy) — wait ~24 hours, verify leads, lower volume, then Resume slowly.',
+        'Gmail blocked outbound mail (spam/policy) — this inbox cools ~24h; follow-ups may pause ~24h. Verify leads, lower volume, then Resume slowly.',
     }
   }
 

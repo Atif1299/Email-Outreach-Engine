@@ -20,10 +20,22 @@ export async function runQueueCron(opts: RunQueueCronOptions = {}) {
   let lastStatus = 'idle' as string
   let remaining = 0
   let batches = 0
+  let busyRetries = 0
 
   while (Date.now() - started < maxRuntimeMs && batches < maxBatches) {
     const result = await processQueueBatch()
     lastStatus = result.status
+
+    // A busy result never acquired the queue lock, so it is not a processed
+    // batch and must not consume maxBatches. Retry inside the same HTTP budget.
+    if (result.status === 'busy') {
+      busyRetries++
+      const elapsed = Date.now() - started
+      if (elapsed + 800 > maxRuntimeMs) break
+      await new Promise((r) => setTimeout(r, 800))
+      continue
+    }
+
     batches++
 
     if (result.status === 'processed') {
@@ -32,13 +44,6 @@ export async function runQueueCron(opts: RunQueueCronOptions = {}) {
       remaining = result.remaining ?? 0
       if (remaining === 0) break
       if ((result.processed ?? 0) === 0) break
-      continue
-    }
-
-    if (result.status === 'busy') {
-      const elapsed = Date.now() - started
-      if (elapsed + 800 > maxRuntimeMs) break
-      await new Promise((r) => setTimeout(r, 800))
       continue
     }
 
@@ -55,6 +60,7 @@ export async function runQueueCron(opts: RunQueueCronOptions = {}) {
     failed: totalFailed,
     remaining,
     batches,
+    busyRetries,
     ranMs: Date.now() - started,
   }
 }

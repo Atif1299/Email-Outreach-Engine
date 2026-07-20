@@ -49,21 +49,21 @@ export function normalizeHtmlFragment(html: string): string {
   return out
 }
 
+/**
+ * Safe HTML for campaign sends and preview: keep inline styles / &lt;style&gt; for layout,
+ * strip scripts, event handlers, and javascript: URLs.
+ */
 export function sanitizeEmailHtml(html: string): string {
-  let out = normalizeHtmlFragment(html)
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/\s(on\w+|style)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/href\s*=\s*["']?\s*javascript:[^"'>\s]*/gi, 'href="#"')
-  return out.trim()
-}
-
-/** Preview-only: keep inline styles so tables/formatting render like Gmail. */
-export function sanitizeEmailHtmlForPreview(html: string): string {
   return normalizeHtmlFragment(html)
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/\s(on\w+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/href\s*=\s*["']?\s*javascript:[^"'>\s]*/gi, 'href="#"')
     .trim()
+}
+
+/** Same as send sanitizer — Preview and sent mail should match. */
+export function sanitizeEmailHtmlForPreview(html: string): string {
+  return sanitizeEmailHtml(html)
 }
 
 export function htmlToPlainText(html: string): string {
@@ -120,6 +120,7 @@ export function buildTrackedHtmlEmail(
   const format = normalizeBodyFormat(bodyFormat)
 
   if (format === 'html') {
+    // Keep inline styles (same rules as Preview) so Gmail matches the dashboard.
     const sanitized = sanitizeEmailHtml(body)
     if (/<\/body>/i.test(sanitized)) {
       return sanitized.replace(/<\/body>/i, `${unsubBlock}${pixel}</body>`)

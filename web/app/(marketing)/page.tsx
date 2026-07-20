@@ -6,6 +6,7 @@ import HeroHome from '@/components/marketing/HeroHome'
 import ProductScrollReveal from '@/components/marketing/motion/ProductScrollReveal'
 import SectionHeading from '@/components/marketing/motion/SectionHeading'
 import MagneticButton from '@/components/marketing/motion/MagneticButton'
+import FeaturesEngineDeck from '@/components/marketing/motion/FeaturesEngineDeck'
 import { marketingMetadata } from '@/lib/marketing-seo'
 
 export const metadata: Metadata = marketingMetadata({
@@ -29,40 +30,6 @@ const MANUAL_WORKFLOW = [
   'Replies buried in separate inboxes',
 ]
 
-const INFRA_ITEMS = [
-  {
-    title: 'Verification',
-    desc: 'Validate before send',
-    mock: (
-      <div className="m-infra-mock">
-        <span className="m-infra-dot m-infra-dot--ok infra-pulse-dot" />
-        <span>98% valid · 8 skipped</span>
-      </div>
-    ),
-  },
-  {
-    title: 'Sequences',
-    desc: 'Multi-step follow-ups',
-    mock: (
-      <div className="m-infra-mock">
-        <span>Step 1</span>
-        <span className="m-infra-arrow infra-draw-arrow">→</span>
-        <span>Step 2</span>
-        <span className="m-infra-dim">+3d</span>
-      </div>
-    ),
-  },
-  {
-    title: 'Open tracking',
-    desc: 'Pixel per send',
-    mock: (
-      <div className="m-infra-mock">
-        <span className="m-infra-stat">24% opened</span>
-      </div>
-    ),
-  },
-]
-
 export default function HomePage() {
   return (
     <>
@@ -78,62 +45,9 @@ export default function HomePage() {
           </div>
         </GsapReveal>
 
-        <div className="m-bento">
-          <GsapReveal className="m-bento-large" staggerChildren>
-            <div className="m-card m-bento-card m-bento-card--accent m-bento-tall">
-              <h3 className="m-bento-title">AI Personalization</h3>
-              <p className="m-bento-copy">
-                Generate unique bodies and subjects per lead. Bulk AI with live progress. No copy-paste templates.
-              </p>
-              <div className="m-bento-stat-line">
-                <span className="m-bento-stat-label">Sample bulk run</span>
-                <span className="m-bento-stat-value">142 / 406 leads</span>
-              </div>
-            </div>
-          </GsapReveal>
-
-          <GsapReveal delay={80}>
-            <div className="m-card m-bento-medium m-bento-card m-bento-card--grid">
-              <h3 className="m-bento-title">Smart Import</h3>
-              <p className="m-bento-copy">CSV or Excel. Auto column mapping to lead fields.</p>
-              <div className="m-terminal-mini">
-                <div><span className="m-terminal-dim">email</span> → Email</div>
-                <div><span className="m-terminal-dim">first_name</span> → First Name</div>
-                <div><span className="m-terminal-dim">company</span> → Company</div>
-              </div>
-            </div>
-          </GsapReveal>
-
-          <GsapReveal delay={120}>
-            <div className="m-card m-bento-medium m-bento-card m-bento-card--ok">
-              <h3 className="m-bento-title">Reply intelligence</h3>
-              <p className="m-bento-copy">IMAP sync detects replies, unsubscribes, and out-of-office.</p>
-              <div className="m-bento-pills">
-                <span className="m-mock-pill m-mock-pill--ok">Replied</span>
-                <span className="m-mock-pill m-mock-pill--warn">Unsubscribed</span>
-                <span className="m-mock-pill m-mock-pill--accent">OOO</span>
-              </div>
-            </div>
-          </GsapReveal>
-
-          <GsapReveal delay={60} className="m-bento-wide" staggerChildren childSelector=".m-infra-item">
-            <div className="m-card m-infra-card">
-              <h3 className="m-bento-title">Infrastructure</h3>
-              <p className="m-bento-copy m-bento-copy--tight">
-                Verify, sequence, and track. The layer under every send.
-              </p>
-              <div className="m-infra-grid">
-                {INFRA_ITEMS.map((item) => (
-                  <div key={item.title} className="m-infra-item">
-                    <div className="m-infra-item-title">{item.title}</div>
-                    <div className="m-infra-item-desc">{item.desc}</div>
-                    {item.mock}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </GsapReveal>
-        </div>
+        <GsapReveal delay={80}>
+          <FeaturesEngineDeck />
+        </GsapReveal>
       </section>
 
       <section className="m-section m-section-tight" aria-label="Example queue snapshot">

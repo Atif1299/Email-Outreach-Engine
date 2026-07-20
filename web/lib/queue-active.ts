@@ -38,7 +38,7 @@ import {
   isStepTypeCapAvailable,
   isStepTypeCapsEnabled,
 } from '@/lib/send-limits'
-import { isLeadFollowUpPaused } from '@/lib/smtp-accounts'
+import { loadFollowUpPausedLeadIds, loadLeadSmtpAccountIds } from '@/lib/smtp-accounts'
 
 export interface ActiveCampaignEntry {
   campaignId: number
@@ -58,6 +58,8 @@ export interface DueJobCandidate {
   stepOrder: number
   delayElapsedAt: number
   priority?: number
+  /** Sticky inbox for follow-ups; unset for Step 1 / unassigned. */
+  smtpAccountId?: number | null
 }
 
 export type JobSchedulePriority = 'step1_first' | 'followup_first'
@@ -176,39 +178,40 @@ export async function computeAggregateDueByStepType(
   entries: ActiveCampaignEntry[],
   campaignsById: Map<number, { id: number; steps: CampaignStepLike[] }>
 ): Promise<{ step1Due: number; followUpDue: number; byCampaign: CampaignDueBreakdown[] }> {
-  let step1Due = 0
-  let followUpDue = 0
-  const byCampaign: CampaignDueBreakdown[] = []
+  const byCampaign = (
+    await Promise.all(
+      entries.map(async (entry): Promise<CampaignDueBreakdown | null> => {
+        if (entry.leadIds.length === 0) return null
+        const campaign = campaignsById.get(entry.campaignId)
+        if (!campaign) return null
 
-  for (const entry of entries) {
-    if (entry.leadIds.length === 0) continue
-    const campaign = campaignsById.get(entry.campaignId)
-    if (!campaign) continue
+        const skippedSet = new Set(entry.skippedLeadIds)
+        const [blockedLeadIds, lastSends] = await Promise.all([
+          loadBlockedLeadIds(entry.campaignId, entry.leadIds),
+          loadLastSuccessfulSends(entry.campaignId, entry.leadIds),
+        ])
+        const jobs = computeDueJobs(entry.leadIds, campaign.steps, lastSends, skippedSet, blockedLeadIds)
 
-    const skippedSet = new Set(entry.skippedLeadIds)
-    const blockedLeadIds = await loadBlockedLeadIds(entry.campaignId, entry.leadIds)
-    const lastSends = await loadLastSuccessfulSends(entry.campaignId, entry.leadIds)
-    const jobs = computeDueJobs(entry.leadIds, campaign.steps, lastSends, skippedSet, blockedLeadIds)
+        let campStep1 = 0
+        let campFollowUp = 0
+        for (const job of jobs) {
+          if (job.stepOrder <= 1) campStep1++
+          else campFollowUp++
+        }
+        return {
+          campaignId: entry.campaignId,
+          step1Due: campStep1,
+          followUpDue: campFollowUp,
+        }
+      })
+    )
+  ).filter((row): row is CampaignDueBreakdown => row != null)
 
-    let campStep1 = 0
-    let campFollowUp = 0
-    for (const job of jobs) {
-      if (job.stepOrder <= 1) {
-        step1Due++
-        campStep1++
-      } else {
-        followUpDue++
-        campFollowUp++
-      }
-    }
-    byCampaign.push({
-      campaignId: entry.campaignId,
-      step1Due: campStep1,
-      followUpDue: campFollowUp,
-    })
+  return {
+    step1Due: byCampaign.reduce((sum, c) => sum + c.step1Due, 0),
+    followUpDue: byCampaign.reduce((sum, c) => sum + c.followUpDue, 0),
+    byCampaign,
   }
-
-  return { step1Due, followUpDue, byCampaign }
 }
 
 export function computeQueueSchedulingStatus(
@@ -662,6 +665,7 @@ export interface PickNextDueJobResult {
   updatedEntries: ActiveCampaignEntry[]
   removedCampaignIds: number[]
   allCandidates: DueJobCandidate[]
+  dueCounts: { step1Due: number; followUpDue: number; byCampaign: CampaignDueBreakdown[] }
 }
 
 /** Collect ready jobs across all active campaigns (no winner selection). */
@@ -672,15 +676,25 @@ export async function collectDueJobCandidates(
   stepTypeCounts: { step1SentToday: number; followUpSentToday: number },
   opts?: {
     followUpsPaused?: boolean
+    /** When false, skip per-lead inbox pause lookup (no inbox currently paused). */
+    anyInboxFollowUpsPaused?: boolean
     campaignStep1SentToday?: Map<number, number>
+    /** Inboxes already used this batch — sticky follow-ups on these are skipped. */
+    excludeAccountIds?: Set<number>
+    /** When set, sticky follow-ups must be assigned to one of these send-ready inboxes. */
+    readyAccountIds?: Set<number>
   }
 ): Promise<{
   candidates: DueJobCandidate[]
   updatedEntries: ActiveCampaignEntry[]
   removedCampaignIds: number[]
+  dueCounts: { step1Due: number; followUpDue: number; byCampaign: CampaignDueBreakdown[] }
 }> {
   const followUpsPaused = opts?.followUpsPaused ?? false
+  const anyInboxFollowUpsPaused = opts?.anyInboxFollowUpsPaused ?? !followUpsPaused
   const campaignStep1SentToday = opts?.campaignStep1SentToday ?? new Map<number, number>()
+  const excludeAccountIds = opts?.excludeAccountIds ?? new Set<number>()
+  const readyAccountIds = opts?.readyAccountIds
   const updatedEntries = entries.map((e) => ({
     ...e,
     leadIds: [...e.leadIds],
@@ -688,91 +702,137 @@ export async function collectDueJobCandidates(
   }))
   const removedCampaignIds: number[] = []
   const candidates: DueJobCandidate[] = []
+  const byCampaign: CampaignDueBreakdown[] = []
 
-  for (const entry of updatedEntries) {
-    const campaign = campaignsById.get(entry.campaignId)
-    if (!campaign || campaign.steps.length === 0) {
-      removedCampaignIds.push(entry.campaignId)
-      entry.leadIds = []
-      continue
-    }
+  await Promise.all(
+    updatedEntries.map(async (entry) => {
+      const campaign = campaignsById.get(entry.campaignId)
+      if (!campaign || campaign.steps.length === 0) {
+        removedCampaignIds.push(entry.campaignId)
+        entry.leadIds = []
+        return
+      }
 
-    const skippedSet = new Set(entry.skippedLeadIds)
-    const blockedLeadIds = await loadBlockedLeadIds(entry.campaignId, entry.leadIds)
-    const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
-    const lastSends = await loadLastSuccessfulSends(entry.campaignId, entry.leadIds)
-    const step1QuotaExhausted = isCampaignStep1QuotaExhausted(
-      entry,
-      campaignStep1SentToday.get(entry.campaignId) ?? 0
-    )
-    const passes: Array<'followup' | 'step1'> = entry.followUpsOnly
-      ? followUpsPaused
-        ? []
-        : ['followup']
-      : followUpsPaused
-        ? ['step1']
-        : step1QuotaExhausted
-          ? ['followup']
-          : ['step1', 'followup']
-    let entryCandidate: DueJobCandidate | null = null
+      const skippedSet = new Set(entry.skippedLeadIds)
+      const needAssignments =
+        !followUpsPaused &&
+        (excludeAccountIds.size > 0 || readyAccountIds != null || anyInboxFollowUpsPaused)
 
-    for (const pass of passes) {
-      let passBest: DueJobCandidate | null = null
+      const [blockedLeadIds, lastSends, followUpPausedLeadIds, leadAccountIds] = await Promise.all([
+        loadBlockedLeadIds(entry.campaignId, entry.leadIds),
+        loadLastSuccessfulSends(entry.campaignId, entry.leadIds),
+        followUpsPaused || !anyInboxFollowUpsPaused
+          ? Promise.resolve(new Set<number>())
+          : loadFollowUpPausedLeadIds(entry.campaignId, entry.leadIds),
+        needAssignments
+          ? loadLeadSmtpAccountIds(entry.campaignId, entry.leadIds)
+          : Promise.resolve(new Map<number, number>()),
+      ])
+      const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
 
-      for (let i = 0; i < entry.leadIds.length; i++) {
-        const leadId = entry.leadIds[i]
-        if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
+      const jobs = computeDueJobs(entry.leadIds, campaign.steps, lastSends, skippedSet, blockedLeadIds)
+      let campStep1 = 0
+      let campFollowUp = 0
+      for (const job of jobs) {
+        if (job.stepOrder <= 1) campStep1++
+        else campFollowUp++
+      }
+      byCampaign.push({
+        campaignId: entry.campaignId,
+        step1Due: campStep1,
+        followUpDue: campFollowUp,
+      })
 
-        const lastSend = lastSends.get(leadId) ?? null
-        const status = getLeadQueueStatus(
-          leadId,
-          sortedSteps,
-          lastSend,
-          skippedSet,
-          blockedLeadIds
-        )
-        if (status !== 'sending') continue
+      const step1QuotaExhausted = isCampaignStep1QuotaExhausted(
+        entry,
+        campaignStep1SentToday.get(entry.campaignId) ?? 0
+      )
+      const passes: Array<'followup' | 'step1'> = entry.followUpsOnly
+        ? followUpsPaused
+          ? []
+          : ['followup']
+        : followUpsPaused
+          ? ['step1']
+          : step1QuotaExhausted
+            ? ['followup']
+            : ['step1', 'followup']
+      let entryCandidate: DueJobCandidate | null = null
 
-        const nextStepOrder = getNextStepOrder(lastSend)
-        if (pass === 'followup' && nextStepOrder <= 1) continue
-        if (pass === 'step1' && nextStepOrder !== 1) continue
-        if (!isStepTypeCapAvailable(limitSettings, nextStepOrder, stepTypeCounts)) continue
-        if (
-          nextStepOrder > 1 &&
-          !followUpsPaused &&
-          (await isLeadFollowUpPaused(leadId, entry.campaignId))
-        ) {
-          continue
+      for (const pass of passes) {
+        let passBest: DueJobCandidate | null = null
+
+        for (let i = 0; i < entry.leadIds.length; i++) {
+          const leadId = entry.leadIds[i]
+          if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
+
+          const lastSend = lastSends.get(leadId) ?? null
+          const status = getLeadQueueStatus(
+            leadId,
+            sortedSteps,
+            lastSend,
+            skippedSet,
+            blockedLeadIds
+          )
+          if (status !== 'sending') continue
+
+          const nextStepOrder = getNextStepOrder(lastSend)
+          if (pass === 'followup' && nextStepOrder <= 1) continue
+          if (pass === 'step1' && nextStepOrder !== 1) continue
+          if (!isStepTypeCapAvailable(limitSettings, nextStepOrder, stepTypeCounts)) continue
+          if (nextStepOrder > 1 && !followUpsPaused && followUpPausedLeadIds.has(leadId)) {
+            continue
+          }
+
+          const assignedAccountId = leadAccountIds.get(leadId) ?? null
+          if (nextStepOrder > 1) {
+            // Sticky follow-ups: only pick leads whose inbox can send in this batch slot.
+            if (assignedAccountId != null) {
+              if (excludeAccountIds.has(assignedAccountId)) continue
+              if (readyAccountIds && !readyAccountIds.has(assignedAccountId)) continue
+            } else if (readyAccountIds && readyAccountIds.size === 0) {
+              continue
+            }
+          }
+
+          const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
+          const delayElapsedAt = nextStep ? computeDelayEligibleAt(lastSend, nextStep) : 0
+
+          const candidate: DueJobCandidate = {
+            campaignId: entry.campaignId,
+            leadId,
+            stepOrder: nextStepOrder,
+            delayElapsedAt,
+            priority: entry.priority ?? 0,
+            smtpAccountId: assignedAccountId,
+          }
+
+          if (!passBest || delayElapsedAt < passBest.delayElapsedAt) {
+            passBest = candidate
+          }
         }
 
-        const nextStep = sortedSteps.find((s) => s.stepOrder === nextStepOrder)
-        const delayElapsedAt = nextStep ? computeDelayEligibleAt(lastSend, nextStep) : 0
-
-        const candidate: DueJobCandidate = {
-          campaignId: entry.campaignId,
-          leadId,
-          stepOrder: nextStepOrder,
-          delayElapsedAt,
-          priority: entry.priority ?? 0,
-        }
-
-        if (!passBest || delayElapsedAt < passBest.delayElapsedAt) {
-          passBest = candidate
+        if (passBest) {
+          entryCandidate = passBest
+          break
         }
       }
 
-      if (passBest) {
-        entryCandidate = passBest
-        break
+      if (entryCandidate) {
+        candidates.push(entryCandidate)
       }
-    }
+    })
+  )
 
-    if (entryCandidate) {
-      candidates.push(entryCandidate)
-    }
+  return {
+    candidates,
+    updatedEntries,
+    removedCampaignIds,
+    dueCounts: {
+      step1Due: byCampaign.reduce((sum, c) => sum + c.step1Due, 0),
+      followUpDue: byCampaign.reduce((sum, c) => sum + c.followUpDue, 0),
+      byCampaign,
+    },
   }
-
-  return { candidates, updatedEntries, removedCampaignIds }
 }
 
 /** Rotate waiting/completing leads and collect ready jobs across all active campaigns. */
@@ -787,10 +847,14 @@ export async function pickNextDueJob(
   lastServedCampaignId: number | null,
   opts?: {
     followUpsPaused?: boolean
+    anyInboxFollowUpsPaused?: boolean
     campaignStep1SentToday?: Map<number, number>
+    excludeAccountIds?: Set<number>
+    readyAccountIds?: Set<number>
   }
 ): Promise<PickNextDueJobResult> {
-  const { candidates, updatedEntries, removedCampaignIds } = await collectDueJobCandidates(
+  const emptyDue = { step1Due: 0, followUpDue: 0, byCampaign: [] as CampaignDueBreakdown[] }
+  const { candidates, updatedEntries, removedCampaignIds, dueCounts } = await collectDueJobCandidates(
     entries,
     campaignsById,
     limitSettings,
@@ -799,7 +863,13 @@ export async function pickNextDueJob(
   )
 
   if (candidates.length === 0) {
-    return { candidate: null, updatedEntries, removedCampaignIds, allCandidates: [] }
+    return {
+      candidate: null,
+      updatedEntries,
+      removedCampaignIds,
+      allCandidates: [],
+      dueCounts: dueCounts ?? emptyDue,
+    }
   }
 
   const candidate = pickWinnerJob(candidates, lastServedCampaignId, 'step1_first', {
@@ -807,7 +877,13 @@ export async function pickNextDueJob(
     stepTypeCounts,
   })
   if (!candidate) {
-    return { candidate: null, updatedEntries, removedCampaignIds, allCandidates: candidates }
+    return {
+      candidate: null,
+      updatedEntries,
+      removedCampaignIds,
+      allCandidates: candidates,
+      dueCounts,
+    }
   }
 
   const entry = updatedEntries.find((e) => e.campaignId === candidate.campaignId)
@@ -819,32 +895,43 @@ export async function pickNextDueJob(
     }
   }
 
-  return { candidate, updatedEntries, removedCampaignIds, allCandidates: candidates }
+  return { candidate, updatedEntries, removedCampaignIds, allCandidates: candidates, dueCounts }
 }
 
 export async function computeAggregateDueNow(
   entries: ActiveCampaignEntry[]
 ): Promise<number> {
-  let total = 0
-  for (const entry of entries) {
-    if (entry.leadIds.length === 0) continue
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: entry.campaignId },
-      include: { steps: true },
+  const nonEmpty = entries.filter((e) => e.leadIds.length > 0)
+  if (nonEmpty.length === 0) return 0
+
+  const campaigns = await prisma.campaign.findMany({
+    where: { id: { in: nonEmpty.map((e) => e.campaignId) } },
+    include: { steps: true },
+  })
+  const campaignsById = new Map(campaigns.map((c) => [c.id, c]))
+
+  const perEntry = await Promise.all(
+    nonEmpty.map(async (entry) => {
+      const campaign = campaignsById.get(entry.campaignId)
+      if (!campaign) return 0
+
+      const skippedSet = new Set(entry.skippedLeadIds)
+      const [blockedLeadIds, lastSends] = await Promise.all([
+        loadBlockedLeadIds(entry.campaignId, entry.leadIds),
+        loadLastSuccessfulSends(entry.campaignId, entry.leadIds),
+      ])
+      const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
+
+      let count = 0
+      for (const leadId of entry.leadIds) {
+        if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
+        const lastSend = lastSends.get(leadId) ?? null
+        const status = getLeadQueueStatus(leadId, sortedSteps, lastSend, skippedSet, blockedLeadIds)
+        if (status === 'sending') count++
+      }
+      return count
     })
-    if (!campaign) continue
+  )
 
-    const skippedSet = new Set(entry.skippedLeadIds)
-    const blockedLeadIds = await loadBlockedLeadIds(entry.campaignId, entry.leadIds)
-    const lastSends = await loadLastSuccessfulSends(entry.campaignId, entry.leadIds)
-    const sortedSteps = [...campaign.steps].sort((a, b) => a.stepOrder - b.stepOrder)
-
-    for (const leadId of entry.leadIds) {
-      if (skippedSet.has(leadId) || blockedLeadIds.has(leadId)) continue
-      const lastSend = lastSends.get(leadId) ?? null
-      const status = getLeadQueueStatus(leadId, sortedSteps, lastSend, skippedSet, blockedLeadIds)
-      if (status === 'sending') total++
-    }
-  }
-  return total
+  return perEntry.reduce((sum, n) => sum + n, 0)
 }

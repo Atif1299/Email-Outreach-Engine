@@ -57,8 +57,6 @@ interface InboxStatus {
   unsubscribedCount: number
 }
 
-const USE_CRON_WORKER = process.env.NEXT_PUBLIC_USE_CRON_WORKER === 'true'
-
 type CampaignFilter = 'all' | 'sending' | 'done' | 'paused' | 'idle'
 type CampaignCardState = 'sending' | 'in_queue' | 'paused' | 'completed' | 'idle'
 
@@ -385,6 +383,7 @@ export default function StepQueue({
   onCampaignsChanged,
   onBackToPreview,
 }: Props) {
+  const useCronWorker = queueStatus.useCronWorker === true
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [campaignStatsById, setCampaignStatsById] = useState<Record<number, CampaignStats>>({})
   const [inboxStatus, setInboxStatus] = useState<InboxStatus | null>(null)
@@ -456,28 +455,36 @@ export default function StepQueue({
   }, [])
 
   const refreshQueueData = useCallback(async () => {
-    await loadQueueStatus()
-    await loadInboxStatus()
-    await loadAllCampaignStats()
+    await Promise.all([loadQueueStatus(), loadInboxStatus(), loadAllCampaignStats()])
   }, [loadQueueStatus, loadInboxStatus, loadAllCampaignStats])
 
   useEffect(() => {
     void refreshQueueData()
     const idle = queueStatus.outsideWindow || queueStatus.paused || !queueStatus.running
-    const intervalMs = idle ? 30000 : queueStatus.running ? 5000 : 20000
-    const interval = setInterval(() => {
-      void refreshQueueData()
-    }, intervalMs)
-    return () => clearInterval(interval)
+    const statusIntervalMs = idle ? 30000 : queueStatus.running ? 5000 : 20000
+    const statsIntervalMs = idle ? 60000 : 20000
+    const statusInterval = setInterval(() => {
+      void Promise.all([loadQueueStatus(), loadInboxStatus()])
+    }, statusIntervalMs)
+    const statsInterval = setInterval(() => {
+      void loadAllCampaignStats()
+    }, statsIntervalMs)
+    return () => {
+      clearInterval(statusInterval)
+      clearInterval(statsInterval)
+    }
   }, [
     refreshQueueData,
+    loadQueueStatus,
+    loadInboxStatus,
+    loadAllCampaignStats,
     queueStatus.running,
     queueStatus.paused,
     queueStatus.outsideWindow,
   ])
 
   useEffect(() => {
-    if (USE_CRON_WORKER) return
+    if (useCronWorker) return
     if (!queueStatus.running || queueStatus.paused) return
 
     let cancelled = false
@@ -525,7 +532,7 @@ export default function StepQueue({
     return () => {
       cancelled = true
     }
-  }, [queueStatus.running, queueStatus.paused, loadQueueStatus, loadAllCampaignStats])
+  }, [useCronWorker, queueStatus.running, queueStatus.paused, loadQueueStatus, loadAllCampaignStats])
 
   function toggleSelected(campaignId: number) {
     setSelectedIds((prev) => {
@@ -811,7 +818,7 @@ export default function StepQueue({
             ? queueStatus.lastError?.startsWith('Paused:')
               ? 'Paused (auto)'
               : 'Paused'
-            : USE_CRON_WORKER
+            : useCronWorker
               ? 'Running (background)'
               : 'Running'
           : 'Stopped'
@@ -958,7 +965,7 @@ export default function StepQueue({
     queueStatus.smtpAccounts?.filter((a) => a.enabled) ?? []
   const hasTelemetry =
     Boolean(queueStatus.currentJob) ||
-    (USE_CRON_WORKER && queueStatus.running && !queueStatus.paused) ||
+    (useCronWorker && queueStatus.running && !queueStatus.paused) ||
     Boolean(
       inboxStatus &&
       !(queueStatus.smtpAccounts && queueStatus.smtpAccounts.some((a) => a.enabled))
@@ -1184,9 +1191,30 @@ export default function StepQueue({
                   </div>
                 )}
 
-                {USE_CRON_WORKER && queueStatus.running && !queueStatus.paused && (
-                  <div className="queue-runtime-line queue-runtime-line--dim">
-                    Background worker active — queue continues when this tab is closed.
+                {useCronWorker && queueStatus.running && !queueStatus.paused && (
+                  <div
+                    className={`queue-runtime-line${queueStatus.workerStatus === 'stale' ||
+                      queueStatus.workerStatus === 'never'
+                      ? ''
+                      : ' queue-runtime-line--dim'
+                      }`}
+                    role={queueStatus.workerStatus === 'stale' || queueStatus.workerStatus === 'never'
+                      ? 'alert'
+                      : 'status'}
+                  >
+                    {queueStatus.workerStatus === 'stale'
+                      ? `Background worker stale — last cron ${queueStatus.workerLastCronAt
+                        ? new Date(queueStatus.workerLastCronAt).toLocaleString()
+                        : 'unknown'
+                      }. Check cron-job.org.`
+                      : queueStatus.workerStatus === 'never'
+                        ? 'Background worker has not checked in since this deployment — check cron-job.org.'
+                        : queueStatus.workerStatus === 'busy' || queueStatus.workerStatus === 'processing'
+                          ? 'Background worker processing the queue now.'
+                          : `Background worker healthy${queueStatus.workerLastCronAt
+                            ? ` — last cron ${new Date(queueStatus.workerLastCronAt).toLocaleTimeString()} (${queueStatus.workerLastCronProcessed ?? 0} sent)`
+                            : ''
+                          }.`}
                   </div>
                 )}
 
@@ -1208,8 +1236,14 @@ export default function StepQueue({
                         Inboxes ({queueStatus.enabledSmtpCount ?? enabledSmtpAccounts.length}{' '}
                         active)
                         {queueStatus.perInboxDailyCap
-                          ? ` · ${queueStatus.perInboxDailyCap}/day · ${queueStatus.perInboxHourlyCap}/hr each`
+                          ? ` · Connect ${queueStatus.perInboxDailyCap}/day · ${queueStatus.perInboxHourlyCap}/hr each`
                           : ''}
+                        {enabledSmtpAccounts.some((a) => a.warmupEnabled && a.warmupDailyCap != null) && (
+                          <span title="Gradual warmup is on in Connect — days 1–3 use 15/day, days 4–7 use 30/day">
+                            {' '}
+                            · warmup reduces daily below Connect
+                          </span>
+                        )}
                         {inboxStatus && (
                           <>
                             {' · '}
@@ -1239,13 +1273,22 @@ export default function StepQueue({
                           !authBlocked &&
                           account.exhaustedUntil &&
                           new Date(account.exhaustedUntil) > new Date()
-                        const effectiveDailyCap = account.warmupEnabled
-                          ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
-                          : queueStatus.perInboxDailyCap
+                        const effectiveDailyCap =
+                          account.effectiveDailyCap ??
+                          (account.warmupEnabled
+                            ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap)
+                            : queueStatus.perInboxDailyCap)
+                        const settingsDaily =
+                          account.settingsDailyCap ?? queueStatus.perInboxDailyCap
                         const atCap =
                           !authBlocked &&
                           effectiveDailyCap != null &&
                           account.sendsToday >= effectiveDailyCap
+                        const warmupLimiting =
+                          !!account.warmupEnabled &&
+                          settingsDaily != null &&
+                          effectiveDailyCap != null &&
+                          effectiveDailyCap < settingsDaily
                         return (
                           <div
                             key={account.id}
@@ -1261,13 +1304,20 @@ export default function StepQueue({
                                   Auth failed
                                 </span>
                               )}
+                              {warmupLimiting && (
+                                <span
+                                  className="smtp-queue-strip-item__chip"
+                                  title={`Gradual warmup day ${account.warmupDay ?? '?'} — Connect daily is ${settingsDaily}. Uncheck warmup in Connect to use full ${settingsDaily}/day.`}
+                                >
+                                  Warmup
+                                </span>
+                              )}
                             </span>
                             <span className="smtp-queue-strip-item__stats">
-                              {account.sendsToday}/
-                              {account.warmupEnabled
-                                ? (account.warmupDailyCap ?? queueStatus.perInboxDailyCap ?? '—')
-                                : (queueStatus.perInboxDailyCap ?? '—')}{' '}
-                              today · {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
+                              {account.sendsToday}/{effectiveDailyCap ?? '—'} today
+                              {warmupLimiting ? ` (of Connect ${settingsDaily})` : ''}
+                              {' · '}
+                              {account.sendsThisHour}/{queueStatus.perInboxHourlyCap ?? '—'} hr
                             </span>
                           </div>
                         )

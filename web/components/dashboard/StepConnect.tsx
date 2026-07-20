@@ -431,7 +431,7 @@ export default function StepConnect({
                         onChange={(e) => updateAccount(index, { warmupEnabled: e.target.checked })}
                       />
                       <span>
-                        Gradual warmup (15/day days 1–3, 30/day days 4–7, then your daily cap)
+                        Gradual warmup — overrides daily cap to 15/day (days 1–3) then 30/day (days 4–7). Leave unchecked to use your Connect daily cap (e.g. 50).
                       </span>
                     </label>
                     <div className="smtp-account-card-actions">

@@ -268,6 +268,9 @@ model QueueState {
   nextSendAllowedAt    DateTime? @map("next_send_allowed_at")
   followUpsPausedUntil DateTime? @map("follow_ups_paused_until")
   clusterBreakerUntil  DateTime? @map("cluster_breaker_until")
+  lastCronAt           DateTime? @map("last_cron_at")
+  lastCronStatus       String?   @map("last_cron_status")
+  lastCronProcessed    Int       @default(0) @map("last_cron_processed")
   updatedAt            DateTime @default(now()) @map("updated_at")
 
   @@map("queue_state")

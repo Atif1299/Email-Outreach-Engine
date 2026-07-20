@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import prisma from '@/lib/db'
 
 import { applyClusterResumeFollowUpPause } from '@/lib/inbox-cluster-guard'
+import { invalidateQueueStatusCache } from '@/lib/stats-cache'
 
 export async function POST() {
   try {
@@ -18,6 +19,7 @@ export async function POST() {
         updatedAt: new Date(),
       },
     })
+    invalidateQueueStatusCache()
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Failed to resume queue:', error)

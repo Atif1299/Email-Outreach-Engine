@@ -1,4 +1,5 @@
 const CACHE_TTL_MS = 5000
+const QUEUE_STATUS_TTL_MS = 4000
 
 interface CacheEntry<T> {
   data: T
@@ -7,6 +8,7 @@ interface CacheEntry<T> {
 
 let allCampaignStatsCache: CacheEntry<unknown> | null = null
 let lastGoodAllCampaignStats: unknown | null = null
+let queueStatusCache: CacheEntry<unknown> | null = null
 
 export function getCachedAllCampaignStats<T>(): T | null {
   if (!allCampaignStatsCache) return null
@@ -32,4 +34,25 @@ export function setCachedAllCampaignStats<T>(data: T): void {
 
 export function invalidateAllCampaignStatsCache(): void {
   allCampaignStatsCache = null
+  queueStatusCache = null
+}
+
+export function getCachedQueueStatus<T>(): T | null {
+  if (!queueStatusCache) return null
+  if (Date.now() > queueStatusCache.expiresAt) {
+    queueStatusCache = null
+    return null
+  }
+  return queueStatusCache.data as T
+}
+
+export function setCachedQueueStatus<T>(data: T): void {
+  queueStatusCache = {
+    data,
+    expiresAt: Date.now() + QUEUE_STATUS_TTL_MS,
+  }
+}
+
+export function invalidateQueueStatusCache(): void {
+  queueStatusCache = null
 }

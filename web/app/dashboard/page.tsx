@@ -24,6 +24,8 @@ export interface SmtpAccountStatus {
   lastInboxError: string | null
   warmupDay?: number | null
   warmupDailyCap?: number | null
+  effectiveDailyCap?: number
+  settingsDailyCap?: number
   warmupEnabled?: boolean
   healthStatus?: string
   recoveryUntil?: string | null
@@ -131,6 +133,11 @@ export interface QueueStatus {
   hourCapReached?: boolean
   outsideWindow?: boolean
   useCronWorker?: boolean
+  workerStatus?: 'browser' | 'idle' | 'never' | 'stale' | 'busy' | 'processing' | 'healthy'
+  workerLastCronAt?: string | null
+  workerLastCronStatus?: string | null
+  workerLastCronProcessed?: number
+  workerLockUntil?: string | null
   stepTypeCapsEnabled?: boolean
   step1SentToday?: number
   followUpSentToday?: number

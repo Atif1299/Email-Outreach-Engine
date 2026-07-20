@@ -6,14 +6,14 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 /**
- * Default maxBatches=1 stays under ~30s external cron timeouts when AI renders inline.
- * Override with QUEUE_CRON_MAX_BATCHES (e.g. 2) only after measuring send latency.
+ * The batched queue picker keeps three batches inside the 25s HTTP budget.
+ * Override with QUEUE_CRON_MAX_BATCHES (1–5) when tuning send throughput.
  */
 function resolveMaxBatches(): number {
   const raw = process.env.QUEUE_CRON_MAX_BATCHES
-  if (!raw) return 1
+  if (!raw) return 3
   const n = parseInt(raw, 10)
-  return Number.isFinite(n) && n >= 1 ? Math.min(n, 5) : 1
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 5) : 3
 }
 
 /** Tiny responses — cron-job.org aborts above ~64KB (cold-start HTML trips this). */
@@ -34,6 +34,14 @@ async function handleCron(request: NextRequest) {
       maxRuntimeMs: CRON_QUEUE_BUDGET_MS,
       maxBatches: resolveMaxBatches(),
     })
+    await prisma.queueState.update({
+      where: { id: 1 },
+      data: {
+        lastCronAt: new Date(),
+        lastCronStatus: queueResult.status,
+        lastCronProcessed: queueResult.processed,
+      },
+    })
     return tinyOk({
       ok: 1,
       status: queueResult.status,
@@ -41,13 +49,19 @@ async function handleCron(request: NextRequest) {
       failed: queueResult.failed,
       remaining: queueResult.remaining,
       batches: queueResult.batches,
+      busyRetries: queueResult.busyRetries,
       ms: queueResult.ranMs,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Processing failed'
     await prisma.queueState.update({
       where: { id: 1 },
-      data: { lastError: message.slice(0, 500) },
+      data: {
+        lastError: message.slice(0, 500),
+        lastCronAt: new Date(),
+        lastCronStatus: 'error',
+        lastCronProcessed: 0,
+      },
     })
     return NextResponse.json(
       { ok: 0, error: message.slice(0, 200) },

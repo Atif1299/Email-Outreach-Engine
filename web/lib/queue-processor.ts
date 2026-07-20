@@ -4,21 +4,19 @@ import nodemailer from 'nodemailer'
 import { mergeTags, renderEmailForLead } from '@/lib/ai'
 import { buildMailContent, normalizeBodyFormat } from '@/lib/email-html'
 import { getAppBaseUrl } from '@/lib/track-token'
-import { invalidateAllCampaignStatsCache } from '@/lib/stats-cache'
+import { invalidateAllCampaignStatsCache, invalidateQueueStatusCache } from '@/lib/stats-cache'
 import { getDeliveryHaltError, isHardBounceError } from '@/lib/verify'
 import { suppressLeadForBounce } from '@/lib/lead-suppression'
 import {
   parseActiveCampaigns,
   persistActiveCampaigns,
-  compareScheduledJobs,
-  pickPriorityJobPool,
-  isCampaignStep1QuotaExhausted,
+  pickNextDueJob,
   type ActiveCampaignEntry,
 } from '@/lib/queue-active'
 import { loadSequenceContext } from '@/lib/preview-context'
 import { ensureSettings } from '@/lib/settings'
 import { acquireQueueLock, releaseQueueLock } from '@/lib/queue-lock'
-import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds, computeDelayEligibleAt } from '@/lib/queue-schedule'
+import { getMaxStepOrder, getNextStepOrder, isDelayElapsed, loadBlockedLeadIds } from '@/lib/queue-schedule'
 import {
   countSuccessfulSendsSince,
   evaluateGlobalDailyCap,
@@ -40,6 +38,7 @@ import {
   formatFromAddress,
   getEnabledSmtpAccounts,
   getNextInboxAvailableAt,
+  getSendReadyAccountIds,
   isLeadFollowUpPaused,
   markAccountExhausted,
   resolveAccountForSend,
@@ -78,6 +77,7 @@ async function pauseQueueForDeliveryIssue(opts: {
     where: { id: 1 },
     data: { paused: true, updatedAt: new Date() },
   })
+  invalidateQueueStatusCache()
 }
 
 export async function processQueueBatch(maxEmails?: number) {
@@ -236,138 +236,6 @@ type PreparedLead = {
   }
 }
 
-async function prepareNextLeadForSend(opts: {
-  activeLeadIds: number[]
-  blockedLeadIds: Set<number>
-  campaign: { id: number; steps: PreparedLead['nextStep'][] }
-  limitSettings: SendLimitSettings
-  stepTypeCounts: { step1SentToday: number; followUpSentToday: number }
-  followUpsPaused?: boolean
-  followUpsOnly?: boolean
-  step1QuotaExhausted?: boolean
-}): Promise<
-  | { ok: true; prepared: PreparedLead }
-  | { ok: false; reason: 'empty' | 'waiting' | 'type_cap'; message?: string }
-> {
-  const {
-    activeLeadIds,
-    blockedLeadIds,
-    campaign,
-    limitSettings,
-    stepTypeCounts,
-    followUpsPaused,
-    followUpsOnly,
-    step1QuotaExhausted,
-  } = opts
-  if (activeLeadIds.length === 0) return { ok: false, reason: 'empty' }
-
-  const passes: Array<'followup' | 'step1'> = followUpsOnly
-    ? followUpsPaused
-      ? []
-      : ['followup']
-    : followUpsPaused
-      ? ['step1']
-      : step1QuotaExhausted
-        ? ['followup']
-        : ['step1', 'followup']
-
-  for (const pass of passes) {
-    let best: {
-      prepared: PreparedLead
-      leadId: number
-      delayElapsedAt: number
-    } | null = null
-
-    for (let i = 0; i < activeLeadIds.length; i++) {
-      const leadId = activeLeadIds[i]
-      const inspected = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
-      if (!inspected) continue
-      if (!inspected.due) continue
-      if (pass === 'followup' && inspected.nextStepOrder <= 1) continue
-      if (pass === 'step1' && inspected.nextStepOrder !== 1) continue
-      if (!isStepTypeCapAvailable(limitSettings, inspected.nextStepOrder, stepTypeCounts)) continue
-
-      const nextStep = campaign.steps.find((s) => s.stepOrder === inspected.nextStepOrder)
-      const delayElapsedAt = nextStep
-        ? computeDelayEligibleAt(inspected.prepared.lastSend, nextStep)
-        : 0
-
-      if (!best || delayElapsedAt < best.delayElapsedAt) {
-        best = { prepared: inspected.prepared, leadId, delayElapsedAt }
-      }
-    }
-
-    if (best) {
-      const idx = activeLeadIds.indexOf(best.leadId)
-      if (idx > 0) {
-        activeLeadIds.splice(idx, 1)
-        activeLeadIds.unshift(best.leadId)
-      }
-      return { ok: true, prepared: best.prepared }
-    }
-  }
-
-  let hasDueStep1 = false
-  let hasDueFollowUp = false
-  let hasWaitingOnly = true
-
-  for (const leadId of activeLeadIds) {
-    const inspected = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
-    if (!inspected) continue
-    if (inspected.due) {
-      hasWaitingOnly = false
-      if (inspected.nextStepOrder <= 1) hasDueStep1 = true
-      else hasDueFollowUp = true
-    }
-  }
-
-  if (isStepTypeCapsEnabled(limitSettings)) {
-    const step1Blocked =
-      hasDueStep1 &&
-      limitSettings.dailyStep1Cap > 0 &&
-      stepTypeCounts.step1SentToday >= limitSettings.dailyStep1Cap
-    const followUpBlocked =
-      hasDueFollowUp &&
-      limitSettings.dailyFollowUpCap > 0 &&
-      stepTypeCounts.followUpSentToday >= limitSettings.dailyFollowUpCap
-
-    if (step1Blocked && followUpBlocked) {
-      return {
-        ok: false,
-        reason: 'type_cap',
-        message: `Step 1 cap (${limitSettings.dailyStep1Cap}) and follow-up cap (${limitSettings.dailyFollowUpCap}) reached for today`,
-      }
-    }
-    if (step1Blocked && !hasDueFollowUp) {
-      return { ok: false, reason: 'waiting' }
-    }
-    if (followUpBlocked && !hasDueStep1) {
-      return { ok: false, reason: 'waiting' }
-    }
-
-    for (let i = 0; i < activeLeadIds.length; i++) {
-      const leadId = activeLeadIds[i]
-      const inspected = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
-      if (!inspected?.due) continue
-      if (isStepTypeCapAvailable(limitSettings, inspected.nextStepOrder, stepTypeCounts)) continue
-      activeLeadIds.splice(i, 1)
-      activeLeadIds.push(leadId)
-      break
-    }
-  }
-
-  const frontId = activeLeadIds[0]
-  const front = await inspectLeadForSend(frontId, campaign, blockedLeadIds)
-  if (front && !front.due) {
-    activeLeadIds.shift()
-    activeLeadIds.push(frontId)
-    return { ok: false, reason: 'waiting' }
-  }
-
-  if (hasWaitingOnly) return { ok: false, reason: 'waiting' }
-  return { ok: false, reason: 'waiting' }
-}
-
 type CampaignWithSteps = {
   id: number
   pitchBlock: string
@@ -385,6 +253,8 @@ async function pickJobAcrossCampaigns(opts: {
   lastServedCampaignId: number | null
   followUpsPaused?: boolean
   campaignStep1SentToday?: Map<number, number>
+  excludeAccountIds?: Set<number>
+  readyAccountIds?: Set<number>
 }): Promise<
   | {
     ok: true
@@ -394,96 +264,70 @@ async function pickJobAcrossCampaigns(opts: {
   }
   | { ok: false; reason: 'empty' | 'waiting' | 'type_cap'; message?: string }
 > {
-  const candidates: Array<{
-    campaign: CampaignWithSteps
-    entry: ActiveCampaignEntry
-    prepared: PreparedLead
-    stepOrder: number
-    delayElapsedAt: number
-    priority: number
-  }> = []
-  let typeCapMessage: string | undefined
-  const campaignStep1SentToday = opts.campaignStep1SentToday ?? new Map<number, number>()
+  const hasLeads = opts.activeEntries.some((entry) => entry.leadIds.length > 0)
+  if (!hasLeads) return { ok: false, reason: 'empty' }
 
-  for (const entry of opts.activeEntries) {
-    if (entry.leadIds.length === 0) continue
-    const campaign = opts.campaignsById.get(entry.campaignId)
-    if (!campaign) continue
-
-    const blockedLeadIds = await loadBlockedLeadIds(entry.campaignId, entry.leadIds)
-    const pick = await prepareNextLeadForSend({
-      activeLeadIds: entry.leadIds,
-      blockedLeadIds,
-      campaign,
-      limitSettings: opts.limitSettings,
-      stepTypeCounts: opts.stepTypeCounts,
+  // Batch-load successful sends and blocked leads once per campaign. The old
+  // picker called inspectLeadForSend for every lead (and repeated the scan),
+  // which held the queue lock for minutes on large campaigns.
+  const pick = await pickNextDueJob(
+    opts.activeEntries,
+    opts.campaignsById,
+    opts.limitSettings,
+    opts.stepTypeCounts,
+    opts.lastServedCampaignId,
+    {
       followUpsPaused: opts.followUpsPaused,
-      followUpsOnly: entry.followUpsOnly,
-      step1QuotaExhausted: isCampaignStep1QuotaExhausted(
-        entry,
-        campaignStep1SentToday.get(entry.campaignId) ?? 0
-      ),
-    })
-
-    if (pick.ok) {
-      const lastSend = pick.prepared.lastSend
-      const nextStep = pick.prepared.nextStep
-      const delayElapsedAt = computeDelayEligibleAt(lastSend, nextStep)
-      candidates.push({
-        campaign,
-        entry,
-        prepared: pick.prepared,
-        stepOrder: pick.prepared.nextStepOrder,
-        delayElapsedAt,
-        priority: entry.priority ?? 0,
-      })
-    } else if (pick.reason === 'type_cap' && pick.message) {
-      typeCapMessage = pick.message
+      campaignStep1SentToday: opts.campaignStep1SentToday,
+      excludeAccountIds: opts.excludeAccountIds,
+      readyAccountIds: opts.readyAccountIds,
     }
-  }
+  )
 
-  if (candidates.length === 0) {
-    const hasLeads = opts.activeEntries.some((e) => e.leadIds.length > 0)
-    if (hasLeads) {
-      const step1CapOpen = isStepTypeCapAvailable(opts.limitSettings, 1, opts.stepTypeCounts)
-      if (typeCapMessage && step1CapOpen) {
-        return { ok: false, reason: 'waiting' }
+  if (!pick.candidate) {
+    if (isStepTypeCapsEnabled(opts.limitSettings)) {
+      const step1Blocked =
+        opts.limitSettings.dailyStep1Cap > 0 &&
+        opts.stepTypeCounts.step1SentToday >= opts.limitSettings.dailyStep1Cap
+      const followUpBlocked =
+        opts.limitSettings.dailyFollowUpCap > 0 &&
+        opts.stepTypeCounts.followUpSentToday >= opts.limitSettings.dailyFollowUpCap
+
+      if (step1Blocked || followUpBlocked) {
+        const message =
+          step1Blocked && followUpBlocked
+            ? `Step 1 cap (${opts.limitSettings.dailyStep1Cap}) and follow-up cap (${opts.limitSettings.dailyFollowUpCap}) reached for today`
+            : step1Blocked
+              ? `Step 1 daily cap (${opts.limitSettings.dailyStep1Cap}) reached for today`
+              : `Follow-up daily cap (${opts.limitSettings.dailyFollowUpCap}) reached for today`
+        return { ok: false, reason: 'type_cap', message }
       }
-      if (typeCapMessage) return { ok: false, reason: 'type_cap', message: typeCapMessage }
-      return { ok: false, reason: 'waiting' }
     }
-    return { ok: false, reason: 'empty' }
+    return { ok: false, reason: 'waiting' }
   }
 
-  const pool = pickPriorityJobPool(
-    candidates.map((c) => ({
-      ...c,
-      campaignId: c.campaign.id,
-    })),
-    'step1_first',
-    { limitSettings: opts.limitSettings, stepTypeCounts: opts.stepTypeCounts }
-  )
-  pool.sort((a, b) =>
-    compareScheduledJobs(
-      {
-        stepOrder: a.stepOrder,
-        delayElapsedAt: a.delayElapsedAt,
-        campaignId: a.campaignId,
-        priority: a.priority,
-      },
-      {
-        stepOrder: b.stepOrder,
-        delayElapsedAt: b.delayElapsedAt,
-        campaignId: b.campaignId,
-        priority: b.priority,
-      },
-      opts.lastServedCampaignId,
-      'step1_first'
-    )
-  )
+  const { campaignId, leadId } = pick.candidate
+  const campaign = opts.campaignsById.get(campaignId)
+  const entry = opts.activeEntries.find((active) => active.campaignId === campaignId)
+  if (!campaign || !entry) return { ok: false, reason: 'waiting' }
 
-  const winner = pool[0]
-  return { ok: true, campaign: winner.campaign, entry: winner.entry, prepared: winner.prepared }
+  const selectedEntry = pick.updatedEntries.find((active) => active.campaignId === campaignId)
+  if (selectedEntry) {
+    entry.leadIds = selectedEntry.leadIds
+    entry.skippedLeadIds = selectedEntry.skippedLeadIds
+  } else {
+    const selectedIndex = entry.leadIds.indexOf(leadId)
+    if (selectedIndex > 0) {
+      entry.leadIds.splice(selectedIndex, 1)
+      entry.leadIds.unshift(leadId)
+    }
+  }
+
+  const blockedLeadIds = await loadBlockedLeadIds(campaignId, [leadId])
+  const inspected = await inspectLeadForSend(leadId, campaign, blockedLeadIds)
+  if (!inspected?.due) return { ok: false, reason: 'waiting' }
+
+  return { ok: true, campaign, entry, prepared: inspected.prepared }
 }
 
 async function inspectLeadForSend(
@@ -581,8 +425,12 @@ async function processQueueBatchInner(maxEmails?: number) {
   const batchLimit = Math.max(1, Math.min(maxEmails ?? enabledAccounts.length, enabledAccounts.length))
   const accountsUsedThisBatch = new Set<number>()
   const followUpsPaused = isFollowUpsPaused(state)
+  // Allow rotating past sticky leads on busy inboxes without burning send slots.
+  const maxSkips = batchLimit * 4
+  let skips = 0
+  let sendsCompleted = 0
 
-  for (let i = 0; i < batchLimit; i++) {
+  while (sendsCompleted < batchLimit && skips < maxSkips) {
     const currentState = await prisma.queueState.findUnique({ where: { id: 1 } })
     if (!currentState?.running || currentState.paused) break
 
@@ -592,6 +440,9 @@ async function processQueueBatchInner(maxEmails?: number) {
     const innerGate = await applySendGate(limitSettings, enabledAccounts.length, accountsUsedThisBatch)
     if (innerGate) break
 
+    const readyAccountIds = await getSendReadyAccountIds(limitSettings, accountsUsedThisBatch)
+    if (readyAccountIds.size === 0) break
+
     const jobPick = await pickJobAcrossCampaigns({
       activeEntries,
       campaignsById,
@@ -600,6 +451,8 @@ async function processQueueBatchInner(maxEmails?: number) {
       lastServedCampaignId,
       followUpsPaused,
       campaignStep1SentToday,
+      excludeAccountIds: accountsUsedThisBatch,
+      readyAccountIds,
     })
 
     if (!jobPick.ok) {
@@ -641,6 +494,7 @@ async function processQueueBatchInner(maxEmails?: number) {
     if (!stepTypeGate.allowed) {
       activeLeadIds.shift()
       activeLeadIds.push(leadId)
+      skips++
       continue
     }
 
@@ -660,6 +514,7 @@ async function processQueueBatchInner(maxEmails?: number) {
           where: { id: 1 },
           data: { lastError: accountResult.message },
         })
+        skips++
         continue
       }
 
@@ -694,9 +549,11 @@ async function processQueueBatchInner(maxEmails?: number) {
       if (nextStepOrder >= maxStepOrder) {
         activeLeadIds.shift()
       }
+      skips++
       continue
     }
     let leadSendId = claimed.sendId
+    const sendsBefore = sendsCompleted
 
     const triedAccountIds = new Set<number>()
     let sendCompleted = false
@@ -841,6 +698,7 @@ async function processQueueBatchInner(maxEmails?: number) {
         })
 
         processed++
+        sendsCompleted++
         consecutiveFailures = 0
         sendCompleted = true
         accountsUsedThisBatch.add(account.id)
@@ -1004,6 +862,10 @@ async function processQueueBatchInner(maxEmails?: number) {
         }
       }
     }
+
+    if (sendsCompleted === sendsBefore) {
+      skips++
+    }
   }
 
   const dayStart = getDayStartInTimezone(limitSettings.sendTimezone)
@@ -1036,7 +898,10 @@ async function processQueueBatchInner(maxEmails?: number) {
     clearLastError: processed > 0,
   })
 
-  if (processed > 0) invalidateAllCampaignStatsCache()
+  if (processed > 0) {
+    invalidateAllCampaignStatsCache()
+    invalidateQueueStatusCache()
+  }
 
   return {
     status: 'processed' as const,
